@@ -49,6 +49,7 @@ def analyze_project(root: Path) -> ProjectAnalysis:
 
     sources: dict[Path, str] = {p: _read(p) for p in scan.py_files}
     converted: dict[str, str] = {}
+    conversion_failures: list[dict[str, str]] = []
 
     for txt in scan.text_candidates:
         result = convert_text_to_python(txt.read_bytes())
@@ -57,17 +58,20 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             converted[virtual.name] = result.code
             sources[virtual] = result.code
         else:
-            issues.append(
-                Issue(
-                    "txt_syntax_error",
-                    Severity.BLOCKER,
-                    {
-                        "file": txt.name,
-                        "line": str(result.error_line or 0),
-                        "detail": result.error_text or "",
-                    },
-                )
+            conversion_failures.append(
+                {
+                    "file": txt.name,
+                    "line": str(result.error_line or 0),
+                    "detail": result.error_text or "",
+                }
             )
+
+    # A failed conversion only strands the user when it leaves the project
+    # with nothing usable at all; otherwise the build can proceed on the
+    # other sources and the user just needs to be told one file was skipped.
+    txt_severity = Severity.WARNING if sources else Severity.BLOCKER
+    for data in conversion_failures:
+        issues.append(Issue("txt_syntax_error", txt_severity, data))
 
     if not sources:
         other = _detect_other_language(scan)

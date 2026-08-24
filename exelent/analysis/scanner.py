@@ -6,6 +6,7 @@ import ast
 import re
 from pathlib import Path
 
+from exelent.analysis.textconv import convert_text_to_python
 from exelent.constants import EXCLUDED_DIRS, MAX_SCAN_BYTES, MAX_SCAN_FILES
 from exelent.models import ScanResult
 
@@ -37,14 +38,26 @@ _CODE_HINT = re.compile(r"^\s*(def |class |import |from \S+ import |print\()", r
 
 
 def looks_like_python(text: str) -> bool:
-    """Czy tekst wygląda na kod Pythona, nawet jeśli jeszcze się nie parsuje."""
+    """Czy tekst wygląda na kod Pythona, nawet jeśli jeszcze się nie parsuje.
+
+    Kandydatem jest tekst, który albo (a) po konwersji (odcięcie ogrodzeń
+    markdown, normalizacja cudzysłowów itd. — patrz `textconv`) parsuje się
+    jako prawdziwy Python, albo (b) ma choć jeden strukturalny sygnał kodu
+    na początku linii. (a) łapie krótkie, czyste programy wklejone z okna
+    czatu, których nie da się odróżnić po samych sygnałach — a to jest
+    flagowa ścieżka produktu. (b) nadal łapie zepsuty kod, o którym trzeba
+    użytkownika ostrzec, zamiast po cichu zaklasyfikować go jako dane.
+    """
     if not text.strip():
         return False
     try:
         ast.parse(text)
         return True
     except SyntaxError:
-        return len(_CODE_HINT.findall(text)) >= 2
+        pass
+    if convert_text_to_python(text.encode("utf-8", errors="replace")).ok:
+        return True
+    return len(_CODE_HINT.findall(text)) >= 1
 
 
 def _read_head(path: Path, limit: int = 64_000) -> str:
