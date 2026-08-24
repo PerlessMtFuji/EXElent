@@ -73,3 +73,51 @@ def test_result_is_sorted_and_deduplicated():
     code = "import requests\nimport requests\nimport rich"
     deps = resolve_dependencies(_s(code), set())
     assert [d.package for d in deps] == ["requests", "rich"]
+
+
+def test_alias_collision_dedupes_to_one_package_not_optional():
+    code = (
+        "import matplotlib.pyplot as plt\n"
+        "try:\n"
+        "    from mpl_toolkits.mplot3d import Axes3D\n"
+        "except ImportError:\n"
+        "    Axes3D = None\n"
+    )
+    deps = resolve_dependencies(_s(code), set())
+    assert len(deps) == 1
+    assert deps[0].package == "matplotlib"
+    assert deps[0].optional is False
+
+
+def test_win32_alias_collision_dedupes():
+    code = "import win32com\nimport win32api"
+    deps = resolve_dependencies(_s(code), set())
+    assert len(deps) == 1
+    assert deps[0].package == "pywin32"
+
+
+def test_alias_collision_optional_when_all_guarded():
+    code = (
+        "try:\n"
+        "    import win32com\n"
+        "except ImportError:\n"
+        "    win32com = None\n"
+        "try:\n"
+        "    import win32api\n"
+        "except ImportError:\n"
+        "    win32api = None\n"
+    )
+    deps = resolve_dependencies(_s(code), set())
+    assert len(deps) == 1
+    assert deps[0].package == "pywin32"
+    assert deps[0].optional is True
+
+
+def test_direct_reference_requirement_passes_through_unchanged():
+    deps = resolve_dependencies(_s(""), set(), "git+https://github.com/x/y.git\n")
+    assert _names(deps) == {"git+https://github.com/x/y.git"}
+
+
+def test_plain_requirement_still_parses():
+    deps = resolve_dependencies(_s(""), set(), "requests==2.31.0\n")
+    assert _names(deps) == {"requests==2.31.0"}
