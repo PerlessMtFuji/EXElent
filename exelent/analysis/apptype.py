@@ -1,5 +1,13 @@
 """Typ aplikacji, tryb wyjścia i ostrzeżenia o kodzie, którego nie da się
-w pełni spakować."""
+w pełni spakować.
+
+Wybór między ONEFILE a ONEDIR celowo faworyzuje ONEDIR: błędny ONEDIR to co
+najwyżej drobna niedogodność (folder zamiast jednego pliku, widoczna od razu
+i odwracalna w Advanced), a błędny ONEFILE bezpowrotnie i po cichu kasuje dane
+użytkownika zapisane do katalogu tymczasowego PyInstallera. Dlatego lista
+wzorców zapisu poniżej jest celowo nadmiarowa, a każdy przypadek niemożliwy
+do jednoznacznego udowodnienia (np. zmienna zamiast literału trybu otwarcia
+pliku) liczy się jako zapis."""
 
 from __future__ import annotations
 
@@ -28,9 +36,48 @@ GUI_MODULES = frozenset(
 )
 SERVER_MODULES = frozenset({"flask", "fastapi", "django", "aiohttp", "bottle", "starlette"})
 EXTERNAL_TOOLS = frozenset({"ffmpeg", "ffprobe", "tesseract", "magick", "pandoc", "yt-dlp"})
+
+# Nazwy metod/funkcji zapisujących dane na dysk, dopasowywane po samej nazwie
+# (bez względu na moduł/odbiorcę) — patrz uzasadnienie w docstringu modułu.
 WRITE_METHODS = frozenset(
-    {"dump", "to_csv", "to_excel", "savefig", "write_text", "write_bytes", "imwrite"}
+    {
+        # pliki tekstowe/binarne, pandas, matplotlib, opencv
+        "dump",
+        "to_csv",
+        "to_excel",
+        "to_json",
+        "to_parquet",
+        "to_pickle",
+        "to_html",
+        "to_sql",
+        "to_feather",
+        "savefig",
+        "write_text",
+        "write_bytes",
+        "imwrite",
+        # shutil
+        "copy",
+        "copy2",
+        "copyfile",
+        "copytree",
+        "move",
+        "make_archive",
+        # tworzenie katalogów (os / pathlib)
+        "mkdir",
+        "makedirs",
+        # bazy danych
+        "connect",
+        # handlery logowania do pliku
+        "FileHandler",
+        "RotatingFileHandler",
+        "TimedRotatingFileHandler",
+    }
 )
+
+# Konstruktory, których zapisowość zależy od trybu otwarcia — sprawdzane
+# przez _resolved_mode zamiast trafiać od razu do WRITE_METHODS.
+MODE_CHECKED_NAMES = frozenset({"open", "ZipFile"})
+WRITE_MODE_CHARS = "wax+"
 
 _SECRET = re.compile(r"['\"](?:sk-|ghp_|AIza|xox[bap]-)[A-Za-z0-9_\-]{16,}['\"]")
 
@@ -76,22 +123,54 @@ def detect_app_kind(sources: Mapping[Path, str]) -> tuple[AppKind, bool]:
     return AppKind.CONSOLE, True
 
 
+def _call_name(func: ast.expr) -> str | None:
+    """Nazwa wywoływanej funkcji/metody, bez względu na to, czy wywołanie jest
+    postaci `modul.nazwa(...)` czy gołego `nazwa(...)` (import z `from ... import`)."""
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return None
+
+
+def _resolved_mode(node: ast.Call, pos: int, kw_name: str) -> str | None:
+    """Zwraca literał trybu otwarcia, sentinel `"?"` gdy tryb podano, ale nie
+    jako literał (a więc nie do udowodnienia — liczy się jako zapis), albo
+    `None` gdy trybu w ogóle nie podano (domyślny odczyt)."""
+    if len(node.args) > pos:
+        arg = node.args[pos]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return arg.value
+        return "?"
+    for kw in node.keywords:
+        if kw.arg == kw_name:
+            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                return kw.value.value
+            return "?"
+    return None
+
+
+def _is_write_mode(mode: str | None) -> bool:
+    if mode is None:
+        return False
+    if mode == "?":
+        return True
+    return any(ch in mode for ch in WRITE_MODE_CHARS)
+
+
 def detect_output_mode(sources: Mapping[Path, str]) -> OutputMode:
     for tree in _trees(sources):
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            func = node.func
-            if isinstance(func, ast.Name) and func.id == "open":
-                mode = ""
-                if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
-                    mode = str(node.args[1].value)
-                for kw in node.keywords:
-                    if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
-                        mode = str(kw.value.value)
-                if any(ch in mode for ch in "wax+"):
+            name = _call_name(node.func)
+            if name in MODE_CHECKED_NAMES:
+                if _is_write_mode(_resolved_mode(node, 1, "mode")):
                     return OutputMode.ONEDIR
-            elif isinstance(func, ast.Attribute) and func.attr in WRITE_METHODS:
+            elif name == "basicConfig":
+                if any(kw.arg == "filename" for kw in node.keywords):
+                    return OutputMode.ONEDIR
+            elif name in WRITE_METHODS:
                 return OutputMode.ONEDIR
     return OutputMode.ONEFILE
 
