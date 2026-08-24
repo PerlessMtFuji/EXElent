@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from exelent.analysis.project import analyze_project
-from exelent.models import AppKind, OutputMode
+from exelent.models import AppKind, OutputMode, Severity
 
 
 def _make(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -107,3 +107,49 @@ def test_heavy_package_produces_warning(tmp_path):
     heavy = [i for i in result.issues if i.code == "heavy_packages"]
     assert len(heavy) == 1
     assert "torch" in heavy[0].data["packages"]
+
+
+def test_broken_txt_alone_is_blocker(tmp_path):
+    root = _make(tmp_path, {"kod.txt": "def f(:\n    pass"})
+    result = analyze_project(root)
+    txt_issues = [i for i in result.issues if i.code == "txt_syntax_error"]
+    assert len(txt_issues) == 1
+    assert txt_issues[0].severity is Severity.BLOCKER
+    assert result.entry is None
+
+
+def test_broken_txt_alongside_working_source_is_warning(tmp_path):
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "if __name__ == '__main__':\n    print('hi')\n",
+            "notes.txt": "def f(:\n    pass",
+        },
+    )
+    result = analyze_project(root)
+    txt_issues = [i for i in result.issues if i.code == "txt_syntax_error"]
+    assert len(txt_issues) == 1
+    assert txt_issues[0].severity is Severity.WARNING
+    assert result.entry is not None
+    assert result.entry.name == "main.py"
+
+
+def test_short_fenced_program_amid_prose_is_converted(tmp_path):
+    root = _make(
+        tmp_path,
+        {
+            "kod.txt": (
+                "Hej, tu jest ten program o ktorym mowilismy wczoraj.\n"
+                "Powinien dzialac od razu, wklej go do pliku i uruchom:\n\n"
+                "```python\n"
+                "print('hi')\n"
+                "```\n\n"
+                "Daj znac czy dziala.\n"
+            )
+        },
+    )
+    result = analyze_project(root)
+    assert "kod.py" in result.converted
+    assert result.converted["kod.py"] == "print('hi')"
+    assert result.entry is not None
+    assert result.entry.name == "kod.py"
