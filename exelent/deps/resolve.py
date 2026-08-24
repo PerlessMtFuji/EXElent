@@ -12,6 +12,18 @@ from exelent.deps.aliases import ALIASES, HEAVY_PACKAGES
 from exelent.models import Dependency
 
 _REQ_LINE = re.compile(r"^\s*([A-Za-z0-9_.\-]+(?:\[[^\]]+\])?(?:[<>=!~]=?[^\s#]+)?)")
+_DIRECT_REF_PREFIXES = ("git+", "hg+", "svn+", "bzr+")
+_DIRECT_REF_SUFFIXES = (".whl", ".tar.gz", ".zip")
+
+
+def _is_direct_reference(spec: str) -> bool:
+    """URL-e i referencje VCS/artefaktów — pip akceptuje je dosłownie, bez
+    parsowania jako "nazwa[==wersja]"."""
+    return (
+        "://" in spec
+        or spec.startswith(_DIRECT_REF_PREFIXES)
+        or spec.endswith(_DIRECT_REF_SUFFIXES)
+    )
 
 
 def _optional_import_lines(tree: ast.AST) -> set[int]:
@@ -48,20 +60,32 @@ def resolve_dependencies(
             stripped = line.strip()
             if not stripped or stripped.startswith(("#", "-")):
                 continue
+            if _is_direct_reference(stripped):
+                specs.append(stripped)
+                continue
             match = _REQ_LINE.match(stripped)
             if match:
                 specs.append(match.group(1))
-        return tuple(
-            Dependency(
-                import_name=re.split(r"[<>=!~\[]", spec)[0],
-                package=spec,
-                heavy=re.split(r"[<>=!~\[]", spec)[0] in HEAVY_PACKAGES,
+        deps_from_req = []
+        for spec in sorted(set(specs)):
+            base = spec if _is_direct_reference(spec) else re.split(r"[<>=!~\[]", spec)[0]
+            deps_from_req.append(
+                Dependency(
+                    import_name=base,
+                    package=spec,
+                    heavy=base in HEAVY_PACKAGES,
+                )
             )
-            for spec in sorted(set(specs))
-        )
+        return tuple(deps_from_req)
 
     stdlib = sys.stdlib_module_names
-    found: dict[str, bool] = {}
+    # Klucz to nazwa PAKIETU po aliasowaniu, nie nazwa importu — alias table
+    # jest celowo many-to-one (np. win32com/win32api/win32gui/pythoncom ->
+    # pywin32, matplotlib/mpl_toolkits -> matplotlib), więc deduplikacja i
+    # `optional` muszą liczyć się po stronie rozwiązanego pakietu, inaczej
+    # ten sam pakiet trafia na listę dwa razy ze sprzecznymi flagami.
+    package_optional: dict[str, bool] = {}
+    package_import_names: dict[str, set[str]] = {}
 
     for code in sources.values():
         try:
@@ -80,17 +104,21 @@ def resolve_dependencies(
             for name in names:
                 if name in stdlib or name in local_modules or name.startswith("_"):
                     continue
+                package = ALIASES.get(name, name)
                 optional = node.lineno in optional_lines
-                found[name] = found.get(name, True) and optional
+                package_optional[package] = package_optional.get(package, True) and optional
+                package_import_names.setdefault(package, set()).add(name)
 
     deps = [
         Dependency(
-            import_name=name,
-            package=ALIASES.get(name, name),
+            # Dla pakietu osiąganego wieloma nazwami importu wybieramy
+            # alfabetycznie pierwszą — deterministyczny, stabilny wybór.
+            import_name=min(package_import_names[package]),
+            package=package,
             optional=optional,
-            heavy=ALIASES.get(name, name) in HEAVY_PACKAGES,
+            heavy=package in HEAVY_PACKAGES,
         )
-        for name, optional in found.items()
+        for package, optional in package_optional.items()
     ]
     deps.sort(key=lambda d: d.package.lower())
     return tuple(deps)
