@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from exelent.analysis.entrypoint import (
+    TEST_FILE_PENALTY,
     entry_is_certain,
     local_module_names,
     rank_entry_candidates,
@@ -49,15 +50,63 @@ def test_root_beats_subdirectory(tmp_path):
 
 
 def test_tests_are_penalised(tmp_path):
+    # Isolate the penalty itself, not just the final ordering: two files
+    # identical in every OTHER scored respect (same content, both at root,
+    # neither imported, neither importing, no guard/startup, no name match),
+    # differing only by the "test_" prefix. If the penalty branch were
+    # deleted, this score difference would drop to 0 and the test would fail
+    # (regression coverage for review FINDING 2: the old ordering-only test
+    # still passed even with the penalty branch removed).
     sources = _srcs(
         tmp_path,
         {
-            "test_main.py": "if __name__ == '__main__':\n    pass",
-            "program.py": "if __name__ == '__main__':\n    pass",
+            "widget.py": "x = 1",
+            "test_widget.py": "x = 1",
         },
     )
     result = rank_entry_candidates(tmp_path, sources)
-    assert result[0].path.name == "program.py"
+    by_name = {c.path.name: c.score for c in result}
+    assert by_name["widget.py"] - by_name["test_widget.py"] == TEST_FILE_PENALTY
+
+
+def test_importer_outranks_imported_despite_weak_signals(tmp_path):
+    # Regression for review FINDING 1 / INVARIANT A: main.py stacks every
+    # weak heuristic there is (preferred name, __main__ guard, startup call)
+    # while app_core.py, the true root, has only the import-graph signal.
+    # The import graph must still win: no combination of name/guard/root/
+    # startup bonuses may outrank the file that imports it.
+    sources = _srcs(
+        tmp_path,
+        {
+            "app_core.py": "import main\nmain.launch()\n",
+            "main.py": (
+                "import tkinter\n\n\n"
+                "def launch():\n"
+                "    root = tkinter.Tk()\n"
+                "    root.mainloop()\n\n\n"
+                "if __name__ == '__main__':\n"
+                "    launch()\n"
+            ),
+        },
+    )
+    result = rank_entry_candidates(tmp_path, sources)
+    assert result[0].path.name == "app_core.py"
+
+
+def test_test_file_imports_do_not_demote_entry(tmp_path):
+    # Regression for INVARIANT B: a test file importing the real entry point
+    # must not cost that entry point its "nobody (non-test) imports me"
+    # status. Without this, adding a test file to a project would break
+    # entry-point detection.
+    sources = _srcs(
+        tmp_path,
+        {
+            "main.py": "if __name__ == '__main__':\n    pass",
+            "test_main.py": "import main\n",
+        },
+    )
+    result = rank_entry_candidates(tmp_path, sources)
+    assert result[0].path.name == "main.py"
 
 
 def test_gui_startup_call_scores(tmp_path):
