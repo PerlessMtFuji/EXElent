@@ -49,3 +49,80 @@ def test_ensure_uv_downloads_when_missing(monkeypatch, tmp_path):
     result = bootstrap.ensure_uv(noop_progress)
     assert result.exists() and len(calls) == 1
     assert bootstrap.UV_VERSION in calls[0]
+
+
+def _fake_uv_zip_bytes(content: bytes = b"prawdziwa zawartosc uv.exe") -> bytes:
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("uv-x86_64-pc-windows-msvc/uv.exe", content)
+    return buffer.getvalue()
+
+
+def test_interrupted_download_leaves_no_partial_artifact(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    target = bootstrap.uv_path()
+    payload = _fake_uv_zip_bytes()
+    monkeypatch.setattr(bootstrap, "_download", lambda url, progress: payload)
+
+    def failing_replace(_src, _dst):
+        raise OSError("symulowane zerwanie polaczenia w polowie zapisu")
+
+    monkeypatch.setattr(bootstrap.os, "replace", failing_replace)
+
+    with pytest.raises(bootstrap.UvDownloadError):
+        bootstrap.ensure_uv(noop_progress)
+
+    assert not target.exists()
+    assert target.parent.exists()
+    assert list(target.parent.glob(".uv-download-*")) == []
+
+
+def test_ensure_uv_raises_typed_error_with_issue_code(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(
+        bootstrap,
+        "_download",
+        lambda url, progress: (_ for _ in ()).throw(OSError("brak sieci")),
+    )
+
+    with pytest.raises(bootstrap.UvDownloadError) as exc_info:
+        bootstrap.ensure_uv(noop_progress)
+
+    assert exc_info.value.issue.code == "uv_download_failed"
+
+
+def test_ensure_uv_retries_download_after_prior_interruption(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    target = bootstrap.uv_path()
+    payload = _fake_uv_zip_bytes()
+    calls = {"n": 0}
+
+    def fake_download(url, progress):
+        calls["n"] += 1
+        return payload
+
+    monkeypatch.setattr(bootstrap, "_download", fake_download)
+
+    real_replace = bootstrap.os.replace
+    state = {"fail_next": True}
+
+    def flaky_replace(src, dst):
+        if state["fail_next"]:
+            state["fail_next"] = False
+            raise OSError("symulowane zerwanie polaczenia w polowie zapisu")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(bootstrap.os, "replace", flaky_replace)
+
+    with pytest.raises(bootstrap.UvDownloadError):
+        bootstrap.ensure_uv(noop_progress)
+    assert not target.exists()
+
+    result = bootstrap.ensure_uv(noop_progress)
+
+    assert result == target
+    assert target.exists()
+    assert calls["n"] == 2
