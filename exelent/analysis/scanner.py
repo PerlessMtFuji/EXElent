@@ -1,0 +1,115 @@
+"""Chodzenie po katalogu użytkownika i klasyfikacja tego, co w nim leży."""
+
+from __future__ import annotations
+
+import ast
+import re
+from pathlib import Path
+
+from exelent.constants import EXCLUDED_DIRS, MAX_SCAN_BYTES, MAX_SCAN_FILES
+from exelent.models import ScanResult
+
+DATA_SUFFIXES = frozenset(
+    {
+        ".json",
+        ".csv",
+        ".txt",
+        ".ini",
+        ".cfg",
+        ".yaml",
+        ".yml",
+        ".xml",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".wav",
+        ".mp3",
+        ".ogg",
+        ".ttf",
+        ".otf",
+        ".md",
+    }
+)
+IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".ico", ".bmp", ".gif"})
+ICON_STEMS = frozenset({"icon", "ikona", "logo", "app", "favicon"})
+
+_CODE_HINT = re.compile(r"^\s*(def |class |import |from \S+ import |print\()", re.MULTILINE)
+
+
+def looks_like_python(text: str) -> bool:
+    """Czy tekst wygląda na kod Pythona, nawet jeśli jeszcze się nie parsuje."""
+    if not text.strip():
+        return False
+    try:
+        ast.parse(text)
+        return True
+    except SyntaxError:
+        return len(_CODE_HINT.findall(text)) >= 2
+
+
+def _read_head(path: Path, limit: int = 64_000) -> str:
+    try:
+        return path.read_bytes()[:limit].decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def scan_directory(
+    root: Path,
+    *,
+    max_files: int = MAX_SCAN_FILES,
+    max_bytes: int = MAX_SCAN_BYTES,
+) -> ScanResult:
+    py: list[Path] = []
+    texts: list[Path] = []
+    data: list[Path] = []
+    icons: list[Path] = []
+    requirements: Path | None = None
+    count = 0
+    total = 0
+    truncated = False
+
+    for dirpath, dirnames, filenames in root.walk():
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.startswith(".")]
+        for name in sorted(filenames):
+            path = dirpath / name
+            count += 1
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass
+            if count > max_files or total > max_bytes:
+                truncated = True
+                break
+
+            suffix = path.suffix.lower()
+            if suffix in {".py", ".pyw"}:
+                py.append(path)
+            elif name.lower() == "requirements.txt":
+                requirements = path
+            elif suffix == ".txt":
+                if looks_like_python(_read_head(path)):
+                    texts.append(path)
+                else:
+                    data.append(path)
+            elif suffix in IMAGE_SUFFIXES:
+                if path.stem.lower() in ICON_STEMS or suffix == ".ico":
+                    icons.append(path)
+                else:
+                    data.append(path)
+            elif suffix in DATA_SUFFIXES:
+                data.append(path)
+        if truncated:
+            break
+
+    return ScanResult(
+        root=root,
+        py_files=tuple(py),
+        text_candidates=tuple(texts),
+        data_files=tuple(data),
+        icon_files=tuple(icons),
+        requirements=requirements,
+        file_count=count,
+        total_bytes=total,
+        truncated=truncated,
+    )
