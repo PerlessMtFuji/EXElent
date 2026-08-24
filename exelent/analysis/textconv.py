@@ -125,13 +125,13 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
     text = text.strip("\n")
 
     if _mixes_tabs_and_spaces(text):
-        text = text.expandtabs(4)
+        text = text.expandtabs(8)
         steps.append("tabs")
 
     try:
         ast.parse(text)
     except TabError:
-        fixed = text.expandtabs(4)
+        fixed = text.expandtabs(8)
         try:
             ast.parse(fixed)
         except SyntaxError as exc:
