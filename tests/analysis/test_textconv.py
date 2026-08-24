@@ -1,3 +1,5 @@
+import ast
+
 from exelent.analysis.textconv import convert_text_to_python, decode_bytes
 
 
@@ -67,3 +69,18 @@ def test_records_applied_steps():
     raw = "```python\nprint(1)\n```"
     result = convert_text_to_python(raw.encode())
     assert "fence" in result.steps
+
+
+def test_tab_expansion_preserves_program_structure():
+    """Regression for a tabwidth-4 bug: two indent strings can share the same
+    tabstop-8 column and the same character count (so CPython's TabError
+    detector sees no ambiguity and ast.parse succeeds on the raw input) while
+    still expanding to different columns at tabstop 4 -- silently reparenting
+    `y = 2` into the inner `if` body. Tab expansion must use tabstop 8, the
+    width CPython's own tokenizer used to decide the original structure, so
+    the converted code parses to the exact same AST as the raw input.
+    """
+    raw = b"if True:\n  \t  \tif True:\n  \t  \t    z = 1\n    \t\ty = 2\n"
+    result = convert_text_to_python(raw)
+    assert result.ok
+    assert ast.dump(ast.parse(result.code)) == ast.dump(ast.parse(raw.decode()))
