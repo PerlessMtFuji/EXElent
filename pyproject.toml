@@ -1,0 +1,29 @@
+[project]
+name = "exelent"
+version = "0.1.0"
+description = "Turn a folder of Python code into a Windows EXE — for people who do not use a terminal"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = ["PySide6>=6.7", "pillow>=10.3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2", "pytest-qt>=4.4", "ruff>=0.5"]
+
+[project.scripts]
+exelent = "exelent.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: buduje prawdziwe pliki EXE, trwa minuty"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# ruff >=0.11 formats/lints Python fences inside Markdown too; docs/ and
+# .superpowers/ hold plan/spec prose from the wider 21-task project, not
+# code owned by this package, so keep the linter scoped to our own files.
+extend-exclude = ["docs", ".superpowers"]
