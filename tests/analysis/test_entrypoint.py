@@ -94,10 +94,14 @@ def test_importer_outranks_imported_despite_weak_signals(tmp_path):
 
 
 def test_test_file_imports_do_not_demote_entry(tmp_path):
-    # Regression for INVARIANT B: a test file importing the real entry point
-    # must not cost that entry point its "nobody (non-test) imports me"
-    # status. Without this, adding a test file to a project would break
-    # entry-point detection.
+    # Plain-shape sanity check for INVARIANT B, kept for readability, but it
+    # does NOT discriminate: main.py already wins here on non-graph bonuses
+    # alone (root + preferred-name + main-guard = 55), independent of whether
+    # the Invariant-B carve-out exists. It passes both with and without the
+    # carve-out, so it does not protect the invariant by itself. The real
+    # regression test is
+    # test_test_file_import_does_not_cost_entry_its_root_status below, which
+    # uses a shape with no weak bonuses to hide behind.
     sources = _srcs(
         tmp_path,
         {
@@ -107,6 +111,31 @@ def test_test_file_imports_do_not_demote_entry(tmp_path):
     )
     result = rank_entry_candidates(tmp_path, sources)
     assert result[0].path.name == "main.py"
+
+
+def test_test_file_import_does_not_cost_entry_its_root_status(tmp_path):
+    # Regression for INVARIANT B (discriminating shape, review fix round 2):
+    # widget.py has no weak bonuses to hide behind -- its stem is
+    # deliberately not in PREFERRED_STEMS and it imports nothing local, so
+    # its only score comes from the __main__ guard, being at root, and
+    # (crucially) the import-graph "root candidate" bonus. test_widget.py is
+    # its only importer. other.py is an unrelated file nothing imports,
+    # included so the assertion is a real ranking, not just a two-way
+    # comparison.
+    #
+    # Without the INVARIANT B carve-out (test-file imports folded into the
+    # non-test import graph), widget.py would lose its root-candidate bonus
+    # and drop below other.py. With the carve-out, widget.py wins outright.
+    sources = _srcs(
+        tmp_path,
+        {
+            "widget.py": "if __name__ == '__main__':\n    pass\n",
+            "test_widget.py": "import widget\n",
+            "other.py": "y = 2\n",
+        },
+    )
+    result = rank_entry_candidates(tmp_path, sources)
+    assert result[0].path.name == "widget.py"
 
 
 def test_gui_startup_call_scores(tmp_path):
