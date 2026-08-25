@@ -57,3 +57,67 @@ def test_blockers_come_first():
 def test_each_pattern_is_reported_once():
     log = "ModuleNotFoundError: No module named 'cv2'\n" * 5
     assert len(explain_log(log)) == 1
+
+
+def test_bare_access_denied_is_neutral_not_antivirus():
+    # Reviewer finding: a bare WinError 5 unrelated to the build output
+    # (e.g. a locked *input* file) must not be diagnosed as antivirus
+    # interference — that sends the user to disable their antivirus for
+    # nothing. It should surface as the neutral access_denied instead.
+    log = (
+        r"PermissionError: [WinError 5] Access is denied: "
+        r"'C:\Users\foo\Documents\readonly_input.csv'"
+    )
+    codes = _codes(log)
+    assert "access_denied" in codes
+    assert "antivirus_blocked" not in codes
+
+
+def test_genuine_antivirus_case_does_not_also_report_access_denied():
+    # When the more specific antivirus_blocked pattern fires (access-denied
+    # AND the path is under dist), the neutral fallback must not also show
+    # up for the same underlying event.
+    log = r"PermissionError: [WinError 5] Access is denied: 'C:\\...\\dist\\Program.exe'"
+    codes = _codes(log)
+    assert "antivirus_blocked" in codes
+    assert "access_denied" not in codes
+
+
+def test_file_in_use_is_recognised():
+    log = (
+        "OSError: [WinError 32] The process cannot access the file "
+        r"because it is being used by another process: 'dist\\Program.exe'"
+    )
+    codes = _codes(log)
+    assert "file_in_use" in codes
+    assert "antivirus_blocked" not in codes
+
+
+def test_file_in_use_suppresses_access_denied():
+    log = (
+        "OSError: [WinError 32] The process cannot access the file "
+        "because it is being used by another process"
+    )
+    codes = _codes(log)
+    assert "file_in_use" in codes
+    assert "access_denied" not in codes
+
+
+def test_errno_28_boundary_does_not_match_errno_280():
+    log = "OSError: [Errno 280] Some unrelated protocol error"
+    assert "disk_full" not in _codes(log)
+
+
+def test_winerror_206_boundary_does_not_match_winerror_2065():
+    log = "OSError: [WinError 2065] Some unrelated network error"
+    assert "path_too_long" not in _codes(log)
+
+
+def test_sslerror_boundary_does_not_match_inside_longer_identifier():
+    log = "MySSLErrorWrapper: an unrelated internal failure occurred"
+    assert "ssl_proxy" not in _codes(log)
+
+
+def test_sslerror_boundary_matches_as_standalone_identifier():
+    log = "requests.exceptions.SSLError: HTTPSConnectionPool(host='pypi.org', port=443)"
+    assert "ssl_proxy" in _codes(log)
