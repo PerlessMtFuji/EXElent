@@ -19,6 +19,12 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: buduje prawdziwe pliki EXE, trwa minuty"]
+# Pytest's built-in default `norecursedirs` includes a literal "build" entry
+# (meant to skip packaging output like ./build/), which silently swallows
+# our real `tests/build/` package (mirroring `exelent/build/`) with zero
+# warning — collection just quietly drops those tests. Restate the default
+# list minus "build" so this test directory is actually collected.
+norecursedirs = ["*.egg", ".*", "_darcs", "CVS", "dist", "node_modules", "venv", "{arch}"]
 
 [tool.ruff]
 line-length = 100

@@ -2,8 +2,13 @@
 .idea/
 __pycache__/
 *.py[cod]
-build/
-dist/
+# Anchored to the repo root: packaging tools (hatchling/PyInstaller) drop
+# their output in ./build/ and ./dist/ at the top level. An unanchored
+# "build/" would also match exelent/build/ and tests/build/ (our own
+# source package, mirrored by its test directory) and silently untrack
+# them.
+/build/
+/dist/
 *.spec
 .pytest_cache/
 *.egg-info/
