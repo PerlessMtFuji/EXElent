@@ -7,8 +7,6 @@ Robi dwie rzeczy, których PyInstaller sam nie robi:
 
 from __future__ import annotations
 
-import json
-
 from exelent.models import AppKind, OutputMode
 
 LAUNCHER_FILENAME = "_exelent_launcher.py"
@@ -118,16 +116,32 @@ _REPORT_CONSOLE = """\
 """
 
 
+def _quote_module_name(value: str) -> str:
+    # Why not repr()? It picks single quotes for a plain identifier, which
+    # fails the test suite's double-quote assertion.
+    #
+    # Why not json.dumps()? It escapes astral code points (above U+FFFF) as
+    # a UTF-16 surrogate pair of \uXXXX escapes, per the JSON spec. Python's
+    # string-literal grammar does NOT recombine adjacent \u surrogate
+    # escapes back into one scalar value, so ENTRY_MODULE would silently
+    # decode to two lone-surrogate characters instead of the original one
+    # character -- a corrupted round trip that still parses.
+    #
+    # str.encode("unicode_escape") escapes an astral code point as a single
+    # \U000XXXXX escape instead, which Python's grammar *does* decode back
+    # to the original scalar. It does not escape a literal double quote
+    # though, so that is handled separately below, after the unicode_escape
+    # pass (so a backslash it introduces is never re-escaped).
+    escaped = value.encode("unicode_escape").decode("ascii")
+    escaped = escaped.replace('"', '\\"')
+    return '"' + escaped + '"'
+
+
 def render_launcher(entry_module: str, app_kind: AppKind, output_mode: OutputMode) -> str:
     chdir_body = _CHDIR_BUNDLE if output_mode is OutputMode.ONEFILE else _CHDIR_EXECUTABLE
     report_body = _REPORT_WINDOWED if app_kind is AppKind.WINDOWED else _REPORT_CONSOLE
-    # json.dumps() (not repr()) so a valid module name renders with the double
-    # quotes the test suite expects, while still producing a fully-escaped
-    # Python string literal for hostile input (embedded quotes, backslashes,
-    # non-ASCII) — JSON's string-escaping grammar is a strict subset of
-    # Python's, so the result always parses as a single string literal.
     return _TEMPLATE.format(
-        entry=json.dumps(entry_module),
+        entry=_quote_module_name(entry_module),
         chdir_body=chdir_body,
         report_body=report_body,
     )
