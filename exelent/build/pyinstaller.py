@@ -3,9 +3,11 @@ jego log na fazy paska postępu."""
 
 from __future__ import annotations
 
+import queue
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -39,6 +41,12 @@ _PHASE_PROGRESS = {
 # (see global constraints), so this is a fixed constant rather than a
 # platform check or a one-line function pretending otherwise.
 _ADD_DATA_SEPARATOR = ";"
+
+# How often the cancel token is polled while waiting for subprocess output.
+# PyInstaller can go silent for long stretches (archive writing, antivirus
+# scanning the freshly written EXE) -- the cancel check must run on a timer,
+# not once per emitted log line, or Cancel looks dead during those silences.
+_CANCEL_POLL_SECONDS = 0.2
 
 
 def build_arguments(
@@ -122,35 +130,70 @@ class PyInstallerBackend:
 
         progress("build_start", 0.2)
         assert process.stdout is not None
-        for line in process.stdout:
-            lines.append(line.rstrip("\n"))
+
+        # Read stdout on a worker thread so the main loop can poll the
+        # cancel token on a short timer regardless of whether -- or how
+        # rarely -- PyInstaller is currently emitting output.
+        output_queue: queue.Queue[str | None] = queue.Queue()
+
+        def _pump(stdout: object) -> None:
+            try:
+                for line in stdout:  # type: ignore[attr-defined]
+                    output_queue.put(line)
+            finally:
+                output_queue.put(None)  # sentinel: stdout closed
+
+        reader = threading.Thread(target=_pump, args=(process.stdout,), daemon=True)
+        reader.start()
+
+        cancelled = False
+        stdout_closed = False
+        while not stdout_closed:
             if cancel.cancelled:
-                _kill_tree(process.pid)
-                log_path.write_text("\n".join(lines), encoding="utf-8")
-                return BuildResult(
-                    ok=False,
-                    log_path=log_path,
-                    issues=(Issue("build_cancelled", Severity.INFO),),
-                )
+                cancelled = True
+                break
+            try:
+                line = output_queue.get(timeout=_CANCEL_POLL_SECONDS)
+            except queue.Empty:
+                continue
+            if line is None:
+                stdout_closed = True
+                break
+            lines.append(line.rstrip("\n"))
             for pattern, phase in PHASES.items():
                 if re.search(pattern, line):
                     progress(phase, _PHASE_PROGRESS[phase])
                     break
 
+        if cancelled:
+            kill_returncode = _kill_tree(process.pid)
+            lines.append(f"[exelent] taskkill returncode={kill_returncode}")
+            process.wait()
+            reader.join(timeout=5)
+            log_path.write_text("\n".join(lines), encoding="utf-8")
+            issues = [Issue("build_cancelled", Severity.INFO)]
+            if kill_returncode != 0:
+                # A leftover PyInstaller process can still be holding
+                # workspace files open; the NEXT build could then fail for
+                # reasons nobody would connect back to this cancel.
+                issues.append(Issue("cancel_incomplete", Severity.WARNING))
+            return BuildResult(ok=False, log_path=log_path, issues=tuple(issues))
+
         returncode = process.wait()
+        reader.join(timeout=5)
         log_path.write_text("\n".join(lines), encoding="utf-8")
         duration = time.monotonic() - started
 
         if returncode != 0:
             return BuildResult(ok=False, log_path=log_path, duration_s=duration)
 
-        produced = self._collect_artifact(plan, workspace)
+        produced, issue = self._collect_artifact(plan, workspace)
         if produced is None:
             return BuildResult(
                 ok=False,
                 log_path=log_path,
                 duration_s=duration,
-                issues=(Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name}),),
+                issues=(issue,) if issue is not None else (),
             )
 
         progress("done", 1.0)
@@ -162,25 +205,43 @@ class PyInstallerBackend:
             log_path=log_path,
         )
 
-    def _collect_artifact(self, plan: BuildPlan, workspace: Path) -> Path | None:
+    def _collect_artifact(
+        self, plan: BuildPlan, workspace: Path
+    ) -> tuple[Path | None, Issue | None]:
         dist = workspace / "dist"
-        source = (
-            dist / f"{plan.exe_name}.exe"
-            if plan.output_mode is OutputMode.ONEFILE
-            else dist / plan.exe_name
-        )
+        is_onedir = plan.output_mode is OutputMode.ONEDIR
+        source = dist / plan.exe_name if is_onedir else dist / f"{plan.exe_name}.exe"
         if not source.exists():
-            return None
+            return None, Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name})
 
         plan.dest_dir.mkdir(parents=True, exist_ok=True)
         target = plan.dest_dir / source.name
+
         if target.exists():
             if target.is_dir():
                 shutil.rmtree(target, ignore_errors=True)
             else:
-                target.unlink()
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+            if target.exists():
+                # A build reports ok=True only when the artifact is exactly
+                # where BuildResult says it is. A locked leftover file (a
+                # prior EXE still running, antivirus scanning it, ...) must
+                # not let shutil.move silently nest the new build one level
+                # deeper inside the stale directory it could not clear.
+                return None, Issue("dest_in_use", Severity.BLOCKER, {"path": str(target)})
+
         shutil.move(str(source), str(target))
-        return target
+
+        if not target.exists():
+            return None, Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name})
+
+        if is_onedir and (target / source.name).exists():
+            return None, Issue("dest_in_use", Severity.BLOCKER, {"path": str(target)})
+
+        return target, None
 
 
 def _tree_size(path: Path) -> int:
@@ -189,11 +250,16 @@ def _tree_size(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
-def _kill_tree(pid: int) -> None:
-    """PyInstaller uruchamia procesy potomne — bez /T zostają sierotami."""
-    subprocess.run(
+def _kill_tree(pid: int) -> int:
+    """PyInstaller uruchamia procesy potomne — bez /T zostają sierotami.
+
+    Zwraca kod wyjścia taskkill, żeby wywołujący mógł wykryć nieudane
+    zabicie (proces może wciąż trzymać otwarte pliki w workspace).
+    """
+    result = subprocess.run(
         ["taskkill", "/F", "/T", "/PID", str(pid)],
         capture_output=True,
         creationflags=CREATE_NO_WINDOW,
         check=False,
     )
+    return result.returncode
