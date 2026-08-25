@@ -48,6 +48,17 @@ _ADD_DATA_SEPARATOR = ";"
 # not once per emitted log line, or Cancel looks dead during those silences.
 _CANCEL_POLL_SECONDS = 0.2
 
+# Bound on how long we wait for the process to actually exit after taskkill,
+# and on joining the stdout-reader thread, once a cancel has been requested.
+# taskkill on Windows normally finishes in well under a second; a few
+# seconds is generous headroom for a slow-but-dying process while still
+# being short enough that a person watching the screen does not conclude
+# the whole program is frozen. If the child is genuinely unkillable, build()
+# must still return within this bound rather than hang forever -- see
+# cancel_incomplete below.
+_CANCEL_KILL_WAIT_SECONDS = 3.0
+_CANCEL_READER_JOIN_SECONDS = 1.0
+
 
 def build_arguments(
     plan: BuildPlan, workspace: Path, launcher: Path, icon: Path | None
@@ -168,14 +179,35 @@ class PyInstallerBackend:
         if cancelled:
             kill_returncode = _kill_tree(process.pid)
             lines.append(f"[exelent] taskkill returncode={kill_returncode}")
-            process.wait()
-            reader.join(timeout=5)
+
+            wait_timed_out = False
+            try:
+                process.wait(timeout=_CANCEL_KILL_WAIT_SECONDS)
+            except subprocess.TimeoutExpired:
+                # The process is still alive despite taskkill -- do not hang
+                # build() waiting for it. Give up on THIS wait, not on ever
+                # returning: a build that cannot be cancelled and never
+                # returns is indistinguishable from a frozen application.
+                wait_timed_out = True
+                lines.append(
+                    f"[exelent] process still alive {_CANCEL_KILL_WAIT_SECONDS}s "
+                    "after taskkill; giving up on waiting for it"
+                )
+
+            # Daemon thread: even if it never finishes (child still alive,
+            # still writing to its stdout pipe), it cannot block interpreter
+            # shutdown, and build() must not wait on it unboundedly either.
+            reader.join(timeout=_CANCEL_READER_JOIN_SECONDS)
             log_path.write_text("\n".join(lines), encoding="utf-8")
+
             issues = [Issue("build_cancelled", Severity.INFO)]
-            if kill_returncode != 0:
-                # A leftover PyInstaller process can still be holding
-                # workspace files open; the NEXT build could then fail for
-                # reasons nobody would connect back to this cancel.
+            if kill_returncode != 0 or wait_timed_out:
+                # Either taskkill itself reported failure, or -- regardless
+                # of what it reported -- the wait timed out, which means the
+                # process is still alive. Either way a PyInstaller process
+                # may still be running and holding workspace files open,
+                # which could make the NEXT build fail for reasons nobody
+                # would connect back to this cancel.
                 issues.append(Issue("cancel_incomplete", Severity.WARNING))
             return BuildResult(ok=False, log_path=log_path, issues=tuple(issues))
 

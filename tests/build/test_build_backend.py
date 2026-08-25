@@ -4,6 +4,7 @@ no real PyInstaller run is needed."""
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import threading
 import time
@@ -241,6 +242,63 @@ def test_cancel_incomplete_warning_when_taskkill_fails(tmp_path, monkeypatch, fa
     assert result.ok is False
     assert "build_cancelled" in codes
     assert "cancel_incomplete" in codes
+
+
+def test_cancel_returns_within_bound_when_kill_genuinely_fails(
+    tmp_path, monkeypatch, fake_pyinstaller
+):
+    """Round 2, Finding: a child that survives taskkill must not hang
+    build() forever. _kill_tree here reports failure AND does not actually
+    terminate anything, simulating a genuinely-unkillable process."""
+    captured_pid: dict[str, int] = {}
+
+    def _fake_kill_tree_reports_failure_without_killing(pid: int) -> int:
+        captured_pid["pid"] = pid
+        return 1
+
+    monkeypatch.setattr(
+        pyinstaller_module, "_kill_tree", _fake_kill_tree_reports_failure_without_killing
+    )
+
+    root, _ = _prepare_workspace(tmp_path, monkeypatch)
+    monkeypatch.setenv("EXELENT_FAKE_SLEEP", "300")
+    monkeypatch.setenv("EXELENT_FAKE_PRODUCE", "0")
+
+    plan = _plan(root, tmp_path / "out")
+    cancel = CancelToken()
+    timer = threading.Timer(0.3, cancel.cancel)
+    timer.start()
+    started = time.monotonic()
+    try:
+        result = PyInstallerBackend().build(plan, _env(), noop_progress, cancel)
+    finally:
+        timer.cancel()
+        # Our fake _kill_tree deliberately left the child running -- clean
+        # it up for real so the test suite doesn't leak a sleeping process
+        # on the developer's machine.
+        pid = captured_pid.get("pid")
+        if pid is not None:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                check=False,
+            )
+    elapsed = time.monotonic() - started
+
+    # Generous vs. the 0.3s trigger delay + the 3s kill-wait bound + the 1s
+    # reader-join bound (~4.3s worst case) -- bounded, not flaky, and proves
+    # build() does not hang indefinitely the way the un-patched code did
+    # (reviewer measured 30+ seconds with no return).
+    assert elapsed < 10.0, f"build() did not return promptly: {elapsed:.2f}s"
+
+    assert result.ok is False
+    codes = {i.code for i in result.issues}
+    assert "build_cancelled" in codes
+    assert "cancel_incomplete" in codes
+
+    log_text = result.log_path.read_text(encoding="utf-8")
+    assert "taskkill returncode=1" in log_text
+    assert "still alive" in log_text
 
 
 def test_failed_returncode_writes_log_but_no_exception(tmp_path, monkeypatch, fake_pyinstaller):
