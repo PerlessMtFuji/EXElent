@@ -211,3 +211,205 @@ def test_dist_evidence_on_an_adjacent_line_stays_neutral():
     codes = _codes(log)
     assert "antivirus_blocked" not in codes
     assert "access_denied" in codes
+
+
+# --------------------------------------------------------------------------
+# Runda 3, punkt 1a: pisownia z warstwy CRT ("Errno 13" / "Permission denied").
+# Przed poprawka oba ponizsze logi nie dawaly ZADNEGO Issue — czyli cisza i
+# generyczne "build sie nie powiodl" bez nastepnego kroku.
+# --------------------------------------------------------------------------
+
+
+def test_errno_13_on_build_artifact_is_antivirus():
+    log = r"PermissionError: [Errno 13] Permission denied: 'C:\proj\dist\myapp\myapp.exe'"
+    codes = _codes(log)
+    assert "antivirus_blocked" in codes
+    assert "access_denied" not in codes
+
+
+def test_errno_13_on_unrelated_user_file_is_neutral():
+    # Ta sama pisownia bez dowodu na dist musi zostac neutralna — inaczej
+    # dokladamy nowa droge do tej samej pewnej i blednej diagnozy.
+    log = r"PermissionError: [Errno 13] Permission denied: 'C:\Users\foo\Documents\raport.xlsx'"
+    codes = _codes(log)
+    assert "access_denied" in codes
+    assert "antivirus_blocked" not in codes
+
+
+def test_errno_13_on_collected_binary_under_internal_is_antivirus():
+    # Realny ksztalt blokady w fazie COLLECT: shutil.copy2 OTWIERA plik
+    # docelowy w dist\myapp\_internal\, wiec zglasza Errno 13, nie WinError 5.
+    log = (
+        r"PermissionError: [Errno 13] Permission denied: "
+        r"'C:\proj\dist\myapp\_internal\python313.dll'"
+    )
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_errno_13_boundary_does_not_match_errno_130():
+    log = "OSError: [Errno 130] Key has been revoked"
+    assert _codes(log) == set()
+
+
+# --------------------------------------------------------------------------
+# Runda 3, punkt 1b: Windows jawnie nazywajacy antywirusa. Te kody nie
+# potrzebuja koniunkcji z dist — sama tresc komunikatu jest rozrozniajaca.
+# --------------------------------------------------------------------------
+
+
+def test_winerror_225_is_antivirus_without_any_dist_evidence():
+    log = (
+        "OSError: [WinError 225] Operation did not complete successfully "
+        "because the file contains a virus or potentially unwanted software: "
+        r"'C:\proj\build\myapp.exe'"
+    )
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_winerror_225_suppresses_neutral_access_denied():
+    # W calym logu nie ma slowa "dist", a mimo to droga bezwarunkowa musi
+    # stlumic neutralny access_denied z drugiej linii — to jedno zdarzenie.
+    log = (
+        "OSError: [WinError 225] Operation did not complete successfully "
+        "because the file contains a virus or potentially unwanted software: "
+        r"'C:\proj\build\myapp.exe'"
+        "\n"
+        r"PermissionError: [WinError 5] Access is denied: 'C:\proj\build\myapp.exe'"
+        "\n"
+    )
+    codes = _codes(log)
+    assert "antivirus_blocked" in codes
+    assert "access_denied" not in codes
+
+
+def test_winerror_1920_is_antivirus_without_any_dist_evidence():
+    log = (
+        "OSError: [WinError 1920] The file cannot be accessed by the system: "
+        r"'C:\proj\build\myapp\myapp.exe'"
+    )
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_winerror_225_boundary_does_not_match_winerror_2255():
+    log = "OSError: [WinError 2255] Some unrelated failure"
+    assert _codes(log) == set()
+
+
+def test_both_antivirus_routes_yield_exactly_one_issue():
+    # Droga bezwarunkowa (WinError 225) i warunkowa (WinError 5 + dist w tej
+    # samej linii) trafiaja naraz. Oba ramiona uzywaja tego samego kodu, wiec
+    # dedupe w explain_log() ma zwrocic dokladnie jedno Issue, a nie dwa
+    # komunikaty o tym samym zdarzeniu.
+    log = (
+        "OSError: [WinError 225] Operation did not complete successfully "
+        "because the file contains a virus or potentially unwanted software: "
+        r"'C:\proj\build\myapp.exe'"
+        "\n"
+        r"PermissionError: [WinError 5] Access is denied: 'C:\proj\dist\myapp\myapp.exe'"
+        "\n"
+    )
+    issues = explain_log(log)
+    assert [i.code for i in issues] == ["antivirus_blocked"]
+
+
+# --------------------------------------------------------------------------
+# Runda 3, punkt 2: guard segmentu "dist" jest strukturalny, nie enumeracyjny.
+# Trzy sufiksy naraz, bo poprzednia czarna lista przepuszczala je po kolei.
+# --------------------------------------------------------------------------
+
+
+def test_dist_packages_does_not_trigger_antivirus():
+    # Regresja (runda 3): "/usr/lib/python3/dist-packages/..." przechodzil
+    # przez (?!-info), bo czarna lista wyliczala tylko sufiks "-info".
+    log = r"WARNING: /usr/lib/python3/dist-packages/foo.py -- [WinError 5] Access is denied"
+    codes = _codes(log)
+    assert "antivirus_blocked" not in codes
+    assert "access_denied" in codes
+
+
+def test_dist_info_directly_after_separator_does_not_trigger_antivirus():
+    log = r"PermissionError: [WinError 5] Access is denied: 'C:\proj\dist-info\RECORD'"
+    codes = _codes(log)
+    assert "antivirus_blocked" not in codes
+    assert "access_denied" in codes
+
+
+def test_distutils_does_not_trigger_antivirus():
+    log = (
+        r"PermissionError: [WinError 5] Access is denied: "
+        r"'C:\Python313\Lib\distutils\command\build.py'"
+    )
+    codes = _codes(log)
+    assert "antivirus_blocked" not in codes
+    assert "access_denied" in codes
+
+
+# --------------------------------------------------------------------------
+# Pozytywy, ktore musza przezyc kazde zaostrzenie guardu. Logi builda mieszaja
+# reprezentacje sciezek: repr podwaja "\", JSON poczwarza, Windows dokleja
+# prefiksy dlugiej sciezki, a komunikaty systemowe bywaja przetlumaczone.
+# --------------------------------------------------------------------------
+
+
+def test_repr_doubled_backslashes_still_match_dist():
+    log = r"PermissionError: [WinError 5] Access is denied: 'C:\\proj\\dist\\myapp.exe'"
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_json_quadrupled_backslashes_still_match_dist():
+    log = r"PermissionError: [WinError 5] Access is denied: 'C:\\\\proj\\\\dist\\\\myapp.exe'"
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_extended_length_path_prefix_still_matches_dist():
+    log = r"PermissionError: [WinError 5] Access is denied: '\\?\C:\proj\dist\myapp.exe'"
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_extended_length_unc_path_prefix_still_matches_dist():
+    log = (
+        r"PermissionError: [WinError 5] Access is denied: "
+        r"'\\?\UNC\nas01\share\proj\dist\myapp.exe'"
+    )
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_plain_unc_path_still_matches_dist():
+    log = (
+        r"PermissionError: [WinError 5] Access is denied: "
+        r"'\\nas01\share\proj\dist\myapp.exe'"
+    )
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_localised_polish_access_denied_still_matches_dist():
+    # Na polskim Windowsie tresc komunikatu jest przetlumaczona, wiec nosny
+    # zostaje wylacznie numer bledu.
+    log = "PermissionError: [WinError 5] Odmowa dostępu: " + r"'C:\proj\dist\myapp.exe'"
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_internal_directory_of_onedir_build_still_matches_dist():
+    log = (
+        r"PermissionError: [WinError 5] Access is denied: "
+        r"'C:\proj\dist\myapp\_internal\python313.dll'"
+    )
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_dist_at_end_of_path_still_matches():
+    log = r"PermissionError: [WinError 5] Access is denied: 'C:\proj\dist'"
+    assert "antivirus_blocked" in _codes(log)
+
+
+def test_access_denied_on_workpath_stays_neutral_by_design():
+    # Runda 3, punkt 4: swiadoma granica, nie przeoczenie. Prawdziwe trafienie
+    # antywirusa moze wyladowac na workpath ("...\build\myapp.exe"), bo nowszy
+    # PyInstaller sklada EXE w workpath i dopiero potem przenosi do dist.
+    # Nie rozszerzamy _DIST_SEGMENT o "build": falszywy pozytyw wysyla
+    # uzytkownika na godzine wylaczania antywirusa przy innej przyczynie,
+    # a falszywy negatyw daje access_denied, ktory mowi prawde.
+    log = r"PermissionError: [WinError 5] Access is denied: 'C:\proj\build\myapp\myapp.exe'"
+    codes = _codes(log)
+    assert "access_denied" in codes
+    assert "antivirus_blocked" not in codes

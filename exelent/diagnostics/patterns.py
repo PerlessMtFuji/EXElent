@@ -18,19 +18,60 @@ import re
 
 from exelent.models import Issue, Severity
 
-# Surowy sygnal "Windows odmowil dostepu". Sam w sobie nie rozroznia przyczyn.
-_ACCESS_DENIED = r"(?:WinError 5\b|Access is denied)"
+# Surowy sygnal "system odmowil dostepu do pliku". Sam w sobie nie rozroznia
+# przyczyn. Dwie warstwy zglaszaja go inaczej i obie sa realnie osiagalne
+# podczas builda:
+#   - warstwa Win32 ("WinError 5" / "Access is denied") — CreateFile, DeleteFile,
+#     MoveFile, czyli m.in. skladanie i przenoszenie EXE,
+#   - warstwa CRT ("Errno 13" / "Permission denied") — wszystko, co idzie przez
+#     open(). PyInstaller wklada bootloader i kazdy zebrany plik binarny do
+#     dist\myapp\_internal\ przez shutil.copy2, ktory OTWIERA plik docelowy,
+#     wiec blokada antywirusa w fazie COLLECT ma dokladnie ten ksztalt i nigdy
+#     nie pokazuje WinError 5.
+# Brak drugiej formy nie dawal wczesniej ZADNEGO Issue — czyli cisza i generyczne
+# "build sie nie powiodl" bez nastepnego kroku, co lamie zasade z naglowka
+# modulu. "\b" po numerze odcina sasiednie kody: "Errno 130" to inny blad.
+_ACCESS_DENIED = r"(?:WinError 5\b|Access is denied|Errno 13\b|Permission denied)"
+
+# Windows jawnie nazywajacy ingerencje antywirusa. W odroznieniu od surowej
+# odmowy dostepu te komunikaty NIE wymagaja koniunkcji z dist: sama ich tresc
+# jest juz rozrozniajaca, wiec dokladanie drugiego warunku nie usuwa zadnej
+# niejednoznacznosci, a tylko produkuje falszywe negatywy.
+_ANTIVIRUS_EXPLICIT = (
+    r"WinError 225\b|WinError 1920\b|contains a virus or potentially unwanted software"
+)
+
+# Koniec segmentu sciezki: separator, cudzyslow, bialy znak albo koniec danych.
+#
+# Guard STRUKTURALNY, celowo nie czarna lista sufiksow. Poprzednie wersje
+# wyliczaly znane wyjatki pojedynczo — (?!-info) — i trzy razy z rzedu
+# przepuszczaly kolejny sufiks (".dist-info", potem "dist-packages",
+# potem "distutils"). Warunek "nazwa segmentu konczy sie dokladnie tutaj"
+# wyklucza wszystkie trzy naraz i kazdy przyszly, bo nie zalezy od tego, jaki
+# konkretnie sufiks dopisano — wystarczy, ze cokolwiek jeszcze nalezy do tej
+# samej nazwy katalogu. Separator pominiety w klasie (np. ")") daje falszywy
+# NEGATYW, czyli degradacje do neutralnego access_denied — kierunek bezpieczny.
+_SEGMENT_END = r"(?=[\\/'\"\s]|$)"
 
 # Fragment wskazujacy, ze chodzi o katalog wyjsciowy builda.
 #
-# Wymagamy separatora sciezki po ktorejs ze stron, wiec "dist" musi byc
-# realnym segmentem sciezki ("...\dist\app.exe", "C:/proj/dist"), a nie
-# przypadkowym slowem. Jawne (?!-info) odcina wszechobecne katalogi metadanych
-# pakietow ("numpy-1.26.4.dist-info") — myslnik jest znakiem niebedacym
-# znakiem slowa, wiec samo \b ich NIE wyklucza. Separator moze byc "/", "\"
-# albo podwojony "\\": logi PyInstallera i powtorzone reprezentacje sciezek
-# w tracebackach zawieraja wszystkie te formy.
-_DIST_SEGMENT = r"(?:[\\/]{1,2}dist\b(?!-info)|\bdist\b(?!-info)[\\/]{1,2})"
+# "dist" musi byc realnym segmentem sciezki ("...\dist\app.exe", "C:/proj/dist"),
+# a nie przypadkowym slowem: albo ma separator z przodu i koniec segmentu z tylu,
+# albo zaczyna sie na granicy tokenu (nic wczesniej nie nalezy do tej nazwy) i ma
+# separator z tylu. Pojedynczy [\\/] obsluguje tez formy podwojone (repr "\\")
+# i poczworne (JSON "\\\\") — dopasowuje sie do ostatniego z powtorzonych
+# separatorow, wiec kwantyfikator {1,2} byl tu bez efektu i zostal usuniety.
+#
+# Swiadoma granica (runda 3, NIE do rozszerzenia): prawdziwe trafienie
+# antywirusa moze wyladowac na workpath ("...\build\myapp.exe"), bo nowszy
+# PyInstaller sklada EXE w workpath i dopiero potem przenosi je do dist.
+# Mimo to "build" NIE wchodzi tutaj. Asymetria kosztow jest rozstrzygnieta:
+# falszywy pozytyw wysyla uzytkownika na godzine wylaczania antywirusa przy
+# zupelnie innej przyczynie (dokladnie ta regresja wrocila juz dwa razy),
+# a falszywy negatyw daje access_denied, ktory uczciwie mowi, ze Windows
+# odmowil dostepu do pliku. "build" to przy tym pospolite slowo w logach
+# ("Building EXE from EXE-00.toc"), wiec kosztowalby drozej niz "dist".
+_DIST_SEGMENT = rf"(?:[\\/]dist{_SEGMENT_END}|(?<![\w.-])dist[\\/])"
 
 PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
     (
@@ -41,6 +82,15 @@ PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
     (
         re.compile(r"No module named ['\"]([\w.]+)['\"]"),
         "module_not_found",
+        Severity.BLOCKER,
+    ),
+    # Ramie bezwarunkowe: Windows sam nazwal antywirusa. Ten sam kod co ramie
+    # ponizej, wiec explain_log() (dedupe po "code") zwroci dokladnie jedno
+    # Issue nawet, gdy log pasuje do obu drog, a neutralny access_denied jest
+    # tlumiony przez _SUPPRESSED_BY tak samo jak przy drodze warunkowej.
+    (
+        re.compile(_ANTIVIRUS_EXPLICIT),
+        "antivirus_blocked",
         Severity.BLOCKER,
     ),
     # Koniunkcja celowa: samo "WinError 5" / "Access is denied" jest jednym z
