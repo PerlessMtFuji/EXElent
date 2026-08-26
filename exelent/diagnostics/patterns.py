@@ -18,6 +18,20 @@ import re
 
 from exelent.models import Issue, Severity
 
+# Surowy sygnal "Windows odmowil dostepu". Sam w sobie nie rozroznia przyczyn.
+_ACCESS_DENIED = r"(?:WinError 5\b|Access is denied)"
+
+# Fragment wskazujacy, ze chodzi o katalog wyjsciowy builda.
+#
+# Wymagamy separatora sciezki po ktorejs ze stron, wiec "dist" musi byc
+# realnym segmentem sciezki ("...\dist\app.exe", "C:/proj/dist"), a nie
+# przypadkowym slowem. Jawne (?!-info) odcina wszechobecne katalogi metadanych
+# pakietow ("numpy-1.26.4.dist-info") — myslnik jest znakiem niebedacym
+# znakiem slowa, wiec samo \b ich NIE wyklucza. Separator moze byc "/", "\"
+# albo podwojony "\\": logi PyInstallera i powtorzone reprezentacje sciezek
+# w tracebackach zawieraja wszystkie te formy.
+_DIST_SEGMENT = r"(?:[\\/]{1,2}dist\b(?!-info)|\bdist\b(?!-info)[\\/]{1,2})"
+
 PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
     (
         re.compile(r"No solution found when resolving|Could not find a version"),
@@ -34,10 +48,19 @@ PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
     # z antywirusem (plik otwarty w innym programie, blokada OneDrive,
     # katalog wymagajacy podniesienia uprawnien). Zglaszamy antivirus_blocked
     # tylko, gdy w logu jest TAKZE dowod, ze chodzi o artefakt builda (dist).
+    #
+    # Oba dowody musza pochodzic z TEGO SAMEGO zdarzenia, czyli z tej samej
+    # linii logu. Wczesniejsza wersja uzywala niezakotwiczonych lookaheadow z
+    # re.DOTALL, wiec kazdy z nich przeszukiwal caly log niezaleznie: dowolny
+    # niepowiazany "WinError 5" gdziekolwiek plus slowo "dist" gdziekolwiek
+    # indziej dawaly pewna i BLEDNA diagnoze. Tutaj "^" z re.MULTILINE
+    # zakotwicza oba lookaheady na poczatku tej samej linii, a "[^\n]*" nie
+    # przekracza konca linii, wiec wspolwystepowanie w skali dokumentu nie
+    # wystarcza.
     (
         re.compile(
-            r"(?=.*(?:WinError 5\b|Access is denied))(?=.*\bdist\b)",
-            re.DOTALL,
+            rf"^(?=[^\n]*{_ACCESS_DENIED})(?=[^\n]*{_DIST_SEGMENT})",
+            re.MULTILINE,
         ),
         "antivirus_blocked",
         Severity.BLOCKER,
@@ -57,7 +80,7 @@ PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
     # samym logu wystapil juz bardziej konkretny kod (antivirus_blocked /
     # file_in_use), zeby nie pokazywac dwoch komunikatow o tym samym zdarzeniu.
     (
-        re.compile(r"WinError 5\b|Access is denied"),
+        re.compile(_ACCESS_DENIED),
         "access_denied",
         Severity.BLOCKER,
     ),
