@@ -121,3 +121,93 @@ def test_sslerror_boundary_does_not_match_inside_longer_identifier():
 def test_sslerror_boundary_matches_as_standalone_identifier():
     log = "requests.exceptions.SSLError: HTTPSConnectionPool(host='pypi.org', port=443)"
     assert "ssl_proxy" in _codes(log)
+
+
+def test_dist_info_directory_does_not_trigger_antivirus():
+    # Regresja (runda 2): ".dist-info" jest wszechobecne w logach fazy
+    # Analysis PyInstallera. Myslnik jest znakiem niebedacym znakiem slowa,
+    # wiec \bdist\b dopasowuje sie WEWNATRZ "numpy-1.26.4.dist-info". Razem
+    # z niepowiazanym WinError 5 na pliku uzytkownika dawalo to pewna i
+    # bledna diagnoze "antywirus". Prawdziwa przyczyna: otwarty arkusz.
+    log = (
+        r"3421 INFO: Loading module hook 'hook-numpy.py' from "
+        r"'C:\...\numpy-1.26.4.dist-info\...\hooks'"
+        "\n"
+        r"3600 PermissionError: [WinError 5] Access is denied: "
+        r"'C:\Users\foo\Documents\input.xlsx'"
+        "\n"
+    )
+    codes = _codes(log)
+    assert "antivirus_blocked" not in codes
+    assert "access_denied" in codes
+
+
+def test_dist_info_on_the_same_line_as_access_denied_is_still_not_antivirus():
+    # Dowod, ze wykluczenie "-info" jest nosne samo w sobie, niezaleznie od
+    # zawezenia do jednej linii: jedyny token przypominajacy "dist" w calym
+    # logu to ".dist-info" i lezy w TEJ SAMEJ linii co blad dostepu.
+    log = (
+        r"PermissionError: [WinError 5] Access is denied: "
+        r"'C:\venv\Lib\site-packages\numpy-1.26.4.dist-info\RECORD'"
+    )
+    codes = _codes(log)
+    assert "antivirus_blocked" not in codes
+    assert "access_denied" in codes
+
+
+def test_document_wide_dist_cooccurrence_is_not_antivirus():
+    # Zwykla linia informacyjna wspominajaca katalog wyjsciowy nie moze
+    # dostarczac "dowodu na dist" dla niepowiazanego bledu dostepu wiele
+    # linii pozniej. Oba dowody musza pochodzic z tego samego zdarzenia.
+    log = (
+        r"1500 INFO: will output to dist\myapp\myapp.exe once complete"
+        "\n"
+        "2000 INFO: Analyzing hidden import 'pkg_resources'\n"
+        "2500 INFO: Processing pre-safe import module hook urllib3\n"
+        r"3600 PermissionError: [WinError 5] Access is denied: "
+        r"'C:\Users\foo\Documents\raport.xlsx'"
+        "\n"
+    )
+    codes = _codes(log)
+    assert "antivirus_blocked" not in codes
+    assert "access_denied" in codes
+
+
+def test_access_denied_on_build_artifact_is_still_antivirus():
+    # Pozytyw: blad dostepu dotyczy artefaktu builda pod dist, w tej samej
+    # linii. To nadal jest antivirus_blocked i nadal tlumi neutralny kod.
+    log = (
+        "5000 INFO: Building EXE from EXE-00.toc completed successfully.\n"
+        r"5001 PermissionError: [WinError 5] Access is denied: "
+        r"'C:\proj\dist\myapp\myapp.exe'"
+        "\n"
+    )
+    codes = _codes(log)
+    assert "antivirus_blocked" in codes
+    assert "access_denied" not in codes
+
+
+def test_access_denied_on_build_artifact_with_forward_slashes():
+    # Logi PyInstallera mieszaja separatory; "/dist/" musi liczyc sie tak
+    # samo jak "\dist\".
+    log = "PermissionError: [WinError 5] Access is denied: '/home/x/proj/dist/myapp'"
+    codes = _codes(log)
+    assert "antivirus_blocked" in codes
+    assert "access_denied" not in codes
+
+
+def test_dist_evidence_on_an_adjacent_line_stays_neutral():
+    # Swiadomie wybrana granica: okno to dokladnie jedna linia. Gdy sciezka
+    # do dist jest w sasiedniej linii, a nie w tej z bledem, nie mamy dowodu,
+    # ze oba fakty dotycza tego samego zdarzenia — degradujemy do neutralnego
+    # access_denied. Blad w te strone jest tani (mniej konkretne zdanie),
+    # blad w druga strone kosztuje uzytkownika godzine na wylaczanie
+    # antywirusa przy zupelnie innej przyczynie.
+    log = (
+        r"3000 INFO: Removing output directory C:\proj\dist\myapp"
+        "\n"
+        "3001 PermissionError: [WinError 5] Access is denied\n"
+    )
+    codes = _codes(log)
+    assert "antivirus_blocked" not in codes
+    assert "access_denied" in codes
