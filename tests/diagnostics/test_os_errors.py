@@ -8,8 +8,6 @@ tylko w chmurze (OneDrive Files On-Demand jest wlaczone domyslnie), a rada
 "wylacz antywirusa" jest wtedy pewna siebie i BLEDNA.
 """
 
-from pathlib import Path
-
 from exelent.diagnostics.patterns import explain_log, map_os_error
 from exelent.models import Severity
 
@@ -99,4 +97,29 @@ def test_the_build_log_table_is_untouched():
 def test_filename_may_be_missing():
     exc = OSError(1920, "The file cannot be accessed by the system")
     assert map_os_error(exc, in_cloud=True)[0].data.get("file") in (None, "")
-    assert isinstance(Path.cwd(), Path)
+
+
+def test_a_folder_named_like_the_cloud_is_not_evidence_of_the_cloud():
+    """Wzorzec chmury opisuje TRESC komunikatu Windows, a nie sciezke. Sciezka
+    jest tekstem uzytkownika: katalog "cloud file notes" nie ma prawa przykryc
+    diagnozy, ktora system podal wprost i ktora jest rozrozniajaca."""
+    exc = OSError(28, "No space left on device", r"C:\dane\cloud file notes.py")
+    assert _codes(exc) == ["disk_full"]
+
+
+def test_a_locked_file_keeps_its_diagnosis_inside_a_cloudish_folder():
+    exc = _oserror(
+        32, "The process cannot access the file because it is being used", r"C:\cloud sync\a.py"
+    )
+    assert _codes(exc) == ["file_in_use"]
+
+
+def test_a_path_alone_never_promotes_itself_to_a_cloud_diagnosis():
+    exc = _oserror(5, "Access is denied", r"C:\Users\Ala\Cloud Files\projekt\main.py")
+    assert _codes(exc) == ["access_denied"]
+
+
+def test_a_filename_that_is_not_text_does_not_break_the_diagnosis():
+    """`OSError.filename` bywa bajtami — diagnoza ma dzialac, a nie rzucac."""
+    exc = PermissionError(13, "Access is denied", rb"C:\projekt\main.py", 5)
+    assert _codes(exc) == ["access_denied"]

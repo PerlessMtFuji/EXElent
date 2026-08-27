@@ -19,6 +19,13 @@ import sys
 from contextlib import suppress
 from pathlib import Path
 
+# Ile czekamy na domkniecie potokow PO ubiciu drzewa. Normalnie to ulamek
+# sekundy. Ma wlasna granice, bo gdy `taskkill` zawiedzie (proces podniesiony,
+# brak `taskkill` w obrazie CI), potok trzyma ktos, kogo nie ubilismy — a
+# wtedy `communicate()` bez timeoutu czeka do konca zycia RODZICA. Zmierzone:
+# 300.1 s przy `timeout=3`. Test ma sie zaswiecic na czerwono, nigdy wisiec.
+DRAIN_TIMEOUT = 10.0
+
 
 def kill_tree(process: subprocess.Popen) -> None:
     """Ubija cale drzewo procesow, nie tylko rodzica."""
@@ -82,8 +89,13 @@ def run_bounded(
         return subprocess.CompletedProcess(process.args, process.returncode, out, err)
     except subprocess.TimeoutExpired:
         kill_tree(process)
-        # Drzewo nie zyje, wiec teraz potoki naprawde sie zamykaja.
-        out, err = process.communicate()
+        try:
+            # Drzewo nie zyje, wiec potoki zamykaja sie od reki — chyba ze
+            # ubicie zawiodlo. Wtedy rezygnujemy z wyjscia zamiast wisiec:
+            # wynik bez logu jest do uratowania, zawieszony CI nie jest.
+            out, err = process.communicate(timeout=DRAIN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            out, err = "", ""
         if allow_timeout:
             return subprocess.CompletedProcess(process.args, None, out, err)
         raise subprocess.TimeoutExpired(process.args, timeout, output=out, stderr=err) from None

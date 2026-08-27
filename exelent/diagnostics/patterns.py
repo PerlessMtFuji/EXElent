@@ -14,8 +14,10 @@ neutralny kod, a nie zgadywac bardziej konkretny.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterable
+from contextlib import suppress
 from pathlib import Path
 
 from exelent.models import Issue, Severity
@@ -204,14 +206,39 @@ _DISK_FULL = re.compile(r"Errno 28\b|No space left on device", re.IGNORECASE)
 _PATH_TOO_LONG = re.compile(r"WinError 206\b|filename or extension is too long", re.IGNORECASE)
 
 
+def filename_of(exc: OSError) -> str:
+    """Nazwa pliku z wyjatku — cokolwiek system w nia wlozyl.
+
+    `OSError.filename` bywa bajtami (`open(b"...")`), a bywa i deskryptorem.
+    Diagnostyka jest ostatnia siatka bezpieczenstwa: siatka, ktora sama rzuca
+    `TypeError`, przestaje nia byc i uzytkownik dostaje traceback.
+    """
+    raw = getattr(exc, "filename", None)
+    if raw is None:
+        return ""
+    with suppress(TypeError, ValueError):
+        return os.fsdecode(raw)
+    return ""
+
+
 def os_error_text(exc: OSError) -> str:
-    """Wyjatek w ksztalcie, w ktorym numery i tresc leza obok siebie."""
+    """Wyjatek w ksztalcie, w ktorym numery i tresc leza obok siebie.
+
+    SCIEZKI TU NIE MA i to jest cala rzecz: ponizsze wzorce pytaja o to, co
+    zeznal system, a nazwa pliku jest tekstem UZYTKOWNIKA. Katalog nazwany
+    "Cloud Files" nie ma prawa uchodzic za dowod z chmury — a uchodzil, i to
+    przykrywajac diagnozy poprawne (`disk_full`, `file_in_use`), bo ramie
+    chmury stoi pierwsze.
+
+    Tabela logow (`explain_log`) traktuje sciezke inaczej i slusznie: tam
+    segment `dist` w tej samej linii JEST dowodem na antywirusa (ruling
+    Taska 14). Roznica jest w tym, czyj to tekst — log pisze PyInstaller.
+    """
     parts = [f"[Errno {exc.errno}]" if exc.errno is not None else ""]
     winerror = getattr(exc, "winerror", None)
     if winerror is not None:
         parts.append(f"[WinError {winerror}]")
     parts.append(str(exc.strerror or exc))
-    parts.append(str(exc.filename or ""))
     return " ".join(part for part in parts if part)
 
 
@@ -222,7 +249,7 @@ def map_os_error(exc: OSError, *, in_cloud: bool = False) -> tuple[Issue, ...]:
     uczciwie "cos poszlo nie tak". Zmyslona diagnoza byla by gorsza.
     """
     text = os_error_text(exc)
-    name = Path(exc.filename).name if exc.filename else ""
+    name = Path(filename_of(exc)).name
 
     if _CLOUD_EXPLICIT.search(text) or (in_cloud and _CANNOT_ACCESS.search(text)):
         return (Issue("cloud_file_unavailable", Severity.BLOCKER, {"file": name}),)
