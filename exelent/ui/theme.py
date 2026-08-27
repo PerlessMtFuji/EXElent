@@ -71,6 +71,12 @@ QPushButton#Primary {{
     padding: 12px 28px;
 }}
 QPushButton#Primary:hover {{ background: {accent_hover}; }}
+/* Bez tej reguły `setEnabled(False)` nie zmienia NICZEGO w wyglądzie: arkusz
+   ustawia tło i kolor tekstu wprost, więc Qt nie ma już czego wygasić.
+   Zablokowany „Stwórz EXE" wyglądał dokładnie jak działający — użytkownik
+   klikał w martwy przycisk zamiast przeczytać, co jest nie tak. Reguła dotyczy
+   tylko `#Primary`, bo to jedyny przycisk, który program dziś blokuje. */
+QPushButton#Primary:disabled {{ background: {surface_alt}; color: {text_muted}; }}
 QPushButton#Link {{
     background: transparent;
     border: none;

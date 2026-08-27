@@ -1,14 +1,15 @@
 """Powloka okna: stos trzech ekranow, tytul, motyw i przelacznik jezyka.
 
-Ekran 1 jest juz wlasciwy (Task 18), ekrany 2-3 to nadal puste `QWidget` —
-zadania 19-20 podmieniaja je, nie ruszajac tej klasy.
+Ekrany 1-2 sa juz wlasciwe (Task 18-19), ekran 3 to nadal pusty `QWidget` —
+zadanie 20 podmienia go, nie ruszajac tej klasy.
 """
 
 import pytest
 
-from exelent.i18n import set_language
+from exelent.i18n import CATALOGS, set_language
 from exelent.ui.app import SCREEN_REVIEW, MainWindow
 from exelent.ui.screen_drop import DropScreen
+from exelent.ui.screen_review import ReviewScreen
 
 
 @pytest.fixture(autouse=True)
@@ -79,3 +80,36 @@ def test_choosing_a_folder_moves_to_the_second_screen(window, tmp_path):
     jak brak reakcji programu."""
     window.screen_drop.folder_chosen.emit(tmp_path)
     assert window.stack.currentIndex() == SCREEN_REVIEW
+
+
+def test_the_second_screen_is_the_review_screen(window):
+    assert isinstance(window.stack.widget(SCREEN_REVIEW), ReviewScreen)
+
+
+def test_choosing_a_folder_shows_its_analysis(window, tmp_path):
+    """Sama zmiana ekranu to za malo: bez wywolania analizy uzytkownik dostaje
+    ekran 2 z poprzednim projektem albo z pustka."""
+    (tmp_path / "main.py").write_text("print(1)", encoding="utf-8")
+    window.screen_drop.folder_chosen.emit(tmp_path)
+    assert "main.py" in window.screen_review.row_entry.value_text()
+
+
+def test_an_unreadable_folder_does_not_crash_the_window(window, tmp_path):
+    """Katalog moze zniknac miedzy upuszczeniem a analiza. Rdzen wraca wtedy
+    z blokada, wiec okno ma pokazac zdanie, a nie traceback."""
+    window.screen_drop.folder_chosen.emit(tmp_path / "nie-ma-takiego")
+    assert window.stack.currentIndex() == SCREEN_REVIEW
+    assert window.screen_review.build_button.isEnabled() is False
+    assert window.screen_review.warnings_label.text() != ""
+
+
+def test_the_window_speaks_the_system_language_on_every_screen(qtbot, monkeypatch):
+    """Ekrany biora napisy z `t()` w konstruktorze, wiec jezyk musi byc
+    ustawiony PRZED nimi. Zmierzone: przy `set_language` po konstrukcji
+    angielski uzytkownik dostawal polski naglowek ekranu 1."""
+    monkeypatch.setattr("exelent.ui.app.system_language", lambda: "en")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    english = set(CATALOGS["en"].values())
+    assert window.screen_drop.headline.text() in english
+    assert window.screen_review.headline.text() in english
