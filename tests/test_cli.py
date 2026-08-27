@@ -756,3 +756,99 @@ def test_the_safety_net_survives_an_exception_with_a_non_text_filename(
 
     assert result.ok is False
     assert [i.code for i in result.issues] == ["access_denied"]
+
+
+# --- postep: dwie niezalezne skale sklejone w jedna ---
+
+
+def _progress_through_run_build(tmp_path, monkeypatch, stub_build, env_steps, build_steps):
+    """Zbiera wartosci postepu, ktore `run_build` wypuszcza na zewnatrz."""
+    monkeypatch.setattr(
+        cli,
+        "create_build_env",
+        lambda source, packages, progress: (
+            [progress(phase, value) for phase, value in env_steps],
+            BuildEnv(uv=Path("uv.exe"), venv=Path("venv"), python=Path("python.exe")),
+        )[1],
+    )
+
+    class _Reporting(_FakeBackend):
+        def build(self, plan, env, progress, cancel):
+            for phase, value in build_steps:
+                progress(phase, value)
+            return type(self).result
+
+    monkeypatch.setattr(cli, "PyInstallerBackend", _Reporting)
+
+    widziane: list[tuple[str, float]] = []
+    cli.run_build(
+        _project(tmp_path, {"main.py": "print(1)"}),
+        lambda phase, value: widziane.append((phase, value)),
+        dest_dir=tmp_path / "out",
+    )
+    return widziane
+
+
+def test_the_progress_bar_never_goes_backwards(tmp_path, monkeypatch, stub_build):
+    """Zmierzone na zywym buildzie: srodowisko konczy na 1.0, a PyInstaller
+    zaczyna od 0.2 — pasek dochodzil do konca i wracal, czyli mowil, ze
+    program stracil dotychczasowa prace. PyInstaller cofa sie takze wewnatrz
+    swojej skali (`Analyzing` po `Processing module hooks`)."""
+    widziane = _progress_through_run_build(
+        tmp_path,
+        monkeypatch,
+        stub_build,
+        env_steps=[("install_python", 0.0), ("create_env", 0.3), ("install_packages", 1.0)],
+        build_steps=[("build_start", 0.2), ("hooks", 0.55), ("analyze", 0.35), ("done", 1.0)],
+    )
+    wartosci = [value for _phase, value in widziane]
+    assert wartosci == sorted(wartosci), f"pasek sie cofa: {wartosci}"
+
+
+def test_the_environment_stage_does_not_fill_the_whole_bar(tmp_path, monkeypatch, stub_build):
+    widziane = _progress_through_run_build(
+        tmp_path,
+        monkeypatch,
+        stub_build,
+        env_steps=[("install_packages", 1.0)],
+        build_steps=[],
+    )
+    assert widziane == [("install_packages", cli.ENV_PROGRESS_SHARE)]
+
+
+def test_the_finished_build_fills_the_bar(tmp_path, monkeypatch, stub_build):
+    widziane = _progress_through_run_build(
+        tmp_path,
+        monkeypatch,
+        stub_build,
+        env_steps=[("install_packages", 1.0)],
+        build_steps=[("done", 1.0)],
+    )
+    assert widziane[-1] == ("done", 1.0)
+
+
+def test_the_phase_name_is_passed_through_untouched(tmp_path, monkeypatch, stub_build):
+    """Skalowana jest LICZBA, nie nazwa — nazwa jest kluczem tlumaczenia."""
+    widziane = _progress_through_run_build(
+        tmp_path,
+        monkeypatch,
+        stub_build,
+        env_steps=[("create_env", 0.3)],
+        build_steps=[("package", 0.88)],
+    )
+    assert [phase for phase, _value in widziane] == ["create_env", "package"]
+
+
+def test_the_build_stage_starts_where_the_environment_finished(tmp_path, monkeypatch, stub_build):
+    """Obie skale musza zajmowac ROZLACZNE czesci paska. Gdyby build dostal
+    caly zakres, jego pierwsze fazy (0.2 przy srodowisku juz na 0.3) nie
+    ruszalyby paska wcale — straznik monotonicznosci trzymalby go w miejscu,
+    a uzytkownik patrzylby na zamrozony pasek przez pierwsza minute."""
+    widziane = _progress_through_run_build(
+        tmp_path,
+        monkeypatch,
+        stub_build,
+        env_steps=[("install_packages", 1.0)],
+        build_steps=[("build_start", 0.2)],
+    )
+    assert widziane[-1][1] > cli.ENV_PROGRESS_SHARE
