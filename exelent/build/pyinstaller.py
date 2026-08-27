@@ -17,7 +17,7 @@ from exelent.build.launcher import LAUNCHER_FILENAME, render_launcher
 from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, Severity
 from exelent.runtime import ProgressFn
 from exelent.runtime.env import CREATE_NO_WINDOW, BuildEnv
-from exelent.runtime.paths import logs_dir, work_dir_for
+from exelent.runtime.paths import logs_dir, path_hash, work_dir_for
 
 PHASES: dict[str, str] = {
     r"Analyzing": "analyze",
@@ -105,8 +105,13 @@ def log_path_for(plan: BuildPlan) -> Path:
     zdazyl oddac `BuildResult`: gdy wyjatek poleci juz po zapisaniu logu,
     uzytkownik i tak ma dostac sciezke, ktora zadanie 20 podpina pod "Zapisz
     raport". Jedno miejsce, w ktorym powstaje ta nazwa.
+
+    W nazwie jest skrot sciezki PROJEKTU, nie sama nazwa EXE. Dwa rozne
+    projekty czesto nazywaja sie tak samo ("program", "main"), a od rundy 2
+    stary log jest KASOWANY przed buildem — bez tego skrotu build jednego
+    projektu niszczylby log drugiego, zanim cokolwiek zapisze.
     """
-    return logs_dir() / f"{plan.exe_name}.log"
+    return logs_dir() / f"{plan.exe_name}-{path_hash(plan.root)}.log"
 
 
 class PyInstallerBackend:

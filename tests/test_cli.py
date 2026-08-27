@@ -466,7 +466,12 @@ def test_a_failing_dest_probe_is_reported_not_raised(tmp_path, monkeypatch, stub
     result = cli.run_build(root, noop_progress)
 
     assert result.ok is False
-    assert result.issues, "cicha porazka bez zadnego Issue jest gorsza niz traceback"
+    # Asercja na KONKRETNY kod, nie na "sa jakies Issue": ta slabsza wersja
+    # przeszla by rowniez z bledna diagnoza, czyli z defektem na wierzchu.
+    # WinError 1920 bez dowodu na chmure ma zostac NEUTRALNY — nazwanie tego
+    # antywirusem byloby pewna siebie bzdura, a `unexpected_error` gubiloby
+    # informacje, ktora system podal wprost.
+    assert [i.code for i in result.issues] == ["access_denied"]
 
 
 # --- Minor M13: BLOCKER analizy nie moze gubic jej ostrzezen ---
@@ -567,3 +572,135 @@ def test_main_does_not_call_a_result_that_says_ok_a_failure(tmp_path, monkeypatc
     assert code == 1
     assert "nie powiodl" not in err.lower(), "komunikat przeczy fladze ok=True"
     assert "bez pliku wynikowego" in err.lower()
+
+
+# --- Critical C4: etap analizy nie dostaje diagnoz z tabeli pisanej na logi ---
+
+
+def _log_path(root, **overrides):
+    """Sciezka logu wyliczona tak, jak zrobi to `run_build` — bez zgadywania nazwy."""
+    from exelent.analysis.project import analyze_project
+    from exelent.build.pyinstaller import log_path_for
+    from exelent.planning import make_plan
+
+    return log_path_for(make_plan(analyze_project(root), **overrides))
+
+
+def test_a_cloud_only_file_is_not_blamed_on_the_antivirus(tmp_path, monkeypatch, stub_build):
+    """OneDrive Files On-Demand jest wlaczone domyslnie. Plik trzymany tylko w
+    chmurze daje przy odczycie WinError 1920, a rada "wylacz antywirusa" jest
+    wtedy pewna siebie i BLEDNA: laik traci godzine, a build dalej pada."""
+    onedrive = tmp_path / "OneDrive"
+    root = onedrive / "projekt"
+    root.mkdir(parents=True)
+    (root / "main.py").write_text("print(1)", encoding="utf-8")
+    monkeypatch.setenv("OneDrive", str(onedrive))
+
+    def _cloud_denied(path):
+        raise PermissionError(13, "The file cannot be accessed by the system", str(path), 1920)
+
+    monkeypatch.setattr("exelent.analysis.project._read", _cloud_denied)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    codes = [i.code for i in result.issues]
+    assert result.ok is False
+    assert "antivirus_blocked" not in codes, "zla rada jest gorsza niz brak rady"
+    assert "cloud_file_unavailable" in codes
+
+
+def test_the_same_error_outside_the_cloud_stays_neutral(tmp_path, monkeypatch, stub_build):
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    def _denied(path):
+        raise PermissionError(13, "The file cannot be accessed by the system", str(path), 1920)
+
+    monkeypatch.setattr("exelent.analysis.project._read", _denied)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert [i.code for i in result.issues] == ["access_denied"]
+
+
+# --- Important I8: build, ktory nie ruszyl, nie moze niszczyc logu poprzedniego ---
+
+
+def test_a_precondition_failure_leaves_the_previous_log_alone(tmp_path, monkeypatch, stub_build):
+    """Zadanie 20 podpina pod "Zapisz raport" wlasnie `log_path`. Proba builda
+    bez internetu nic nie buduje, wiec nie ma czego kasowac."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = _project(tmp_path, {"main.py": "print(1)"})
+    overrides = {"exe_name": "p", "dest_dir": tmp_path / "out"}
+
+    previous = _log_path(root, **overrides)
+    previous.parent.mkdir(parents=True, exist_ok=True)
+    previous.write_text("log poprzedniego przebiegu", encoding="utf-8")
+
+    monkeypatch.setattr(
+        cli, "check_preconditions", lambda **_kw: (Issue("no_network", Severity.BLOCKER),)
+    )
+
+    result = cli.run_build(root, noop_progress, **overrides)
+
+    assert [i.code for i in result.issues] == ["no_network"]
+    assert previous.exists(), "porazka przed startem builda skasowala cudzy log"
+    assert previous.read_text(encoding="utf-8") == "log poprzedniego przebiegu"
+
+
+# --- Minor M15: nie diagnozujemy po TYPIE wyjatku nad wolaniem pelnym I/O ---
+
+
+def test_a_value_error_from_the_dest_probe_is_not_called_a_missing_entry(
+    tmp_path, monkeypatch, stub_build
+):
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    def _boom(_path):
+        raise ValueError("embedded null byte")
+
+    monkeypatch.setattr("exelent.planning._is_writable", _boom)
+
+    result = cli.run_build(root, noop_progress)
+
+    codes = [i.code for i in result.issues]
+    assert "no_entry_point" not in codes, "pewna siebie i bledna diagnoza"
+    assert codes == ["unexpected_error"]
+
+
+# --- Minor M17: sciezka artifact_vanished nie moze gubic wiedzy backendu ---
+
+
+def test_a_vanished_artifact_keeps_what_the_backend_already_knew(tmp_path, monkeypatch, stub_build):
+    log = tmp_path / "b.log"
+    log.write_text("cos z builda", encoding="utf-8")
+    stub_build.result = BuildResult(
+        ok=True,
+        artifact=None,
+        duration_s=12.5,
+        log_path=log,
+        issues=(Issue("recursion_limit", Severity.WARNING),),
+    )
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    codes = [i.code for i in result.issues]
+    assert result.ok is False
+    assert "artifact_vanished" in codes
+    assert "recursion_limit" in codes, "backend wiedzial cos wiecej i to zginelo"
+    assert result.duration_s == 12.5
+    assert result.log_path == log
+
+
+# --- Minor M18: log nalezy do PROJEKTU, nie do samej nazwy EXE ---
+
+
+def test_two_projects_with_the_same_exe_name_do_not_share_one_log(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    a = _project(tmp_path, {"main.py": "print(1)"}, name="projekt-a")
+    b = _project(tmp_path, {"main.py": "print(2)"}, name="projekt-b")
+
+    log_a = _log_path(a, exe_name="program", dest_dir=tmp_path / "o1")
+    log_b = _log_path(b, exe_name="program", dest_dir=tmp_path / "o2")
+
+    assert log_a != log_b, "build jednego projektu kasuje log drugiego"

@@ -6,11 +6,10 @@ a produkuje EXE wywalajace sie przy starcie, jest dokladnie ta awaria,
 ktorej ten projekt ma zapobiegac.
 """
 
-import subprocess
-from contextlib import suppress
 from pathlib import Path
 
 import pytest
+from procutil import is_running_name, run_bounded
 
 from exelent.cli import run_build
 from exelent.runtime import noop_progress
@@ -51,9 +50,7 @@ def test_console_program_builds_and_prints(tmp_path, monkeypatch):
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = subprocess.run(
-        [str(result.artifact)], capture_output=True, text=True, timeout=120, check=False
-    )
+    run = run_bounded([result.artifact], timeout=120)
     assert "WITAJ-SWIECIE" in run.stdout
     _assert_source_untouched(root, {"main.py"})
 
@@ -71,9 +68,7 @@ def test_program_reading_bundled_data_file(tmp_path, monkeypatch):
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = subprocess.run(
-        [str(result.artifact)], capture_output=True, text=True, timeout=120, check=False
-    )
+    run = run_bounded([result.artifact], timeout=120)
     assert "WARTOSC-Z-PLIKU" in run.stdout
 
 
@@ -92,9 +87,7 @@ def test_txt_source_is_converted_and_built(tmp_path, monkeypatch):
     assert not (root / "program.py").exists(), "katalog zrodlowy musi zostac nietkniety"
     _assert_source_untouched(root, {"program.txt"})
 
-    run = subprocess.run(
-        [str(result.artifact)], capture_output=True, text=True, timeout=120, check=False
-    )
+    run = run_bounded([result.artifact], timeout=120)
     assert "Z-PLIKU-TXT" in run.stdout
 
 
@@ -110,9 +103,7 @@ def test_program_with_third_party_dependency(tmp_path, monkeypatch):
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = subprocess.run(
-        [str(result.artifact)], capture_output=True, text=True, timeout=180, check=False
-    )
+    run = run_bounded([result.artifact], timeout=180)
     assert "PILLOW-OK" in run.stdout
 
 
@@ -129,9 +120,7 @@ def test_writing_program_gets_onedir_and_writes_next_to_exe(tmp_path, monkeypatc
     assert result.ok, [i.code for i in result.issues]
 
     exe = result.artifact / "zapis.exe" if result.artifact.is_dir() else result.artifact
-    subprocess.run(
-        [str(exe)], capture_output=True, text=True, timeout=120, cwd=str(exe.parent), check=False
-    )
+    run_bounded([exe], timeout=120, cwd=exe.parent)
     assert (exe.parent / "wynik.txt").read_text(encoding="utf-8") == "ZAPISANE"
 
 
@@ -147,48 +136,12 @@ def test_crashing_console_program_reports_instead_of_vanishing(tmp_path, monkeyp
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = subprocess.run(
-        [str(result.artifact)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        input="\n",
-        check=False,
-    )
+    run = run_bounded([result.artifact], timeout=120, input="\n")
     assert "CELOWY-BLAD" in run.stderr
     assert run.returncode == 1
 
 
 # --- Important I5: sciezka WINDOWED nie byla budowana ani razu ---
-
-
-def _kill_tree(process: subprocess.Popen) -> None:
-    """Ubija CALE drzewo procesow, nie tylko rodzica.
-
-    EXE w trybie ONEFILE to bootloader-rodzic, ktory rozpakowuje `_MEI...` i
-    uruchamia w nim DZIECKO z prawdziwym programem. `process.kill()` konczy
-    wylacznie rodzica — okno tkinter dziecka zyje dalej, trzyma swoj katalog
-    `_MEI` i dziesiatki megabajtow pamieci. Po przebiegach recenzji rundy 2
-    zostal w systemie `awaria-gui.exe` (PID 141632, 37 MB); kazde uruchomienie
-    tego testu doklada jednego sierote.
-    """
-    subprocess.run(
-        ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-        capture_output=True,
-        check=False,
-    )
-    with suppress(subprocess.TimeoutExpired):
-        process.wait(timeout=30)
-
-
-def _is_running(exe_name: str) -> bool:
-    listing = subprocess.run(
-        ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return exe_name.lower() in listing.stdout.lower()
 
 
 def _exe_of(result) -> Path:
@@ -242,9 +195,7 @@ def test_windowed_program_builds_and_runs_without_a_console(tmp_path, monkeypatc
     assert result.ok, [i.code for i in result.issues]
 
     exe = _exe_of(result)
-    run = subprocess.run(
-        [str(exe)], capture_output=True, text=True, timeout=180, cwd=str(exe.parent), check=False
-    )
+    run = run_bounded([exe], timeout=180, cwd=exe.parent)
     assert run.returncode == 0, run.stderr
     assert (exe.parent / "dowod.txt").read_text(encoding="utf-8") == "PETLA-ZDARZEN"
     assert _pe_subsystem(exe) == SUBSYSTEM_GUI, "laikowi mignelo czarne okno konsoli"
@@ -271,20 +222,15 @@ def test_crashing_windowed_program_leaves_a_report_instead_of_vanishing(tmp_path
     assert result.ok, [i.code for i in result.issues]
 
     exe = _exe_of(result)
-    process = subprocess.Popen(
-        [str(exe)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(exe.parent)
-    )
-    try:
-        process.wait(timeout=20)
-    except subprocess.TimeoutExpired:
-        pass  # okno bledu czeka na uzytkownika — dokladnie o to chodzi
-    finally:
-        _kill_tree(process)
+    # `allow_timeout`, bo okno bledu CZEKA na uzytkownika — dokladnie o to
+    # chodzi. `run_bounded` ubija przy tym cale drzewo, wiec nie zostaje
+    # sierota trzymajaca swoj katalog `_MEI`.
+    run_bounded([exe], timeout=20, cwd=exe.parent, allow_timeout=True)
 
     report = exe.parent / "EXElent-blad.txt"
     assert report.exists(), "program GUI zniknal bez sladu"
     assert "CELOWY-BLAD-GUI" in report.read_text(encoding="utf-8")
-    assert not _is_running(exe.name), "test zostawil osierocony proces z otwartym oknem"
+    assert not is_running_name(exe.name), "test zostawil osierocony proces z otwartym oknem"
 
 
 # --- Minor M10: sekcja 10 specyfikacji wymienia "konsola z input()" ---
@@ -312,14 +258,7 @@ def test_console_program_reading_input_builds_and_runs(tmp_path, monkeypatch):
     assert result.ok, [i.code for i in result.issues]
 
     exe = _exe_of(result)
-    run = subprocess.run(
-        [str(exe)],
-        input="Ala\n",
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
+    run = run_bounded([exe], timeout=120, input="Ala\n")
     assert run.returncode == 0, run.stderr
     assert "CZESC-ALA" in run.stdout
     assert _pe_subsystem(exe) == SUBSYSTEM_CONSOLE, "program pytajacy stracil konsole"
