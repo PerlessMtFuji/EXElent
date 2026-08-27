@@ -23,7 +23,7 @@ from exelent.models import (
 )
 from exelent.runtime import noop_progress
 from exelent.runtime.bootstrap import UvDownloadError
-from exelent.runtime.env import BuildEnv
+from exelent.runtime.env import BuildEnv, BuildEnvError
 
 
 def _project(tmp_path: Path, files: dict[str, str], name: str = "p") -> Path:
@@ -278,3 +278,118 @@ def test_main_surfaces_warnings_of_a_successful_build(tmp_path, monkeypatch, cap
     assert cli.main([str(tmp_path)]) == 0
     captured = capsys.readouterr()
     assert "packages_failed" in captured.out + captured.err
+
+
+# --- Critical C1/C2: `run_build` jest granica wyjatkow, nie zbiorem trzech lapek ---
+
+
+def test_workspace_copy_failure_becomes_an_issue_not_a_traceback(tmp_path, monkeypatch, stub_build):
+    """Dokladnie lancuch z komentarza w pyinstaller.py: uzytkownik anuluje
+    build, plik zostaje niedokasowany, a `copytree(dirs_exist_ok=False)`
+    wywala `FileExistsError [WinError 183]` przy kolejnej probie."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    def _boom(_plan, _converted):
+        raise FileExistsError(17, "Cannot create a file when that file already exists")
+
+    monkeypatch.setattr(cli, "materialize_workspace", _boom)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert result.issues, "cicha porazka bez zadnego Issue jest gorsza niz traceback"
+
+
+def test_a_locked_source_file_is_diagnosed_by_its_windows_error(tmp_path, monkeypatch, stub_build):
+    """Kod bledu systemu niesie diagnoze — nie ma powodu gubic jej tylko
+    dlatego, ze wyjatek przyszedl z kopiowania, a nie z logu PyInstallera."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    def _boom(_plan, _converted):
+        raise PermissionError(13, "Access is denied", str(root / "main.py"), 32)
+
+    monkeypatch.setattr(cli, "materialize_workspace", _boom)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert "file_in_use" in [i.code for i in result.issues]
+
+
+def test_env_setup_failure_reaches_the_user_as_an_issue(tmp_path, monkeypatch, stub_build):
+    root = _project(tmp_path, {"main.py": "print(1)"})
+    issue = Issue("env_setup_failed", Severity.BLOCKER, {"step": "create_env"})
+
+    def _boom(_source, _packages, _progress):
+        raise BuildEnvError(issue, RuntimeError("uv venv padlo"))
+
+    monkeypatch.setattr(cli, "create_build_env", _boom)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert [i.code for i in result.issues] == ["env_setup_failed"]
+
+
+def test_an_unexpected_backend_failure_is_reported_not_raised(tmp_path, monkeypatch, stub_build):
+    """Granica musi byc szeroka. Waskie lapki na dwa wymyslone z nazwy typy
+    zostawiaja kazdy inny wyjatek na twarzy laika."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    class _Exploding:
+        def build(self, plan, env, progress, cancel):
+            raise RuntimeError("cos, czego nikt nie przewidzial")
+
+    monkeypatch.setattr(cli, "PyInstallerBackend", _Exploding)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert [i.code for i in result.issues] == ["unexpected_error"]
+
+
+def test_failed_packages_survive_an_unexpected_crash(tmp_path, monkeypatch, stub_build):
+    """Ta sama zasada co przy porazce builda: czesciowa instalacja jest czesto
+    prawdziwa przyczyna tego, co padlo linijke pozniej."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+    monkeypatch.setattr(
+        cli,
+        "create_build_env",
+        lambda source, packages, progress: BuildEnv(
+            uv=Path("uv.exe"),
+            venv=Path("venv"),
+            python=Path("python.exe"),
+            failed_packages=("requests",),
+        ),
+    )
+
+    class _Exploding:
+        def build(self, plan, env, progress, cancel):
+            raise RuntimeError("bum")
+
+    monkeypatch.setattr(cli, "PyInstallerBackend", _Exploding)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert "packages_failed" in [i.code for i in result.issues]
+
+
+# --- Important I1: BLOCKER zawsze przed przeniesionym ostrzezeniem ---
+
+
+def test_blockers_are_listed_before_carried_warnings(tmp_path, monkeypatch, stub_build):
+    """`explain_log` obiecuje w docstringu 'Blockers sort first' — zadanie 20
+    pokazuje pierwszy Issue najbardziej prominentnie. Doklejenie ostrzezen
+    analizy z przodu robi z 'w kodzie jest klucz dostepu' naglowek awarii
+    builda, ktora naprawde spowodowal zablokowany plik."""
+    root = _project(tmp_path, {"main.py": "import os\nprint('sk-AAAABBBBCCCCDDDDEEEEFFFF')\n"})
+    log = tmp_path / "build.log"
+    log.write_text("PermissionError: [WinError 32] used by another process", encoding="utf-8")
+    stub_build.result = BuildResult(ok=False, log_path=log)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    codes = [i.code for i in result.issues]
+    assert "secrets_in_code" in codes and "file_in_use" in codes
+    assert result.issues[0].severity is Severity.BLOCKER
+    assert codes.index("file_in_use") < codes.index("secrets_in_code")

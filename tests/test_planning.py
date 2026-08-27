@@ -138,3 +138,117 @@ def test_writability_probe_is_removed_even_if_our_cleanup_never_runs(tmp_path, m
 
 def test_writability_probe_reports_false_for_a_missing_directory(tmp_path):
     assert planning._is_writable(tmp_path / "nie-ma-takiego") is False
+
+
+# --- Important I2: katalog w korzeniu dysku nie ma "obok" ---
+
+
+def test_source_at_a_drive_root_is_never_probed_nor_written_into(tmp_path, monkeypatch):
+    """`Path('F:/').parent` to znowu `Path('F:/')`. Uzasadnienie z docstringa
+    ('sondowany jest rodzic') jest wtedy wprost falszywe: sonda pisze DO
+    katalogu zrodlowego, a wynik builda ladowalby w srodku niego — przy
+    kolejnej przebudowie kopiowany razem z projektem, wiec EXE puchnie."""
+    root = Path(tmp_path.anchor)
+    assert root.parent == root, "przeslanka testu: korzen dysku jest wlasnym rodzicem"
+
+    probed: list[Path] = []
+
+    def _spy(path: Path) -> bool:
+        probed.append(Path(path))
+        return False
+
+    monkeypatch.setattr(planning, "_is_writable", _spy)
+    dest = default_dest_dir(root, "Program")
+
+    assert root not in probed, "sonda zapisala plik w katalogu zrodlowym uzytkownika"
+    assert dest.parent != root, "wynik builda wladowal sie do katalogu zrodlowego"
+
+
+# --- Important I3: 40 MB EXE nie ma sie zaczac wysylac do chmury ---
+
+
+def test_cloud_synced_parent_loses_to_a_local_folder(tmp_path, monkeypatch):
+    onedrive = tmp_path / "OneDrive"
+    root = onedrive / "Dokumenty" / "projekt"
+    root.mkdir(parents=True)
+    local_desktop = tmp_path / "Pulpit"
+    local_desktop.mkdir()
+
+    monkeypatch.setenv("OneDrive", str(onedrive))
+    monkeypatch.setattr(planning, "_desktop_dir", lambda: local_desktop)
+
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent == local_desktop
+
+
+def test_cloud_folder_is_still_used_when_there_is_no_local_alternative(tmp_path, monkeypatch):
+    """Chmura jest gorsza niz dysk lokalny, ale nieskonczenie lepsza niz brak
+    miejsca docelowego. Odrzucenie wszystkich kandydatow to regres."""
+    onedrive = tmp_path / "OneDrive"
+    root = onedrive / "Dokumenty" / "projekt"
+    root.mkdir(parents=True)
+
+    monkeypatch.setenv("OneDrive", str(onedrive))
+    monkeypatch.setattr(planning, "_desktop_dir", lambda: None)
+    monkeypatch.setattr(planning, "_home_dir", lambda: onedrive / "Dokumenty")
+
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent == root.parent
+
+
+def test_a_folder_merely_named_like_a_project_is_not_treated_as_cloud(tmp_path, monkeypatch):
+    root = tmp_path / "dropbox-klon" / "projekt"
+    root.mkdir(parents=True)
+    monkeypatch.delenv("OneDrive", raising=False)
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent == root.parent
+
+
+# --- Important I4: Pulpit bierze sie z Windows, nie ze zgadywania nazwy ---
+
+
+def test_desktop_comes_from_the_known_folder_not_from_a_guessed_name(tmp_path, monkeypatch):
+    r"""Przy OneDrive Known Folder Move (domyslny polski OOBE) pulpit lezy w
+    `%USERPROFILE%\OneDrive\Pulpit`, a `~/Desktop` moze nie istniec. Stara
+    wersja robila wtedy `mkdir` niewidocznego katalogu i raportowala SUKCES."""
+    moved = tmp_path / "OneDrive" / "Pulpit"
+    moved.mkdir(parents=True)
+    root = _make(tmp_path / "p", {"main.py": ""})
+
+    monkeypatch.setattr(planning, "_known_folder_desktop", lambda: moved)
+    monkeypatch.setattr(planning, "_is_writable", lambda p: Path(p) != root.parent)
+
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent == moved
+
+
+def test_fallback_never_points_at_a_directory_that_does_not_exist(tmp_path, monkeypatch):
+    """`_collect_artifact` robi `mkdir(parents=True)`. Katalog wskazany na
+    slepo powstanie i EXE zniknie z pola widzenia uzytkownika przy buildzie
+    zameldowanym jako udany."""
+    root = _make(tmp_path / "p", {"main.py": ""})
+    home = tmp_path / "dom"
+    home.mkdir()
+
+    monkeypatch.setattr(planning, "_known_folder_desktop", lambda: tmp_path / "nie-ma-takiego")
+    monkeypatch.setattr(planning, "_home_dir", lambda: home)
+    monkeypatch.setattr(planning, "_is_writable", lambda p: Path(p) != root.parent)
+
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent.exists()
+    assert dest.parent == home
+
+
+def test_the_dead_pulpit_arm_is_gone(tmp_path, monkeypatch):
+    """Na dysku pulpit nazywa sie zawsze `Desktop` — `Pulpit` to nazwa
+    wyswietlana z `desktop.ini`. Zgadywanie `~/Pulpit` nie trafialo nigdy."""
+    root = _make(tmp_path / "p", {"main.py": ""})
+    home = tmp_path / "dom"
+    (home / "Desktop").mkdir(parents=True)
+
+    monkeypatch.setattr(planning, "_known_folder_desktop", lambda: None)
+    monkeypatch.setattr(planning, "_home_dir", lambda: home)
+    monkeypatch.setattr(planning, "_is_writable", lambda p: Path(p) != root.parent)
+
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent == home / "Desktop"

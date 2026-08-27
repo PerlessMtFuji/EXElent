@@ -12,11 +12,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from exelent.constants import PYINSTALLER_SPEC, TARGET_PYTHON
+from exelent.diagnostics.patterns import explain_log
+from exelent.models import Issue, IssueError, Severity
 from exelent.runtime import ProgressFn
 from exelent.runtime.bootstrap import ensure_uv
 from exelent.runtime.paths import work_dir_for
 
 CREATE_NO_WINDOW = 0x08000000
+
+
+class BuildEnvError(IssueError):
+    """Srodowisko builda nie powstalo.
+
+    Bez tego wyjatku `create_build_env` oddawalo `BuildEnv` wygladajace na
+    zdrowe, a awaria wychodzila cztery ramki dalej jako `FileNotFoundError
+    [WinError 2]` z `Popen` — czyli w miejscu, ktore o przyczynie nie wie nic.
+    """
 
 
 @dataclass(frozen=True)
@@ -55,10 +66,12 @@ def create_build_env(
     venv.parent.mkdir(parents=True, exist_ok=True)
 
     progress("install_python", 0.0)
-    run_uv(uv, ["python", "install", python_version])
+    installed = run_uv(uv, ["python", "install", python_version])
 
     progress("create_env", 0.3)
-    run_uv(uv, ["venv", str(venv), "--python", python_version])
+    created = run_uv(uv, ["venv", str(venv), "--python", python_version])
+    if created.returncode != 0:
+        raise _env_failure(installed, created)
 
     python = venv / "Scripts" / "python.exe"
 
@@ -77,3 +90,32 @@ def create_build_env(
 
     progress("install_packages", 1.0)
     return BuildEnv(uv=uv, venv=venv, python=python, failed_packages=tuple(failed))
+
+
+def _env_failure(
+    installed: subprocess.CompletedProcess[str],
+    created: subprocess.CompletedProcess[str],
+) -> BuildEnvError:
+    """Zamienia porazke uv w Issue — z winnym krokiem i rozpoznana przyczyna.
+
+    Winny jest krok PIERWSZY z tych, ktore padly: gdy interpreter nie zjechal
+    na dysk, venv nie mial z czego powstac, a wskazanie "tworzenie srodowiska"
+    wyslaloby uzytkownika w zla strone.
+
+    Niezerowy kod z samego `uv python install` NIE jest tu powodem do
+    przerwania — uv zwraca go takze wtedy, gdy zgodny Python juz jest w
+    systemie, a venv powstaje wtedy bez problemu.
+
+    Strumien bledow uv przechodzi przez `explain_log`, bo dokladnie te
+    przyczyny z sekcji 8 specyfikacji (proxy z podmienionym certyfikatem,
+    zapelniony dysk) sa tam nazwane wprost. Sam tekst uv nigdy nie trafia do
+    uzytkownika: jest po angielsku i w zargonie narzedzia.
+    """
+    step = "install_python" if installed.returncode != 0 else "create_env"
+    stderr = (created.stderr or "") + "\n" + (installed.stderr or "")
+    cause = explain_log(stderr)
+    return BuildEnvError(
+        Issue("env_setup_failed", Severity.BLOCKER, {"step": step}),
+        RuntimeError(f"uv zwrocilo {created.returncode}"),
+        extra=cause,
+    )

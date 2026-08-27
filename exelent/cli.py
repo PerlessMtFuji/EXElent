@@ -16,11 +16,11 @@ from exelent.analysis.project import analyze_project
 from exelent.build.backend import CancelToken
 from exelent.build.pyinstaller import PyInstallerBackend
 from exelent.build.workspace import materialize_workspace
-from exelent.diagnostics.patterns import explain_log
-from exelent.models import BuildResult, Issue, Severity
+from exelent.diagnostics.patterns import explain_log, sort_issues
+from exelent.models import BuildResult, Issue, IssueError, Severity
 from exelent.planning import make_plan
 from exelent.runtime import ProgressFn
-from exelent.runtime.bootstrap import UvDownloadError, check_preconditions
+from exelent.runtime.bootstrap import check_preconditions
 from exelent.runtime.env import create_build_env
 
 
@@ -42,6 +42,32 @@ def _packages_failed_issue(failed: Sequence[str]) -> tuple[Issue, ...]:
     return (Issue("packages_failed", Severity.WARNING, {"packages": ", ".join(failed)}),)
 
 
+def _os_error_signal(exc: OSError) -> str:
+    """Wyjatek systemu w ksztalcie, ktory rozumie `explain_log`.
+
+    Kod bledu Windows niesie gotowa diagnoze — nie ma powodu jej gubic tylko
+    dlatego, ze przyszedl z kopiowania katalogu, a nie z logu PyInstallera.
+    Tabela wzorcow w `diagnostics/patterns.py` jest pisana dokladnie na te
+    napisy ("WinError 32", "Errno 28", "Access is denied").
+    """
+    parts = [f"[Errno {exc.errno}]" if exc.errno is not None else ""]
+    winerror = getattr(exc, "winerror", None)
+    if winerror is not None:
+        parts.append(f"[WinError {winerror}]")
+    parts.append(str(exc.strerror or exc))
+    parts.append(str(exc.filename or ""))
+    return " ".join(part for part in parts if part)
+
+
+def _unexpected_issues(exc: BaseException) -> tuple[Issue, ...]:
+    """Ostatnia siatka bezpieczenstwa: cokolwiek to bylo, ma byc kodem."""
+    if isinstance(exc, OSError):
+        recognised = explain_log(_os_error_signal(exc))
+        if recognised:
+            return recognised
+    return (Issue("unexpected_error", Severity.BLOCKER, {"error": type(exc).__name__}),)
+
+
 def run_build(
     root: Path,
     progress: ProgressFn = _print_progress,
@@ -55,45 +81,70 @@ def run_build(
     if blockers:
         return BuildResult(ok=False, issues=blockers)
 
-    # Ostrzeżenia analizy (sekrety w kodzie, ciężkie paczki, niepewny plik
-    # główny) są jedyną drogą, którą CLI może o nich powiedzieć — GUI pokazuje
-    # je na ekranie 2, konsola nie ma takiego ekranu.
-    carried = tuple(i for i in analysis.issues if i.severity is not Severity.BLOCKER)
+    # Ostrzezenia analizy (sekrety w kodzie, ciezkie paczki, niepewny plik
+    # glowny) sa jedyna droga, ktora CLI moze o nich powiedziec — GUI pokazuje
+    # je na ekranie 2, konsola nie ma takiego ekranu. Lista jest mutowalna,
+    # bo `_build` dopisuje do niej po drodze: to, co juz wiadomo, ma przetrwac
+    # kazda pozniejsza awarie.
+    carried = [i for i in analysis.issues if i.severity is not Severity.BLOCKER]
 
     try:
         plan = make_plan(analysis, **overrides)
     except ValueError:
-        # Nieosiągalne przy dzisiejszym `analyze_project` (brak kodu zawsze
-        # daje BLOCKER powyżej), ale `make_plan` jest publiczne i wspólne z
-        # GUI. Gdyby ta niepisana umowa kiedyś pękła, użytkownik ma zobaczyć
+        # Nieosiagalne przy dzisiejszym `analyze_project` (brak kodu zawsze
+        # daje BLOCKER powyzej), ale `make_plan` jest publiczne i wspolne z
+        # GUI. Gdyby ta niepisana umowa kiedys pekla, uzytkownik ma zobaczyc
         # Issue, a nie traceback.
-        return BuildResult(ok=False, issues=(*carried, Issue("no_entry_point", Severity.BLOCKER)))
+        return _failed(carried, (Issue("no_entry_point", Severity.BLOCKER),))
 
     preconditions = check_preconditions(need_network=True)
     if preconditions:
-        return BuildResult(ok=False, issues=(*carried, *preconditions))
+        return _failed(carried, preconditions)
 
+    # Jedna granica wyjatkow dla calej reszty. Waskie lapki na dwa typy
+    # wymyslone z nazwy zostawialy na wierzchu wszystko inne: `FileExistsError
+    # [WinError 183]` z `copytree` po anulowanym buildzie, `shutil.Error` na
+    # pliku OneDrive dostepnym tylko w chmurze, `FileNotFoundError [WinError 2]`
+    # z `Popen`, gdy uv nie zbudowalo venva. Kazde z nich konczylo sie
+    # tracebackiem na twarzy laika.
+    try:
+        result = _build(plan, analysis, carried, progress, cancel)
+    except IssueError as exc:
+        return _failed(carried, exc.issues)
+    except Exception as exc:  # noqa: BLE001 - to JEST granica, tu sie konczy stos
+        return _failed(carried, _unexpected_issues(exc))
+
+    return replace(result, issues=sort_issues((*carried, *result.issues)))
+
+
+def _failed(carried: Sequence[Issue], issues: Sequence[Issue]) -> BuildResult:
+    return BuildResult(ok=False, issues=sort_issues((*carried, *issues)))
+
+
+def _build(
+    plan,
+    analysis,
+    carried: list[Issue],
+    progress: ProgressFn,
+    cancel: CancelToken,
+) -> BuildResult:
+    """Wlasciwy build. Wolane wylacznie spod granicy wyjatkow w `run_build`."""
     materialize_workspace(plan, analysis.converted)
 
-    try:
-        env = create_build_env(plan.root, plan.packages, progress)
-    except UvDownloadError as exc:
-        # `ensure_uv` niesie gotowe Issue właśnie po to — bez tego nieudane
-        # pobranie uv kończy się tracebackiem na twarzy laika.
-        return BuildResult(ok=False, issues=(*carried, exc.issue))
+    env = create_build_env(plan.root, plan.packages, progress)
+    carried.extend(_packages_failed_issue(env.failed_packages))
 
-    carried += _packages_failed_issue(env.failed_packages)
     result = PyInstallerBackend().build(plan, env, progress, cancel)
 
     if not result.ok and result.log_path and result.log_path.exists():
-        # Świadomie cały log, bez `tail()`: `explain_log` jest liniowe
-        # (~0.017 s/MB, zmierzone w zadaniu 14), a obcięcie do ostatnich N
-        # linii potrafiłoby ukryć błąd, który padł wcześnie i tylko odbił się
-        # echem na końcu.
+        # Swiadomie caly log, bez `tail()`: `explain_log` jest liniowe
+        # (~0.017 s/MB, zmierzone w zadaniu 14), a obciecie do ostatnich N
+        # linii potrafiloby ukryc blad, ktory padl wczesnie i tylko odbil sie
+        # echem na koncu.
         log = result.log_path.read_text(encoding="utf-8", errors="replace")
-        return replace(result, issues=(*carried, *result.issues, *explain_log(log)))
+        return replace(result, issues=(*result.issues, *explain_log(log)))
 
-    return replace(result, issues=(*carried, *result.issues))
+    return result
 
 
 def _print_issues(issues: Sequence[Issue], stream) -> None:

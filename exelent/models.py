@@ -6,7 +6,7 @@ który warstwa prezentacji tłumaczy przez exelent.i18n.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -33,6 +33,31 @@ class Issue:
     code: str
     severity: Severity
     data: Mapping[str, str] = field(default_factory=dict)
+
+
+class IssueError(RuntimeError):
+    """Wyjatek, ktory niesie gotowe `Issue` — nigdy surowego tekstu.
+
+    Istnieje po to, zeby `run_build` mialo JEDNA lapke na wszystkie awarie,
+    ktore warstwa nizej potrafi juz nazwac. Trzy waskie handlery na trzy typy
+    wymyslone z nazwy to wzorzec, o ktorego rozszerzeniu nastepny wspolpracownik
+    zapomni — i wtedy laik dostaje traceback zamiast zdania.
+
+    `issues` moze byc dluzsze niz jeden element: warstwa rzucajaca czesto zna
+    zarowno fakt ("srodowisko builda nie powstalo"), jak i przyczyne rozpoznana
+    ze strumienia bledow narzedzia ("certyfikat nie przeszedl weryfikacji").
+    """
+
+    def __init__(
+        self,
+        issue: Issue,
+        cause: BaseException | None = None,
+        *,
+        extra: Sequence[Issue] = (),
+    ) -> None:
+        super().__init__(f"{issue.code}: {cause}" if cause is not None else issue.code)
+        self.issue = issue
+        self.issues: tuple[Issue, ...] = (issue, *extra)
 
 
 @dataclass(frozen=True)
