@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from pathlib import Path
 
 from exelent.models import Issue, Severity
 
@@ -166,6 +167,75 @@ PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
         Severity.WARNING,
     ),
 )
+
+
+# --- Wyjatki systemu, nie log builda -----------------------------------------
+#
+# Tabela wyzej opisuje LOG PyInstallera. Tutaj diagnozujemy `OSError`, ktory
+# poleciał w naszym wlasnym kodzie: przy czytaniu plikow zrodlowych uzytkownika,
+# przy kopiowaniu projektu do workspace'u, przy sprawdzaniu miejsca na dysku.
+#
+# Dlaczego OSOBNA tabela, skoro napisy sa te same: bo bazowe prawdopodobienstwo
+# jest inne, a diagnoza to zaklad o przyczyne. "WinError 1920" na artefakcie w
+# `dist` najczesciej znaczy antywirusa (Task 14 rozstrzygnal to trzema rundami).
+# Ten sam kod przy CZYTANIU pliku zrodlowego najczesciej znaczy plik trzymany
+# tylko w chmurze — OneDrive Files On-Demand jest w polskim OOBE wlaczone
+# domyslnie, a §8 specyfikacji wymienia ten przypadek wprost. Rada "wylacz
+# antywirusa" jest wtedy pewna siebie i BLEDNA: uzytkownik traci godzine,
+# build dalej pada, i przestaje ufac kazdemu kolejnemu komunikatowi.
+#
+# Dlatego `antivirus_blocked` NIE MA tutaj zadnego ramienia. Dowodem dla tej
+# diagnozy jest artefakt builda w logu, a wyjatek z czytania cudzych plikow
+# takiego dowodu nie niesie.
+
+# Windows sam nazywajacy chmure. Dopasowanie po TRESCI, nie po numerze: rodzina
+# ERROR_CLOUD_FILE_* to kilkanascie kodow, ktorych nie chce przepisywac z
+# pamieci — falszywy negatyw degraduje do neutralnego `access_denied`, czyli w
+# bezpieczna strone, a zmyslony numer daloby pewna siebie bzdure.
+_CLOUD_EXPLICIT = re.compile(r"cloud file|cloud operation|cloud provider|cloud sync", re.IGNORECASE)
+
+# "The file cannot be accessed by the system" — sam w sobie NIE rozroznia
+# przyczyn, wiec liczy sie jako chmura tylko razem z drugim dowodem: sciezka
+# lezy w katalogu synchronizowanym (`in_cloud`).
+_CANNOT_ACCESS = re.compile(r"WinError 1920\b|cannot be accessed by the system", re.IGNORECASE)
+
+_FILE_IN_USE = re.compile(r"WinError 32\b|used by another process", re.IGNORECASE)
+_DISK_FULL = re.compile(r"Errno 28\b|No space left on device", re.IGNORECASE)
+_PATH_TOO_LONG = re.compile(r"WinError 206\b|filename or extension is too long", re.IGNORECASE)
+
+
+def os_error_text(exc: OSError) -> str:
+    """Wyjatek w ksztalcie, w ktorym numery i tresc leza obok siebie."""
+    parts = [f"[Errno {exc.errno}]" if exc.errno is not None else ""]
+    winerror = getattr(exc, "winerror", None)
+    if winerror is not None:
+        parts.append(f"[WinError {winerror}]")
+    parts.append(str(exc.strerror or exc))
+    parts.append(str(exc.filename or ""))
+    return " ".join(part for part in parts if part)
+
+
+def map_os_error(exc: OSError, *, in_cloud: bool = False) -> tuple[Issue, ...]:
+    """Bledy systemu -> Issue. Pusta krotka znaczy "nie wiem" i to jest OK.
+
+    `run_build` zamienia brak dopasowania na `unexpected_error`, ktory mowi
+    uczciwie "cos poszlo nie tak". Zmyslona diagnoza byla by gorsza.
+    """
+    text = os_error_text(exc)
+    name = Path(exc.filename).name if exc.filename else ""
+
+    if _CLOUD_EXPLICIT.search(text) or (in_cloud and _CANNOT_ACCESS.search(text)):
+        return (Issue("cloud_file_unavailable", Severity.BLOCKER, {"file": name}),)
+    if _FILE_IN_USE.search(text):
+        return (Issue("file_in_use", Severity.BLOCKER),)
+    if _DISK_FULL.search(text):
+        return (Issue("disk_full", Severity.BLOCKER),)
+    if _PATH_TOO_LONG.search(text):
+        return (Issue("path_too_long", Severity.BLOCKER),)
+    if re.search(_ACCESS_DENIED, text) or _CANNOT_ACCESS.search(text):
+        return (Issue("access_denied", Severity.BLOCKER),)
+    return ()
+
 
 SEVERITY_ORDER = {Severity.BLOCKER: 0, Severity.WARNING: 1, Severity.INFO: 2}
 

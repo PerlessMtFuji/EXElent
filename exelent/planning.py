@@ -151,7 +151,12 @@ def _looks_like_cloud_name(name: str) -> bool:
     return any(low == cloud or low.startswith(cloud + " ") for cloud in _CLOUD_DIR_NAMES)
 
 
-def _is_cloud_synced(path: Path) -> bool:
+def is_cloud_synced(path: Path) -> bool:
+    """Czy sciezka lezy w katalogu synchronizowanym z chmura.
+
+    Publiczna, bo tego samego rozroznienia potrzebuje diagnostyka: WinError
+    1920 na pliku w OneDrive to plik trzymany w chmurze, a nie antywirus.
+    """
     path = Path(path)
     if any(_looks_like_cloud_name(part) for part in path.parts):
         return True
@@ -203,7 +208,7 @@ def default_dest_dir(root: Path, exe_name: str) -> Path:
     for candidate, avoid_cloud in candidates:
         if not candidate.exists() or not _is_writable(candidate):
             continue
-        if avoid_cloud and _is_cloud_synced(candidate):
+        if avoid_cloud and is_cloud_synced(candidate):
             # Chmura jest gorsza niz dysk lokalny, ale nieskonczenie lepsza
             # niz brak miejsca docelowego — zapamietujemy ja na wypadek, gdyby
             # zaden kandydat lokalny sie nie znalazl.

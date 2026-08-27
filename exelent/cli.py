@@ -17,9 +17,9 @@ from exelent.analysis.project import analyze_project
 from exelent.build.backend import CancelToken
 from exelent.build.pyinstaller import PyInstallerBackend, log_path_for
 from exelent.build.workspace import materialize_workspace
-from exelent.diagnostics.patterns import explain_log, sort_issues
+from exelent.diagnostics.patterns import explain_log, map_os_error, sort_issues
 from exelent.models import BuildPlan, BuildResult, Issue, IssueError, Severity
-from exelent.planning import make_plan
+from exelent.planning import is_cloud_synced, make_plan
 from exelent.runtime import ProgressFn
 from exelent.runtime.bootstrap import check_preconditions
 from exelent.runtime.env import create_build_env
@@ -43,27 +43,22 @@ def _packages_failed_issue(failed: Sequence[str]) -> tuple[Issue, ...]:
     return (Issue("packages_failed", Severity.WARNING, {"packages": ", ".join(failed)}),)
 
 
-def _os_error_signal(exc: OSError) -> str:
-    """Wyjatek systemu w ksztalcie, ktory rozumie `explain_log`.
-
-    Kod bledu Windows niesie gotowa diagnoze — nie ma powodu jej gubic tylko
-    dlatego, ze przyszedl z kopiowania katalogu, a nie z logu PyInstallera.
-    Tabela wzorcow w `diagnostics/patterns.py` jest pisana dokladnie na te
-    napisy ("WinError 32", "Errno 28", "Access is denied").
-    """
-    parts = [f"[Errno {exc.errno}]" if exc.errno is not None else ""]
-    winerror = getattr(exc, "winerror", None)
-    if winerror is not None:
-        parts.append(f"[WinError {winerror}]")
-    parts.append(str(exc.strerror or exc))
-    parts.append(str(exc.filename or ""))
-    return " ".join(part for part in parts if part)
-
-
 def _unexpected_issues(exc: BaseException) -> tuple[Issue, ...]:
-    """Ostatnia siatka bezpieczenstwa: cokolwiek to bylo, ma byc kodem."""
+    """Ostatnia siatka bezpieczenstwa: cokolwiek to bylo, ma byc kodem.
+
+    Wyjatek idzie przez `map_os_error`, a NIE przez `explain_log`. Tamta
+    tabela opisuje log PyInstallera i ma w sobie pewne siebie ramie
+    antywirusowe, ktore dla artefaktu w `dist` jest sluszne, a dla pliku
+    zrodlowego uzytkownika bylo by bledna rada: plik z OneDrive daje przy
+    odczycie ten sam WinError 1920, a laik po takiej podpowiedzi wylacza
+    antywirusa i nic sie nie zmienia.
+    """
     if isinstance(exc, OSError):
-        recognised = explain_log(_os_error_signal(exc))
+        in_cloud = False
+        if exc.filename:
+            with suppress(OSError, ValueError):
+                in_cloud = is_cloud_synced(Path(exc.filename))
+        recognised = map_os_error(exc, in_cloud=in_cloud)
         if recognised:
             return recognised
     return (Issue("unexpected_error", Severity.BLOCKER, {"error": type(exc).__name__}),)
@@ -128,20 +123,26 @@ def run_build(
         if blockers:
             return _fail(blockers)
 
-        try:
-            plan = make_plan(analysis, **overrides)
-        except ValueError:
-            # Nieosiagalne przy dzisiejszym `analyze_project` (brak kodu zawsze
-            # daje BLOCKER powyzej), ale `make_plan` jest publiczne i wspolne z
-            # GUI. Gdyby ta niepisana umowa kiedys pekla, uzytkownik ma
-            # zobaczyc Issue, a nie `ValueError`.
+        # Brak pliku glownego sprawdzamy TUTAJ, a nie lapiac `ValueError` z
+        # `make_plan`. Diagnoza po typie wyjatku byla mina: `make_plan` robi
+        # dzis sonde zapisywalnosci na wielu kandydatach i wywolanie Win32,
+        # wiec kazdy przyszly `ValueError` z tego I/O nazwalby sie
+        # "nie znaleziono pliku glownego". Teraz taki blad idzie do ogolnego
+        # ramienia i dostaje uczciwe `unexpected_error`.
+        if (overrides.get("entry") or analysis.entry) is None:
             return _fail((Issue("no_entry_point", Severity.BLOCKER),))
 
-        _clear_stale_log(plan)
+        plan = make_plan(analysis, **overrides)
 
         preconditions = check_preconditions(need_network=True)
         if preconditions:
             return _fail(preconditions)
+
+        # Kasowanie starego logu dopiero TUTAJ: od tego miejsca naprawde
+        # budujemy, wiec "log istnieje" znaczy "ten przebieg go zapisal".
+        # Wczesniej robil to kazdy przebieg, takze taki, ktory odpadal na
+        # braku internetu i nie mial czym tamtego logu zastapic.
+        _clear_stale_log(plan)
 
         result = _build(plan, analysis, carried, progress, cancel)
     except IssueError as exc:
@@ -153,7 +154,14 @@ def run_build(
         # Sprzecznosc, nie sukces: w gore poszedlby `BuildResult`, ktory mowi
         # "udalo sie", a nie ma czego pokazac. Zdejmujemy ja tutaj, zeby
         # warstwa prezentacji nie musiala wymyslac, co z takim czyms zrobic.
-        return _fail((Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name}),))
+        # Reszta wyniku ZOSTAJE: backend zna czas trwania, sciezke logu i
+        # czasem wlasne Issue mowiace, dlaczego artefaktu nie ma.
+        vanished = Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name})
+        return replace(
+            result,
+            ok=False,
+            issues=sort_issues((*carried, *result.issues, vanished)),
+        )
 
     return replace(result, issues=sort_issues((*carried, *result.issues)))
 
