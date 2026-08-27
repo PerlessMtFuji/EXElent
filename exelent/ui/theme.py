@@ -39,6 +39,10 @@ QWidget {{
     font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 14px;
 }}
+/* Reguła `QWidget` wyżej daje etykietom NIEPRZEZROCZYSTE tło okna, więc każdy
+   napis na karcie albo w strefie zrzutu wycinał w niej ciemny prostokąt.
+   Widać to wyłącznie w renderingu — arkusz jako napis jest poprawny. */
+QLabel {{ background: transparent; }}
 QLabel#Title {{ font-size: 26px; font-weight: 600; }}
 QLabel#Muted {{ color: {text_muted}; }}
 QFrame#Card {{
