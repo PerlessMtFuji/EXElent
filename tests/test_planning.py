@@ -252,3 +252,26 @@ def test_the_dead_pulpit_arm_is_gone(tmp_path, monkeypatch):
 
     dest = default_dest_dir(root, "Program")
     assert dest.parent == home / "Desktop"
+
+
+# --- Minor M14: Pulpit jest odpytywany raz, nie dwa razy ---
+
+
+def test_the_desktop_is_located_only_once(tmp_path, monkeypatch):
+    """Kazde pytanie o Pulpit to wywolanie Win32 `SHGetKnownFolderPath`, a
+    kazdy kandydat to jeszcze sonda zapisywalnosci — czyli, gdy Pulpit lezy w
+    OneDrive, zdarzenie synchronizacji. `default_dest_dir` woli policzyc to
+    raz: sciezka fallbacku pytala o Pulpit po raz drugi."""
+    root = _make(tmp_path / "p", {"main.py": ""})
+    calls: list[int] = []
+
+    def _counted() -> Path:
+        calls.append(1)
+        return tmp_path / "pulpit"
+
+    monkeypatch.setattr(planning, "_desktop_dir", _counted)
+    monkeypatch.setattr(planning, "_is_writable", lambda _p: False)
+
+    default_dest_dir(root, "Program")
+
+    assert len(calls) == 1, f"Pulpit odpytany {len(calls)} razy"

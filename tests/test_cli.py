@@ -118,6 +118,10 @@ def test_failed_packages_are_reported_as_a_warning(tmp_path, monkeypatch, stub_b
 def test_no_failed_packages_means_no_warning(tmp_path, stub_build):
     root = _project(tmp_path, {"main.py": "print(1)"})
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    # Bez tej asercji test przechodzil takze przy CALKOWICIE rozwalonym
+    # buildzie: "brak ostrzezenia o paczkach" jest prawda takze wtedy, gdy
+    # nie ma zadnego wyniku. Zielony z niewlasciwego powodu.
+    assert result.ok is True, [i.code for i in result.issues]
     assert [i.code for i in result.issues if i.code == "packages_failed"] == []
 
 
@@ -151,6 +155,7 @@ def test_analysis_warnings_reach_the_result(tmp_path, stub_build):
     code = "import os\nprint('sk-AAAABBBBCCCCDDDDEEEEFFFF')\n"
     root = _project(tmp_path, {"main.py": code})
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok is True, [i.code for i in result.issues]
     assert "secrets_in_code" in [i.code for i in result.issues]
 
 
@@ -393,3 +398,172 @@ def test_blockers_are_listed_before_carried_warnings(tmp_path, monkeypatch, stub
     assert "secrets_in_code" in codes and "file_in_use" in codes
     assert result.issues[0].severity is Severity.BLOCKER
     assert codes.index("file_in_use") < codes.index("secrets_in_code")
+
+
+# --- Critical C3: granica wyjatkow obejmuje ANALIZE, nie tylko sam build ---
+
+
+def test_an_unreadable_source_file_is_an_issue_not_a_traceback(tmp_path, monkeypatch, stub_build):
+    """`analyze_project` czyta KAZDY plik uzytkownika bez straznika.
+
+    Runda 1 przesunela granice wyjatkow tak, ze obejmuje build — ale analiza
+    stoi przed nia i jest pierwsza linia `run_build`. Jeden plik z odmowa
+    dostepu (ACL, plik OneDrive dostepny tylko w chmurze) daje laikowi surowy
+    traceback. Potwierdzone `icacls /deny` na tej maszynie.
+    """
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    def _denied(path):
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr("exelent.analysis.project._read", _denied)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert [i.code for i in result.issues] == ["access_denied"]
+
+
+# --- Important I6: make_plan i check_preconditions tez stoja poza granica ---
+
+
+def test_an_unknown_override_is_reported_not_raised(tmp_path, stub_build):
+    """GUI (zadania 19/20) jest wolajacym, ktory podaje kwargi. Literowka w
+    nazwie opcji nie moze konczyc sie `TypeError` na wierzchu."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    result = cli.run_build(root, noop_progress, nie_ma_takiej_opcji=1)
+
+    assert result.ok is False
+    assert [i.code for i in result.issues] == ["unexpected_error"]
+
+
+def test_a_failing_precondition_probe_is_reported_not_raised(tmp_path, monkeypatch, stub_build):
+    """`check_preconditions` robi `shutil.disk_usage` — to potrafi rzucic."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    def _boom(**_kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(cli, "check_preconditions", _boom)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert [i.code for i in result.issues] == ["disk_full"]
+
+
+def test_a_failing_dest_probe_is_reported_not_raised(tmp_path, monkeypatch, stub_build):
+    """`make_plan` robi teraz wiecej I/O niz przed runda 1: sonda
+    zapisywalnosci na wielu kandydatach i wywolanie Win32."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    def _boom(_path):
+        raise OSError(1920, "The file cannot be accessed by the system")
+
+    monkeypatch.setattr("exelent.planning._is_writable", _boom)
+
+    result = cli.run_build(root, noop_progress)
+
+    assert result.ok is False
+    assert result.issues, "cicha porazka bez zadnego Issue jest gorsza niz traceback"
+
+
+# --- Minor M13: BLOCKER analizy nie moze gubic jej ostrzezen ---
+
+
+def test_analysis_warnings_are_not_dropped_by_a_blocker(tmp_path, monkeypatch, stub_build):
+    """Reszta `run_build` niesie `carried` wszedzie — ta jedna sciezka nie."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+    analysis = ProjectAnalysis(
+        root=root,
+        scan=ScanResult(root=root),
+        suggested_name="p",
+        issues=(
+            Issue("scan_truncated", Severity.WARNING, {"files": "5000"}),
+            Issue("no_python_found", Severity.BLOCKER, {"dir": "p"}),
+        ),
+    )
+    monkeypatch.setattr(cli, "analyze_project", lambda _root: analysis)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert [i.code for i in result.issues] == ["no_python_found", "scan_truncated"]
+
+
+# --- Minor M11: sciezka do logu nie moze zginac razem z wyjatkiem ---
+
+
+def test_the_log_path_survives_a_crash_after_the_log_was_written(tmp_path, monkeypatch, stub_build):
+    """Zadanie 20 podpina pod "Zapisz raport" wlasnie `result.log_path`."""
+    from exelent.build.pyinstaller import log_path_for
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    class _WritesLogThenExplodes:
+        def build(self, plan, env, progress, cancel):
+            log = log_path_for(plan)
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text("PyInstaller: cokolwiek\n", encoding="utf-8")
+            raise RuntimeError("bum juz po zapisaniu logu")
+
+    monkeypatch.setattr(cli, "PyInstallerBackend", _WritesLogThenExplodes)
+
+    result = cli.run_build(root, noop_progress, exe_name="p", dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert result.log_path is not None, "uzytkownik nie ma czego dolaczyc do zgloszenia"
+    assert result.log_path.exists()
+    assert "PyInstaller" in result.log_path.read_text(encoding="utf-8")
+
+
+def test_a_log_from_a_previous_build_is_never_passed_off_as_this_one(
+    tmp_path, monkeypatch, stub_build
+):
+    """Log poprzedniej, zupelnie innej awarii jest gorszy niz brak logu:
+    uzytkownik dolaczylby go do zgloszenia, a zadanie 20 pokazaloby przycisk
+    "Zapisz raport" nad trescia, ktora nie ma nic wspolnego z tym bledem."""
+    from exelent.runtime.paths import logs_dir
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    stale = logs_dir() / "p.log"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("log poprzedniego builda", encoding="utf-8")
+
+    class _Exploding:
+        def build(self, plan, env, progress, cancel):
+            raise RuntimeError("bum przed zapisaniem czegokolwiek")
+
+    monkeypatch.setattr(cli, "PyInstallerBackend", _Exploding)
+
+    result = cli.run_build(root, noop_progress, exe_name="p", dest_dir=tmp_path / "out")
+
+    assert result.log_path is None
+
+
+# --- Minor M12: ok=True bez artefaktu to sprzecznosc, nie komunikat o porazce ---
+
+
+def test_run_build_never_reports_success_without_an_artifact(tmp_path, stub_build):
+    stub_build.result = BuildResult(ok=True, artifact=None, size_bytes=0)
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert "artifact_vanished" in [i.code for i in result.issues]
+
+
+def test_main_does_not_call_a_result_that_says_ok_a_failure(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "run_build", lambda *a, **kw: BuildResult(ok=True, artifact=None))
+
+    code = cli.main([str(tmp_path)])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "nie powiodl" not in err.lower(), "komunikat przeczy fladze ok=True"
+    assert "bez pliku wynikowego" in err.lower()

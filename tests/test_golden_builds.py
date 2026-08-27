@@ -7,6 +7,7 @@ ktorej ten projekt ma zapobiegac.
 """
 
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -161,6 +162,35 @@ def test_crashing_console_program_reports_instead_of_vanishing(tmp_path, monkeyp
 # --- Important I5: sciezka WINDOWED nie byla budowana ani razu ---
 
 
+def _kill_tree(process: subprocess.Popen) -> None:
+    """Ubija CALE drzewo procesow, nie tylko rodzica.
+
+    EXE w trybie ONEFILE to bootloader-rodzic, ktory rozpakowuje `_MEI...` i
+    uruchamia w nim DZIECKO z prawdziwym programem. `process.kill()` konczy
+    wylacznie rodzica — okno tkinter dziecka zyje dalej, trzyma swoj katalog
+    `_MEI` i dziesiatki megabajtow pamieci. Po przebiegach recenzji rundy 2
+    zostal w systemie `awaria-gui.exe` (PID 141632, 37 MB); kazde uruchomienie
+    tego testu doklada jednego sierote.
+    """
+    subprocess.run(
+        ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+        capture_output=True,
+        check=False,
+    )
+    with suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=30)
+
+
+def _is_running(exe_name: str) -> bool:
+    listing = subprocess.run(
+        ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return exe_name.lower() in listing.stdout.lower()
+
+
 def _exe_of(result) -> Path:
     """ONEDIR oddaje katalog, ONEFILE plik — testy dotykaja obu."""
     artifact = result.artifact
@@ -249,9 +279,47 @@ def test_crashing_windowed_program_leaves_a_report_instead_of_vanishing(tmp_path
     except subprocess.TimeoutExpired:
         pass  # okno bledu czeka na uzytkownika — dokladnie o to chodzi
     finally:
-        process.kill()
-        process.wait(timeout=30)
+        _kill_tree(process)
 
     report = exe.parent / "EXElent-blad.txt"
     assert report.exists(), "program GUI zniknal bez sladu"
     assert "CELOWY-BLAD-GUI" in report.read_text(encoding="utf-8")
+    assert not _is_running(exe.name), "test zostawil osierocony proces z otwartym oknem"
+
+
+# --- Minor M10: sekcja 10 specyfikacji wymienia "konsola z input()" ---
+
+
+def test_console_program_reading_input_builds_and_runs(tmp_path, monkeypatch):
+    """Program, ktory o cos pyta — dla laika najbardziej typowy skrypt.
+
+    ONEFILE rozpakowuje sie przez bootloader, wiec stdin przechodzi przez
+    dodatkowy proces; zaden inny test golden tego nie dotyka. Podsystem musi
+    zostac konsolowy: program pytajacy o dane bez okna konsoli nie ma gdzie
+    zadac pytania.
+    """
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = _project(
+        tmp_path,
+        "pytanie",
+        {
+            "main.py": (
+                "imie = input('Jak masz na imie? ')\nprint('CZESC-' + imie.strip().upper())\n"
+            ),
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    exe = _exe_of(result)
+    run = subprocess.run(
+        [str(exe)],
+        input="Ala\n",
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert run.returncode == 0, run.stderr
+    assert "CZESC-ALA" in run.stdout
+    assert _pe_subsystem(exe) == SUBSYSTEM_CONSOLE, "program pytajacy stracil konsole"
