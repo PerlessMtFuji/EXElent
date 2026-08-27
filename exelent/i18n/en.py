@@ -144,4 +144,23 @@ CATALOG: dict[str, str] = {
     "kind_console": "A console program",
     "mode_onefile": "A single EXE file",
     "mode_onedir": "A folder with the program",
+    # screen 3 - building and result
+    "build_cancel": "Stop",
+    "build_open_folder": "Show in folder",
+    "build_run": "Run",
+    "build_save_report": "Save report",
+    "build_report_filter": "Text file (*.txt)",
+    "build_report_github": "Report on GitHub",
+    "build_again": "Make another program",
+    "build_show_log": "Show details",
+    "build_hide_log": "Hide details",
+    "build_success": "Done! {name} — {size}",
+    "build_failed_title": "It did not work",
+    "build_failed_unknown": (
+        "I do not recognise this error. Save a report or send it in — it will help fix EXElent."
+    ),
+    "antivirus_note": (
+        "If your antivirus flags this file as suspicious, it is a false alarm typical of "
+        "programs built this way. You can add the file to its exceptions."
+    ),
 }

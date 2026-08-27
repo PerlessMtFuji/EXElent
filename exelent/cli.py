@@ -29,6 +29,38 @@ def _print_progress(phase: str, fraction: float) -> None:
     print(f"[{fraction * 100:5.1f}%] {phase}", flush=True)
 
 
+# Ile paska zajmuje przygotowanie środowiska. Reszta należy do PyInstallera,
+# bo to on trwa najdłużej.
+ENV_PROGRESS_SHARE = 0.3
+
+
+class _Progress:
+    """Jedna skala 0..1 dla całej drogi, sklejona z dwóch niezależnych.
+
+    `create_build_env` liczy swoje 0..1 i `PyInstallerBackend` swoje — obie
+    słusznie, bo żadna nie wie o istnieniu drugiej. Bez sklejenia pasek
+    postępu dochodzi do 100% po zainstalowaniu paczek i zaczyna od nowa od
+    20% (zmierzone na żywym buildzie), czyli mówi użytkownikowi, że program
+    stracił dotychczasową pracę.
+
+    Wartość nigdy nie maleje: PyInstaller wraca do fazy „Analyzing" po
+    „Processing module hooks", więc nawet w obrębie jednej skali kolejność
+    komunikatów nie jest rosnąca. Cofający się pasek jest gorszy niż stojący.
+    """
+
+    def __init__(self, report: ProgressFn) -> None:
+        self._report = report
+        self._highest = 0.0
+
+    def stage(self, start: float, end: float) -> ProgressFn:
+        def report(phase: str, fraction: float) -> None:
+            value = start + (end - start) * min(max(fraction, 0.0), 1.0)
+            self._highest = max(self._highest, value)
+            self._report(phase, self._highest)
+
+        return report
+
+
 def _packages_failed_issue(failed: Sequence[str]) -> tuple[Issue, ...]:
     """Częściowa instalacja zależności musi dotrzeć do użytkownika.
 
@@ -184,10 +216,11 @@ def _build(
     """Wlasciwy build. Wolane wylacznie spod granicy wyjatkow w `run_build`."""
     materialize_workspace(plan, analysis.converted)
 
-    env = create_build_env(plan.root, plan.packages, progress)
+    scale = _Progress(progress)
+    env = create_build_env(plan.root, plan.packages, scale.stage(0.0, ENV_PROGRESS_SHARE))
     carried.extend(_packages_failed_issue(env.failed_packages))
 
-    result = PyInstallerBackend().build(plan, env, progress, cancel)
+    result = PyInstallerBackend().build(plan, env, scale.stage(ENV_PROGRESS_SHARE, 1.0), cancel)
 
     if not result.ok and result.log_path and result.log_path.exists():
         # Swiadomie caly log, bez `tail()`: `explain_log` jest liniowe

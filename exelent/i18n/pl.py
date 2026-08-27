@@ -152,4 +152,23 @@ CATALOG: dict[str, str] = {
     "kind_console": "Program konsolowy",
     "mode_onefile": "Jeden plik EXE",
     "mode_onedir": "Folder z programem",
+    # ekran 3 - budowanie i wynik
+    "build_cancel": "Przerwij",
+    "build_open_folder": "Pokaż w folderze",
+    "build_run": "Uruchom",
+    "build_save_report": "Zapisz raport",
+    "build_report_filter": "Plik tekstowy (*.txt)",
+    "build_report_github": "Zgłoś na GitHubie",
+    "build_again": "Zrób następny program",
+    "build_show_log": "Pokaż szczegóły",
+    "build_hide_log": "Ukryj szczegóły",
+    "build_success": "Gotowe! {name} — {size}",
+    "build_failed_title": "Nie udało się",
+    "build_failed_unknown": (
+        "Nie rozpoznaję tego błędu. Zapisz raport albo zgłoś go — pomożesz naprawić EXElent."
+    ),
+    "antivirus_note": (
+        "Jeśli program antywirusowy oznaczy ten plik jako podejrzany, to fałszywy alarm "
+        "typowy dla programów tworzonych w ten sposób. Możesz dodać plik do wyjątków."
+    ),
 }

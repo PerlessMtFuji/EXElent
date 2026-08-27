@@ -1,13 +1,20 @@
-"""Powloka okna: stos trzech ekranow, tytul, motyw i przelacznik jezyka.
+"""Powloka okna: stos trzech ekranow, tytul, motyw, jezyk i droga przez program.
 
-Ekrany 1-2 sa juz wlasciwe (Task 18-19), ekran 3 to nadal pusty `QWidget` —
-zadanie 20 podmienia go, nie ruszajac tej klasy.
+Tu testujemy to, czego nie widac z zadnego pojedynczego ekranu: ze folder
+wskazany na ekranie 1 dociera jako analiza na ekran 2, ze plan z ekranu 2
+naprawde rusza build, i ze zamkniecie okna w trakcie budowania nie zostawia
+w systemie osieroconego procesu.
 """
+
+import threading
 
 import pytest
 
 from exelent.i18n import CATALOGS, set_language
-from exelent.ui.app import SCREEN_REVIEW, MainWindow
+from exelent.models import AppKind, BuildPlan, BuildResult, OutputMode
+from exelent.ui import worker as worker_module
+from exelent.ui.app import SCREEN_BUILD, SCREEN_DROP, SCREEN_REVIEW, MainWindow
+from exelent.ui.screen_build import BuildScreen
 from exelent.ui.screen_drop import DropScreen
 from exelent.ui.screen_review import ReviewScreen
 
@@ -113,3 +120,125 @@ def test_the_window_speaks_the_system_language_on_every_screen(qtbot, monkeypatc
     english = set(CATALOGS["en"].values())
     assert window.screen_drop.headline.text() in english
     assert window.screen_review.headline.text() in english
+
+
+# --- droga przez program: folder -> przeglad -> build ---
+
+
+def _plan(tmp_path):
+    return BuildPlan(
+        root=tmp_path,
+        entry=tmp_path / "main.py",
+        app_kind=AppKind.CONSOLE,
+        output_mode=OutputMode.ONEFILE,
+        exe_name="Program",
+        dest_dir=tmp_path / "out",
+    )
+
+
+@pytest.fixture
+def fake_build(monkeypatch):
+    """Udawany `run_build`, ktory stoi az do zwolnienia."""
+    zwolnij = threading.Event()
+    wystartowal = threading.Event()
+    stan = {"anulowany": False}
+
+    def fake(root, progress, cancel, **kwargs):
+        wystartowal.set()
+        progress("analyze", 0.35)
+        for _ in range(1000):
+            if zwolnij.is_set() or cancel.cancelled:
+                break
+            threading.Event().wait(0.005)
+        stan["anulowany"] = cancel.cancelled
+        return BuildResult(ok=False)
+
+    monkeypatch.setattr(worker_module, "run_build", fake)
+    stan["zwolnij"] = zwolnij
+    stan["wystartowal"] = wystartowal
+    return stan
+
+
+def test_the_third_screen_is_the_build_screen(window):
+    assert isinstance(window.stack.widget(SCREEN_BUILD), BuildScreen)
+
+
+def test_the_build_screen_is_not_the_owner_of_the_thread(window):
+    """Ekran pokazuje postep, watkiem zarzadza okno — inaczej kazdy powrot na
+    ekran 1 musialby wiedziec, jak zatrzymac budowanie."""
+    assert window.worker is not None
+    assert window.worker.is_running() is False
+
+
+def test_requesting_a_build_moves_to_the_third_screen_and_starts_it(
+    window, qtbot, fake_build, tmp_path
+):
+    window.screen_review.build_requested.emit(_plan(tmp_path))
+    assert window.stack.currentIndex() == SCREEN_BUILD
+    assert fake_build["wystartowal"].wait(timeout=5)
+    with qtbot.waitSignal(window.worker.finished, timeout=5000):
+        fake_build["zwolnij"].set()
+
+
+def test_progress_from_the_worker_reaches_the_screen(window, qtbot, fake_build, tmp_path):
+    """Sygnaly workera musza byc PODPIETE do ekranu: bez tego pasek stoi na
+    zerze przez cale budowanie i program wyglada na zawieszony."""
+    with qtbot.waitSignal(window.worker.finished, timeout=5000):
+        window.screen_review.build_requested.emit(_plan(tmp_path))
+        assert fake_build["wystartowal"].wait(timeout=5)
+        fake_build["zwolnij"].set()
+    assert window.screen_build.bar.value() > 0
+    assert window.screen_build.summary_label.text() != ""
+
+
+def test_the_stop_button_stops_the_running_build(window, qtbot, fake_build, tmp_path):
+    with qtbot.waitSignal(window.worker.finished, timeout=5000):
+        window.screen_review.build_requested.emit(_plan(tmp_path))
+        assert fake_build["wystartowal"].wait(timeout=5)
+        window.screen_build.cancel_button.click()
+    assert fake_build["anulowany"] is True
+
+
+def test_the_new_build_screen_does_not_show_the_previous_one(window, qtbot, fake_build, tmp_path):
+    """Okno wola `start` PRZED pokazaniem ekranu — inaczej uzytkownik widzi
+    przez chwile wynik poprzedniego budowania."""
+    with qtbot.waitSignal(window.worker.finished, timeout=5000):
+        window.screen_review.build_requested.emit(_plan(tmp_path))
+        fake_build["zwolnij"].set()
+    poprzednie = window.screen_build.summary_label.text()
+    assert poprzednie != ""
+
+    fake_build["zwolnij"].clear()
+    window.screen_review.build_requested.emit(_plan(tmp_path))
+    assert window.screen_build.summary_label.text() == ""
+    with qtbot.waitSignal(window.worker.finished, timeout=5000):
+        fake_build["zwolnij"].set()
+
+
+def test_restart_returns_to_the_first_screen(window, qtbot, tmp_path):
+    window.go_to(SCREEN_BUILD)
+    window.screen_build.restart_requested.emit()
+    assert window.stack.currentIndex() == SCREEN_DROP
+
+
+def test_restart_refreshes_the_recent_list(window, monkeypatch, tmp_path):
+    """Projekt zbudowany przed chwila zostal zapamietany na ekranie 1, ale ten
+    ekran czytal liste ostatni raz przy starcie programu — bez odswiezenia
+    powrot pokazuje liste bez wlasnie uzytego projektu."""
+    odswiezenia = []
+    monkeypatch.setattr(window.screen_drop, "refresh_recent", lambda: odswiezenia.append(1))
+    window.screen_build.restart_requested.emit()
+    assert odswiezenia == [1]
+
+
+def test_closing_the_window_stops_a_running_build(window, fake_build, tmp_path):
+    """Zamkniecie okna w trakcie budowania: Qt niszczy dzialajacy QThread
+    (abort), a proces PyInstallera zostaje sierota trzymajaca pliki."""
+    window.screen_review.build_requested.emit(_plan(tmp_path))
+    assert fake_build["wystartowal"].wait(timeout=5)
+    assert window.worker.is_running() is True
+
+    window.close()
+
+    assert window.worker.is_running() is False
+    assert fake_build["anulowany"] is True
