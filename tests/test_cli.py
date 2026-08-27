@@ -530,12 +530,14 @@ def test_a_log_from_a_previous_build_is_never_passed_off_as_this_one(
     """Log poprzedniej, zupelnie innej awarii jest gorszy niz brak logu:
     uzytkownik dolaczylby go do zgloszenia, a zadanie 20 pokazaloby przycisk
     "Zapisz raport" nad trescia, ktora nie ma nic wspolnego z tym bledem."""
-    from exelent.runtime.paths import logs_dir
-
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
     root = _project(tmp_path, {"main.py": "print(1)"})
 
-    stale = logs_dir() / "p.log"
+    # Sciezka LICZONA, nie przepisana: recznie zlozone `logs_dir() / "p.log"`
+    # przestalo byc czymkolwiek, gdy M18 dodalo do nazwy skrot sciezki
+    # projektu — test pisal wtedy plik, ktorego nikt nie czyta, i przechodzil
+    # rowniez z calkowicie skasowanym `_clear_stale_log`.
+    stale = _log_path(root, exe_name="p", dest_dir=tmp_path / "out")
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_text("log poprzedniego builda", encoding="utf-8")
 
@@ -704,3 +706,53 @@ def test_two_projects_with_the_same_exe_name_do_not_share_one_log(tmp_path, monk
     log_b = _log_path(b, exe_name="program", dest_dir=tmp_path / "o2")
 
     assert log_a != log_b, "build jednego projektu kasuje log drugiego"
+
+
+# --- Critical C5: przebieg, ktory nie zaczal budowac, nie ma wlasnego logu ---
+
+
+def test_a_precondition_failure_does_not_hand_over_the_previous_log(
+    tmp_path, monkeypatch, stub_build
+):
+    """I8 slusznie przestal KASOWAC cudzy log, ale ten sam przebieg zaczal go
+    PODAWAC jako swoj: `_fail` liczy log ze znanego juz `plan`. Zadanie 20
+    podpina pod `log_path` przycisk "Zapisz raport", wiec uzytkownik dolaczylby
+    do zgloszenia log zupelnie innej awarii. Obie wlasnosci sa prawdziwe naraz:
+    nie niszcz cudzego logu i nie podawaj go za swoj."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = _project(tmp_path, {"main.py": "print(1)"})
+    overrides = {"exe_name": "p", "dest_dir": tmp_path / "out"}
+
+    previous = _log_path(root, **overrides)
+    previous.parent.mkdir(parents=True, exist_ok=True)
+    previous.write_text("log poprzedniej, zupelnie innej awarii", encoding="utf-8")
+
+    monkeypatch.setattr(
+        cli, "check_preconditions", lambda **_kw: (Issue("no_network", Severity.BLOCKER),)
+    )
+
+    result = cli.run_build(root, noop_progress, **overrides)
+
+    assert result.log_path is None, "cudzy log podany jako log tego przebiegu"
+    assert previous.exists(), "a jednoczesnie nie wolno go skasowac"
+
+
+# --- Minor M19: siatka bezpieczenstwa nie moze zakladac ksztaltu tego, co lapie ---
+
+
+def test_the_safety_net_survives_an_exception_with_a_non_text_filename(
+    tmp_path, monkeypatch, stub_build
+):
+    """`OSError.filename` bywa bajtami (albo deskryptorem). Siatka, ktora sama
+    rzuca `TypeError`, przestaje byc siatka — uzytkownik dostaje traceback."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+
+    def _denied_with_bytes(path):
+        raise PermissionError(13, "Access is denied", str(path).encode(), 5)
+
+    monkeypatch.setattr("exelent.analysis.project._read", _denied_with_bytes)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert [i.code for i in result.issues] == ["access_denied"]

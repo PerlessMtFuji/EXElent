@@ -84,3 +84,26 @@ def test_the_whole_tree_is_dead_afterwards(tmp_path):
 def test_an_overrun_is_a_failure_by_default(tmp_path):
     with pytest.raises(subprocess.TimeoutExpired):
         run_bounded(_tree(tmp_path), timeout=BOUND)
+
+
+def test_the_call_is_bounded_even_when_the_kill_fails(tmp_path, monkeypatch):
+    """Caly bound nie moze wisiec na powodzeniu `taskkill`. Gdy ubicie drzewa
+    zawiedzie (proces podniesiony, brak `taskkill` w obrazie CI), `communicate`
+    bez ograniczenia czeka do konca zycia RODZICA — zmierzone: 300.1 s przy
+    timeout 3 s. Test ma sie swiecic na czerwono, nigdy wisiec."""
+    import procutil
+
+    monkeypatch.setattr(procutil, "DRAIN_TIMEOUT", 1.0)
+    survivors: list[subprocess.Popen] = []
+    monkeypatch.setattr(procutil, "kill_tree", survivors.append)
+
+    started = time.monotonic()
+    try:
+        run_bounded(_tree(tmp_path), timeout=BOUND, allow_timeout=True)
+        elapsed = time.monotonic() - started
+        assert elapsed < CHILD_LIFETIME / 2, f"wrocilo po {elapsed:.1f}s mimo bound {BOUND}s"
+    finally:
+        for process in survivors:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, check=False
+            )

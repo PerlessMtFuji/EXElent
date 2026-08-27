@@ -17,7 +17,7 @@ from exelent.analysis.project import analyze_project
 from exelent.build.backend import CancelToken
 from exelent.build.pyinstaller import PyInstallerBackend, log_path_for
 from exelent.build.workspace import materialize_workspace
-from exelent.diagnostics.patterns import explain_log, map_os_error, sort_issues
+from exelent.diagnostics.patterns import explain_log, filename_of, map_os_error, sort_issues
 from exelent.models import BuildPlan, BuildResult, Issue, IssueError, Severity
 from exelent.planning import is_cloud_synced, make_plan
 from exelent.runtime import ProgressFn
@@ -55,9 +55,10 @@ def _unexpected_issues(exc: BaseException) -> tuple[Issue, ...]:
     """
     if isinstance(exc, OSError):
         in_cloud = False
-        if exc.filename:
+        filename = filename_of(exc)
+        if filename:
             with suppress(OSError, ValueError):
-                in_cloud = is_cloud_synced(Path(exc.filename))
+                in_cloud = is_cloud_synced(Path(filename))
         recognised = map_os_error(exc, in_cloud=in_cloud)
         if recognised:
             return recognised
@@ -67,10 +68,12 @@ def _unexpected_issues(exc: BaseException) -> tuple[Issue, ...]:
 def _existing_log(plan: BuildPlan | None) -> Path | None:
     """Log TEGO builda, o ile powstal.
 
-    Stary log spod tej samej nazwy jest kasowany, gdy tylko plan jest znany
-    (`_clear_stale_log`), wiec istnienie pliku znaczy "ten przebieg cos
-    zapisal". Bez tego uzytkownik dolaczalby do zgloszenia log poprzedniej,
-    zupelnie innej awarii.
+    `plan` przychodzi tu dopiero, gdy ten przebieg skasowal stary log
+    (`_clear_stale_log`) — od tego momentu istnienie pliku znaczy "ten
+    przebieg cos zapisal". Wczesniej plan bywa juz policzony, ale log pod ta
+    sciezka nalezy jeszcze do POPRZEDNIEGO przebiegu: dolaczony do zgloszenia
+    opisywalby zupelnie inna awarie, a zadanie 20 podpina pod `log_path`
+    przycisk "Zapisz raport".
     """
     if plan is None:
         return None
@@ -101,12 +104,16 @@ def run_build(
     # awarie, lacznie z ta na sciezce BLOCKERa analizy.
     carried: list[Issue] = []
     plan: BuildPlan | None = None
+    # Plan, ktorego log NALEZY do tego przebiegu. Osobno od `plan`, bo miedzy
+    # policzeniem planu a skasowaniem starego logu jest okno (warunki wstepne),
+    # w ktorym pod ta sciezka lezy jeszcze log poprzedniego przebiegu.
+    log_owner: BuildPlan | None = None
 
     def _fail(issues: Sequence[Issue]) -> BuildResult:
         return BuildResult(
             ok=False,
             issues=sort_issues((*carried, *issues)),
-            log_path=_existing_log(plan),
+            log_path=_existing_log(log_owner),
         )
 
     # JEDNA granica wyjatkow na CALA droge, nie tylko na sam build. Runda 1
@@ -143,6 +150,7 @@ def run_build(
         # Wczesniej robil to kazdy przebieg, takze taki, ktory odpadal na
         # braku internetu i nie mial czym tamtego logu zastapic.
         _clear_stale_log(plan)
+        log_owner = plan
 
         result = _build(plan, analysis, carried, progress, cancel)
     except IssueError as exc:
