@@ -1,0 +1,30 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # PyInstaller przypięty dokładnie tak samo jak w `exelent/constants.py`
+      # (PYINSTALLER_SPEC). Wersja pakująca wydanie nie może być inna niż ta,
+      # którą program instaluje użytkownikowi — pilnuje tego test w
+      # `tests/test_self_build.py`.
+      - run: pip install -e .[dev] pyinstaller==6.16.0
+      - run: pytest -m "not slow"
+      - run: python build_exelent.py
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/EXElent.exe
+          body: |
+            Pobierz EXElent.exe i uruchom — nic nie trzeba instalować.
+
+            Windows może pokazać ostrzeżenie SmartScreen, bo plik nie jest
+            podpisany certyfikatem. Kliknij "Więcej informacji" → "Uruchom mimo to".
