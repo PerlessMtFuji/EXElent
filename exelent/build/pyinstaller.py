@@ -14,10 +14,11 @@ from pathlib import Path
 from exelent.build.backend import CancelToken
 from exelent.build.icon import ensure_ico
 from exelent.build.launcher import LAUNCHER_FILENAME, render_launcher
+from exelent.build.workspace import workspace_for
 from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, Severity
 from exelent.runtime import ProgressFn
 from exelent.runtime.env import CREATE_NO_WINDOW, BuildEnv
-from exelent.runtime.paths import logs_dir, path_hash, work_dir_for
+from exelent.runtime.paths import logs_dir, path_hash
 
 PHASES: dict[str, str] = {
     r"Analyzing": "analyze",
@@ -123,7 +124,7 @@ class PyInstallerBackend:
         cancel: CancelToken,
     ) -> BuildResult:
         started = time.monotonic()
-        workspace = work_dir_for(plan.root) / "src"
+        workspace = workspace_for(plan.root)
 
         launcher = workspace / LAUNCHER_FILENAME
         launcher.write_text(
