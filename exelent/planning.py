@@ -193,9 +193,14 @@ def _dest_candidates(root: Path) -> tuple[tuple[Path, bool], ...]:
 
 def default_dest_dir(root: Path, exe_name: str) -> Path:
     folder = f"{sanitize_exe_name(exe_name)}-EXE"
+    # Lista kandydatow powstaje RAZ. Kazde pytanie o Pulpit to wywolanie Win32
+    # `SHGetKnownFolderPath`, a kazdy sprawdzany kandydat to jeszcze sonda
+    # zapisywalnosci — czyli, gdy Pulpit lezy w OneDrive, zdarzenie
+    # synchronizacji. Sciezka awaryjna pytala o to samo po raz drugi.
+    candidates = _dest_candidates(root)
     cloudy: Path | None = None
 
-    for candidate, avoid_cloud in _dest_candidates(root):
+    for candidate, avoid_cloud in candidates:
         if not candidate.exists() or not _is_writable(candidate):
             continue
         if avoid_cloud and _is_cloud_synced(candidate):
@@ -206,7 +211,12 @@ def default_dest_dir(root: Path, exe_name: str) -> Path:
             continue
         return candidate / folder
 
-    return (cloudy or _desktop_dir() or _home_dir()) / folder
+    # Zaden kandydat nie przeszedl sondy. Chmura bije brak miejsca; dalej
+    # pierwsze miejsce WYBRANE przez projekt (Pulpit, a gdy go nie ma —
+    # katalog domowy), nigdy katalog zrodlowy. `_dest_candidates` zawsze
+    # konczy sie katalogiem domowym, wiec ten wybor istnieje.
+    fallback = cloudy or next(path for path, avoid_cloud in candidates if not avoid_cloud)
+    return fallback / folder
 
 
 def make_plan(

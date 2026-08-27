@@ -9,15 +9,16 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 
 from exelent.analysis.project import analyze_project
 from exelent.build.backend import CancelToken
-from exelent.build.pyinstaller import PyInstallerBackend
+from exelent.build.pyinstaller import PyInstallerBackend, log_path_for
 from exelent.build.workspace import materialize_workspace
 from exelent.diagnostics.patterns import explain_log, sort_issues
-from exelent.models import BuildResult, Issue, IssueError, Severity
+from exelent.models import BuildPlan, BuildResult, Issue, IssueError, Severity
 from exelent.planning import make_plan
 from exelent.runtime import ProgressFn
 from exelent.runtime.bootstrap import check_preconditions
@@ -68,6 +69,28 @@ def _unexpected_issues(exc: BaseException) -> tuple[Issue, ...]:
     return (Issue("unexpected_error", Severity.BLOCKER, {"error": type(exc).__name__}),)
 
 
+def _existing_log(plan: BuildPlan | None) -> Path | None:
+    """Log TEGO builda, o ile powstal.
+
+    Stary log spod tej samej nazwy jest kasowany, gdy tylko plan jest znany
+    (`_clear_stale_log`), wiec istnienie pliku znaczy "ten przebieg cos
+    zapisal". Bez tego uzytkownik dolaczalby do zgloszenia log poprzedniej,
+    zupelnie innej awarii.
+    """
+    if plan is None:
+        return None
+    path = log_path_for(plan)
+    with suppress(OSError):
+        if path.exists():
+            return path
+    return None
+
+
+def _clear_stale_log(plan: BuildPlan) -> None:
+    with suppress(OSError):
+        log_path_for(plan).unlink(missing_ok=True)
+
+
 def run_build(
     root: Path,
     progress: ProgressFn = _print_progress,
@@ -75,50 +98,64 @@ def run_build(
     **overrides,
 ) -> BuildResult:
     cancel = cancel or CancelToken()
-    analysis = analyze_project(Path(root))
-
-    blockers = tuple(i for i in analysis.issues if i.severity is Severity.BLOCKER)
-    if blockers:
-        return BuildResult(ok=False, issues=blockers)
 
     # Ostrzezenia analizy (sekrety w kodzie, ciezkie paczki, niepewny plik
     # glowny) sa jedyna droga, ktora CLI moze o nich powiedziec — GUI pokazuje
-    # je na ekranie 2, konsola nie ma takiego ekranu. Lista jest mutowalna,
-    # bo `_build` dopisuje do niej po drodze: to, co juz wiadomo, ma przetrwac
-    # kazda pozniejsza awarie.
-    carried = [i for i in analysis.issues if i.severity is not Severity.BLOCKER]
+    # je na ekranie 2, konsola nie ma takiego ekranu. Lista jest mutowalna, bo
+    # rosnie po drodze: to, co juz wiadomo, ma przetrwac kazda pozniejsza
+    # awarie, lacznie z ta na sciezce BLOCKERa analizy.
+    carried: list[Issue] = []
+    plan: BuildPlan | None = None
 
+    def _fail(issues: Sequence[Issue]) -> BuildResult:
+        return BuildResult(
+            ok=False,
+            issues=sort_issues((*carried, *issues)),
+            log_path=_existing_log(plan),
+        )
+
+    # JEDNA granica wyjatkow na CALA droge, nie tylko na sam build. Runda 1
+    # domknela build, ale `analyze_project` stoi przed nim i czyta kazdy plik
+    # uzytkownika bez straznika — jeden plik z odmowa ACL albo dostepny tylko
+    # w chmurze konczyl sie surowym tracebackiem. Tak samo `make_plan` (sonda
+    # zapisywalnosci, wywolanie Win32, `TypeError` na literowce w nazwie opcji
+    # podanej przez GUI) i `check_preconditions` (`shutil.disk_usage`).
     try:
-        plan = make_plan(analysis, **overrides)
-    except ValueError:
-        # Nieosiagalne przy dzisiejszym `analyze_project` (brak kodu zawsze
-        # daje BLOCKER powyzej), ale `make_plan` jest publiczne i wspolne z
-        # GUI. Gdyby ta niepisana umowa kiedys pekla, uzytkownik ma zobaczyc
-        # Issue, a nie traceback.
-        return _failed(carried, (Issue("no_entry_point", Severity.BLOCKER),))
+        analysis = analyze_project(Path(root))
+        carried.extend(i for i in analysis.issues if i.severity is not Severity.BLOCKER)
 
-    preconditions = check_preconditions(need_network=True)
-    if preconditions:
-        return _failed(carried, preconditions)
+        blockers = tuple(i for i in analysis.issues if i.severity is Severity.BLOCKER)
+        if blockers:
+            return _fail(blockers)
 
-    # Jedna granica wyjatkow dla calej reszty. Waskie lapki na dwa typy
-    # wymyslone z nazwy zostawialy na wierzchu wszystko inne: `FileExistsError
-    # [WinError 183]` z `copytree` po anulowanym buildzie, `shutil.Error` na
-    # pliku OneDrive dostepnym tylko w chmurze, `FileNotFoundError [WinError 2]`
-    # z `Popen`, gdy uv nie zbudowalo venva. Kazde z nich konczylo sie
-    # tracebackiem na twarzy laika.
-    try:
+        try:
+            plan = make_plan(analysis, **overrides)
+        except ValueError:
+            # Nieosiagalne przy dzisiejszym `analyze_project` (brak kodu zawsze
+            # daje BLOCKER powyzej), ale `make_plan` jest publiczne i wspolne z
+            # GUI. Gdyby ta niepisana umowa kiedys pekla, uzytkownik ma
+            # zobaczyc Issue, a nie `ValueError`.
+            return _fail((Issue("no_entry_point", Severity.BLOCKER),))
+
+        _clear_stale_log(plan)
+
+        preconditions = check_preconditions(need_network=True)
+        if preconditions:
+            return _fail(preconditions)
+
         result = _build(plan, analysis, carried, progress, cancel)
     except IssueError as exc:
-        return _failed(carried, exc.issues)
+        return _fail(exc.issues)
     except Exception as exc:  # noqa: BLE001 - to JEST granica, tu sie konczy stos
-        return _failed(carried, _unexpected_issues(exc))
+        return _fail(_unexpected_issues(exc))
+
+    if result.ok and result.artifact is None:
+        # Sprzecznosc, nie sukces: w gore poszedlby `BuildResult`, ktory mowi
+        # "udalo sie", a nie ma czego pokazac. Zdejmujemy ja tutaj, zeby
+        # warstwa prezentacji nie musiala wymyslac, co z takim czyms zrobic.
+        return _fail((Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name}),))
 
     return replace(result, issues=sort_issues((*carried, *result.issues)))
-
-
-def _failed(carried: Sequence[Issue], issues: Sequence[Issue]) -> BuildResult:
-    return BuildResult(ok=False, issues=sort_issues((*carried, *issues)))
 
 
 def _build(
@@ -171,7 +208,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_issues(result.issues, sys.stderr)
         return 0
 
-    print("\nBuild nie powiodl sie.", file=sys.stderr)
+    # `run_build` zdejmuje ta sprzecznosc u zrodla, ale `main` drukuje to, co
+    # dostalo — a "Build nie powiodl sie" przy `ok=True` bylo mina dla kazdego,
+    # kto kiedys poda tu wynik z innego miejsca.
+    headline = (
+        "\nBuild zakonczyl sie bez pliku wynikowego." if result.ok else "\nBuild nie powiodl sie."
+    )
+    print(headline, file=sys.stderr)
     _print_issues(result.issues, sys.stderr)
     if result.log_path:
         print(f"  log: {result.log_path}", file=sys.stderr)

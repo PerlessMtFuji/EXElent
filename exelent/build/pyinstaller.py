@@ -98,6 +98,17 @@ def build_arguments(
     return args
 
 
+def log_path_for(plan: BuildPlan) -> Path:
+    """Sciezka logu tego builda — wyliczalna z planu, zanim build ruszy.
+
+    Publiczna, bo `run_build` musi ja znac takze wtedy, gdy backend NIE
+    zdazyl oddac `BuildResult`: gdy wyjatek poleci juz po zapisaniu logu,
+    uzytkownik i tak ma dostac sciezke, ktora zadanie 20 podpina pod "Zapisz
+    raport". Jedno miejsce, w ktorym powstaje ta nazwa.
+    """
+    return logs_dir() / f"{plan.exe_name}.log"
+
+
 class PyInstallerBackend:
     def build(
         self,
@@ -124,7 +135,7 @@ class PyInstallerBackend:
 
         args = build_arguments(plan, workspace, launcher, icon)
         logs_dir().mkdir(parents=True, exist_ok=True)
-        log_path = logs_dir() / f"{plan.exe_name}.log"
+        log_path = log_path_for(plan)
         lines: list[str] = []
 
         process = subprocess.Popen(
