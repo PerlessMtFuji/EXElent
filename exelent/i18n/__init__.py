@@ -18,13 +18,21 @@ CATALOGS: dict[str, dict[str, str]] = {"pl": pl.CATALOG, "en": en.CATALOG}
 _current = "pl"
 
 
+# Windows nie podaje kodu języka, tylko jego ANGIELSKĄ NAZWĘ: `locale.getlocale()`
+# oddaje tam `('Polish_Poland', '1250')`, nie `('pl_PL', ...)`. „Polish" zaczyna się
+# od „po", więc samo `startswith("pl")` odsyłało polskiego użytkownika do wersji
+# angielskiej — na jedynym systemie, który ten program obsługuje. Test z zadania 16
+# tego nie widział, bo podawał formę POSIX-ową, której Windows nigdy nie produkuje.
+_POLISH_LOCALES = ("pl", "polish")
+
+
 def system_language() -> str:
     """Język systemu, o ile umiemy go obsłużyć — inaczej angielski."""
     try:
         code, _encoding = locale.getlocale()
     except ValueError:
         code = None
-    if code and code.lower().startswith("pl"):
+    if code and code.lower().startswith(_POLISH_LOCALES):
         return "pl"
     return "en"
 

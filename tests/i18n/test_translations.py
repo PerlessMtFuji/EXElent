@@ -138,6 +138,15 @@ def test_system_language_detects_polish(monkeypatch):
     assert system_language() == "pl"
 
 
+def test_system_language_detects_the_form_windows_actually_returns(monkeypatch):
+    """Zmierzone na polskim Windows: `locale.getlocale()` oddaje ANGIELSKĄ NAZWĘ
+    języka, `('Polish_Poland', '1250')`, a nie kod `pl_PL`. Test wyżej podaje
+    formę POSIX-ową, której ten system nigdy nie produkuje — więc przechodził
+    dla kodu, który polskiemu użytkownikowi pokazywał angielskie okno."""
+    monkeypatch.setattr("locale.getlocale", lambda: ("Polish_Poland", "1250"))
+    assert system_language() == "pl"
+
+
 def test_cloud_advice_never_mentions_the_antivirus():
     """Ruling rundy 3: `cloud_file_unavailable` powstal wlasnie po to, zeby nie
     wyslac laika na godzine wylaczania antywirusa. Zdanie musi mowic o chmurze."""
