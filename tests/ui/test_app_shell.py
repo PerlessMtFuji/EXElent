@@ -1,13 +1,14 @@
 """Powloka okna: stos trzech ekranow, tytul, motyw i przelacznik jezyka.
 
-Ekrany sa tu pustymi `QWidget` — zadania 18-20 podmieniaja je na wlasciwe, nie
-ruszajac tej klasy.
+Ekran 1 jest juz wlasciwy (Task 18), ekrany 2-3 to nadal puste `QWidget` —
+zadania 19-20 podmieniaja je, nie ruszajac tej klasy.
 """
 
 import pytest
 
 from exelent.i18n import set_language
-from exelent.ui.app import MainWindow
+from exelent.ui.app import SCREEN_REVIEW, MainWindow
+from exelent.ui.screen_drop import DropScreen
 
 
 @pytest.fixture(autouse=True)
@@ -67,3 +68,14 @@ def test_language_switch_emits_signal(window, qtbot):
     with qtbot.waitSignal(window.language_changed, timeout=1000) as blocker:
         window.set_language("en")
     assert blocker.args == ["en"]
+
+
+def test_the_first_screen_is_the_drop_screen(window):
+    assert isinstance(window.stack.widget(0), DropScreen)
+
+
+def test_choosing_a_folder_moves_to_the_second_screen(window, tmp_path):
+    """Sygnal ekranu ma byc PODPIETY: bez tego upuszczenie folderu wyglada
+    jak brak reakcji programu."""
+    window.screen_drop.folder_chosen.emit(tmp_path)
+    assert window.stack.currentIndex() == SCREEN_REVIEW
