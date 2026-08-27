@@ -15,6 +15,7 @@ neutralny kod, a nie zgadywac bardziej konkretny.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 from exelent.models import Issue, Severity
 
@@ -166,7 +167,22 @@ PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
     ),
 )
 
-_SEVERITY_ORDER = {Severity.BLOCKER: 0, Severity.WARNING: 1, Severity.INFO: 2}
+SEVERITY_ORDER = {Severity.BLOCKER: 0, Severity.WARNING: 1, Severity.INFO: 2}
+
+
+def sort_issues(issues: Iterable[Issue]) -> tuple[Issue, ...]:
+    """BLOCKERy pierwsze, reszta w kolejnosci wejscia.
+
+    Publiczne, bo `explain_log` nie jest jedynym miejscem, ktore sklada liste
+    Issue dla uzytkownika: `run_build` dokleja do niej ostrzezenia analizy.
+    Dopoki obie strony sortowaly osobno, ostrzezenie "w kodzie jest klucz
+    dostepu" ladowalo przed BLOCKEREM, ktory naprawde zatrzymal build — a
+    zadanie 20 pokazuje pierwszy Issue najbardziej prominentnie.
+
+    `sorted` jest stabilne, wiec kolejnosc w obrebie jednej wagi zostaje.
+    """
+    return tuple(sorted(issues, key=lambda issue: SEVERITY_ORDER[issue.severity]))
+
 
 # Some codes are deliberately generic fallbacks for a symptom that a more
 # specific pattern also recognises (e.g. "access_denied" is the neutral
@@ -200,5 +216,4 @@ def explain_log(log: str) -> tuple[Issue, ...]:
         found.append(Issue(code, severity, data))
 
     found = [issue for issue in found if not (_SUPPRESSED_BY.get(issue.code, frozenset()) & seen)]
-    found.sort(key=lambda issue: _SEVERITY_ORDER[issue.severity])
-    return tuple(found)
+    return sort_issues(found)

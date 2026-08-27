@@ -16,7 +16,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from exelent.constants import MIN_FREE_DISK_BYTES, UV_VERSION
-from exelent.models import Issue, Severity
+from exelent.models import Issue, IssueError, Severity
 from exelent.runtime import ProgressFn
 from exelent.runtime.paths import state_dir, tools_dir
 
@@ -25,13 +25,9 @@ UV_URL = (
 )
 
 
-class UvDownloadError(RuntimeError):
+class UvDownloadError(IssueError):
     """Nie udało się sprowadzić uv. Niesie ze sobą `Issue` dla warstwy
     prezentacji — nigdy surowego tekstu do pokazania użytkownikowi."""
-
-    def __init__(self, issue: Issue, cause: BaseException | None = None) -> None:
-        super().__init__(f"{issue.code}: {cause}" if cause is not None else issue.code)
-        self.issue = issue
 
 
 def uv_path() -> Path:
