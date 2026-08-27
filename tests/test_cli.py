@@ -852,3 +852,41 @@ def test_the_build_stage_starts_where_the_environment_finished(tmp_path, monkeyp
         build_steps=[("build_start", 0.2)],
     )
     assert widziane[-1][1] > cli.ENV_PROGRESS_SHARE
+
+
+# --- odrocze minor M2 (Task 15): anulowanie to nie material na diagnoze ---
+
+
+def test_cancelled_build_is_not_diagnosed_from_its_own_truncated_log(
+    tmp_path, monkeypatch, stub_build
+):
+    """Log anulowanego builda urywa sie w polowie zdania.
+
+    `explain_log` dopasowuje wzorce do tego, co zdazylo sie zapisac, wiec
+    uzytkownik, ktory SAM przerwal build, dostawal do przeczytania diagnoze
+    awarii, ktora nigdy nie nastapila. Anulowanie ma zostac anulowaniem.
+    """
+    root = _project(tmp_path, {"main.py": "print(1)"})
+    log = tmp_path / "urwany.log"
+    log.write_text("ModuleNotFoundError: No module named 'requests'\n", encoding="utf-8")
+    stub_build.result = BuildResult(
+        ok=False,
+        log_path=log,
+        issues=(Issue("build_cancelled", Severity.INFO),),
+    )
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert [i.code for i in result.issues] == ["build_cancelled"]
+
+
+def test_failed_build_is_still_diagnosed_from_its_log(tmp_path, monkeypatch, stub_build):
+    """Straznik anulowania nie moze wyciszyc diagnostyki prawdziwej awarii."""
+    root = _project(tmp_path, {"main.py": "print(1)"})
+    log = tmp_path / "pelny.log"
+    log.write_text("ModuleNotFoundError: No module named 'requests'\n", encoding="utf-8")
+    stub_build.result = BuildResult(ok=False, log_path=log)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert "module_not_found" in [i.code for i in result.issues]

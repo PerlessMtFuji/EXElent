@@ -206,6 +206,10 @@ def run_build(
     return replace(result, issues=sort_issues((*carried, *result.issues)))
 
 
+def _was_cancelled(result: BuildResult) -> bool:
+    return any(issue.code == "build_cancelled" for issue in result.issues)
+
+
 def _build(
     plan,
     analysis,
@@ -221,6 +225,13 @@ def _build(
     carried.extend(_packages_failed_issue(env.failed_packages))
 
     result = PyInstallerBackend().build(plan, env, scale.stage(ENV_PROGRESS_SHARE, 1.0), cancel)
+
+    if _was_cancelled(result):
+        # Log anulowanego builda urywa sie tam, gdzie uzytkownik nacisnal
+        # przycisk — w polowie kroku, czesto w polowie zdania. `explain_log`
+        # dopasowalby wzorce do tego urwanego tekstu i opisal awarie, ktora
+        # nigdy nie nastapila; przerwanie ma zostac przerwaniem.
+        return result
 
     if not result.ok and result.log_path and result.log_path.exists():
         # Swiadomie caly log, bez `tail()`: `explain_log` jest liniowe

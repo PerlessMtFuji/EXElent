@@ -275,3 +275,35 @@ def test_the_desktop_is_located_only_once(tmp_path, monkeypatch):
     default_dest_dir(root, "Program")
 
     assert len(calls) == 1, f"Pulpit odpytany {len(calls)} razy"
+
+
+# --- odrocze minor M8 (Task 15): podglad planu nie ma ruszac chmury ---
+
+
+def test_cloud_candidate_is_rejected_without_writing_a_probe_file(tmp_path, monkeypatch):
+    """Sonda zapisywalnosci pisala do OneDrive'a katalog, ktory i tak odpadal.
+
+    Kolejnosc byla taka: najpierw zapis probny, potem pytanie „czy to chmura".
+    Dla projektu trzymanego w OneDrive kazdy podglad planu w GUI tworzyl i
+    kasowal plik w katalogu synchronizowanym — czyli zdarzenie wysylki za
+    kazdym razem, gdy uzytkownik tylko patrzy na ekran 2. Pytanie o chmure
+    jest darmowe i idzie teraz pierwsze.
+    """
+    onedrive = tmp_path / "OneDrive"
+    root = onedrive / "Dokumenty" / "projekt"
+    root.mkdir(parents=True)
+    desktop = tmp_path / "Pulpit"
+    desktop.mkdir()
+    monkeypatch.setattr(planning, "_desktop_dir", lambda: desktop)
+
+    probed: list[Path] = []
+
+    def _spy(path: Path) -> bool:
+        probed.append(Path(path))
+        return True
+
+    monkeypatch.setattr(planning, "_is_writable", _spy)
+    dest = default_dest_dir(root, "Program")
+
+    assert onedrive / "Dokumenty" not in probed, "sonda zapisala plik w katalogu w chmurze"
+    assert dest.parent == desktop

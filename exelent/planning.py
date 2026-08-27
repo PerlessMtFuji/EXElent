@@ -206,13 +206,22 @@ def default_dest_dir(root: Path, exe_name: str) -> Path:
     cloudy: Path | None = None
 
     for candidate, avoid_cloud in candidates:
-        if not candidate.exists() or not _is_writable(candidate):
+        if not candidate.exists():
             continue
+        # Pytanie o chmure idzie PRZED sonda zapisywalnosci, bo jest darmowe:
+        # czyta nazwe i zmienne srodowiskowe, nie dotyka dysku. Odwrotna
+        # kolejnosc oznaczala, ze dla projektu trzymanego w OneDrive kazdy
+        # podglad planu tworzyl i kasowal plik w katalogu synchronizowanym —
+        # czyli zdarzenie wysylki za kazdym razem, gdy uzytkownik tylko patrzy
+        # na ekran 2, w katalogu, ktory i tak zaraz odpadal.
         if avoid_cloud and is_cloud_synced(candidate):
             # Chmura jest gorsza niz dysk lokalny, ale nieskonczenie lepsza
             # niz brak miejsca docelowego — zapamietujemy ja na wypadek, gdyby
-            # zaden kandydat lokalny sie nie znalazl.
+            # zaden kandydat lokalny sie nie znalazl. Sonda poczeka do chwili,
+            # w ktorej ten wybor naprawde bedzie potrzebny.
             cloudy = cloudy or candidate
+            continue
+        if not _is_writable(candidate):
             continue
         return candidate / folder
 
@@ -220,7 +229,13 @@ def default_dest_dir(root: Path, exe_name: str) -> Path:
     # pierwsze miejsce WYBRANE przez projekt (Pulpit, a gdy go nie ma —
     # katalog domowy), nigdy katalog zrodlowy. `_dest_candidates` zawsze
     # konczy sie katalogiem domowym, wiec ten wybor istnieje.
-    fallback = cloudy or next(path for path, avoid_cloud in candidates if not avoid_cloud)
+    # Kandydat w chmurze nie byl dotad sondowany — tutaj po raz pierwszy ma
+    # znaczenie, czy da sie do niego pisac. Gdy nie da, zostaje pierwsze
+    # miejsce WYBRANE przez projekt: to samo, co przed odlozeniem sondy.
+    if cloudy is not None and _is_writable(cloudy):
+        return cloudy / folder
+
+    fallback = next(path for path, avoid_cloud in candidates if not avoid_cloud)
     return fallback / folder
 
 

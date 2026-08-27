@@ -15,8 +15,19 @@ from exelent.models import BuildPlan
 from exelent.runtime.paths import work_dir_for
 
 
+def workspace_for(root: Path) -> Path:
+    """Gdzie lezy kopia robocza projektu z `root`.
+
+    Jedno miejsce, ktore to wie. Wczesniej ta sciezka powstawala dwa razy —
+    tutaj i w `pyinstaller.py` — z tych samych skladnikow, ale niezaleznie:
+    zmiana jednej definicji dawala build uruchomiony w katalogu bez kodu,
+    co widac dopiero po kilkunastu minutach pracy PyInstallera.
+    """
+    return work_dir_for(root) / "src"
+
+
 def materialize_workspace(plan: BuildPlan, converted: Mapping[str, str]) -> Path:
-    workspace = work_dir_for(plan.root) / "src"
+    workspace = workspace_for(plan.root)
     if workspace.exists():
         shutil.rmtree(workspace, ignore_errors=True)
     workspace.parent.mkdir(parents=True, exist_ok=True)

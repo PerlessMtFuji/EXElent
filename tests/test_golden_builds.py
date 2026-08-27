@@ -30,16 +30,41 @@ def _project(tmp_path: Path, name: str, files: dict[str, str]) -> Path:
     return root
 
 
+@pytest.fixture(scope="session")
+def shared_state(tmp_path_factory):
+    """Jeden katalog stanu na CALY przebieg golden.
+
+    Kazdy test podstawial wlasny `LOCALAPPDATA`, wiec kazdy od nowa pobieral
+    `uv.exe` i instalowal CPythona — szesc razy to samo, po kilkadziesiat
+    megabajtow, i to w przebiegu, ktory i tak jest najdrozszy w projekcie.
+    Izolacja, ktorej te testy naprawde potrzebuja, dotyczy katalogu ROBOCZEGO,
+    a ten jest kluczowany hashem sciezki projektu — kazdy test ma wlasny
+    `tmp_path`, wiec wspolny katalog stanu niczego miedzy nimi nie miesza.
+    """
+    state = tmp_path_factory.mktemp("exelent-state")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("LOCALAPPDATA", str(state))
+        yield state
+
+
 def _assert_source_untouched(root: Path, expected: set[str]) -> None:
-    actual = {p.name for p in root.iterdir()}
+    """§7 specyfikacji: katalog uzytkownika ma zostac dokladnie taki, jaki byl.
+
+    Sprawdzane jest CALE drzewo, nie sam najwyzszy poziom. Wersja plytka
+    przepuszczala dokladnie te smieci, ktore PyInstaller robi najchetniej:
+    `__pycache__` obok modulu w podkatalogu, `build/` wewnatrz pakietu,
+    plik `.spec` zapisany glebiej niz w korzeniu. Dla projektu plaskiego
+    obie wersje znacza to samo — roznica zaczyna sie tam, gdzie uzytkownik
+    trzyma kod w folderach, czyli w kazdym projekcie wiekszym od jednego pliku.
+    """
+    actual = {p.relative_to(root).as_posix() for p in root.rglob("*")}
     assert actual == expected, f"katalog zrodlowy zmieniony: {actual ^ expected}"
     for name in FORBIDDEN_IN_SOURCE:
-        assert not (root / name).exists()
-    assert not list(root.glob("*.spec"))
+        assert not list(root.rglob(name)), f"build zostawil `{name}` w katalogu zrodlowym"
+    assert not list(root.rglob("*.spec"))
 
 
-def test_console_program_builds_and_prints(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+def test_console_program_builds_and_prints(tmp_path, shared_state):
     root = _project(
         tmp_path,
         "witaj",
@@ -55,8 +80,7 @@ def test_console_program_builds_and_prints(tmp_path, monkeypatch):
     _assert_source_untouched(root, {"main.py"})
 
 
-def test_program_reading_bundled_data_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+def test_program_reading_bundled_data_file(tmp_path, shared_state):
     root = _project(
         tmp_path,
         "dane",
@@ -72,9 +96,8 @@ def test_program_reading_bundled_data_file(tmp_path, monkeypatch):
     assert "WARTOSC-Z-PLIKU" in run.stdout
 
 
-def test_txt_source_is_converted_and_built(tmp_path, monkeypatch):
+def test_txt_source_is_converted_and_built(tmp_path, shared_state):
     """Sztandarowa funkcja: kod w .txt, prosto z okna czatu."""
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
     root = _project(
         tmp_path,
         "z-czatu",
@@ -91,8 +114,7 @@ def test_txt_source_is_converted_and_built(tmp_path, monkeypatch):
     assert "Z-PLIKU-TXT" in run.stdout
 
 
-def test_program_with_third_party_dependency(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+def test_program_with_third_party_dependency(tmp_path, shared_state):
     root = _project(
         tmp_path,
         "obrazek",
@@ -107,8 +129,7 @@ def test_program_with_third_party_dependency(tmp_path, monkeypatch):
     assert "PILLOW-OK" in run.stdout
 
 
-def test_writing_program_gets_onedir_and_writes_next_to_exe(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+def test_writing_program_gets_onedir_and_writes_next_to_exe(tmp_path, shared_state):
     root = _project(
         tmp_path,
         "zapis",
@@ -124,8 +145,7 @@ def test_writing_program_gets_onedir_and_writes_next_to_exe(tmp_path, monkeypatc
     assert (exe.parent / "wynik.txt").read_text(encoding="utf-8") == "ZAPISANE"
 
 
-def test_crashing_console_program_reports_instead_of_vanishing(tmp_path, monkeypatch):
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+def test_crashing_console_program_reports_instead_of_vanishing(tmp_path, shared_state):
     root = _project(
         tmp_path,
         "awaria",
@@ -168,13 +188,12 @@ def _pe_subsystem(exe: Path) -> int:
     return int.from_bytes(raw[pe + 24 + 68 : pe + 24 + 70], "little")
 
 
-def test_windowed_program_builds_and_runs_without_a_console(tmp_path, monkeypatch):
+def test_windowed_program_builds_and_runs_without_a_console(tmp_path, shared_state):
     """Sekcja 10 specyfikacji wymienia okno tkinter w korpusie golden.
 
     Okno zamyka sie samo, zeby test nie zawisl; dowodem, ze petla zdarzen
     naprawde ruszyla, jest plik zapisany z `after()`, a nie samo wyjscie zera.
     """
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
     root = _project(
         tmp_path,
         "okno",
@@ -202,7 +221,7 @@ def test_windowed_program_builds_and_runs_without_a_console(tmp_path, monkeypatc
     _assert_source_untouched(root, {"main.py"})
 
 
-def test_crashing_windowed_program_leaves_a_report_instead_of_vanishing(tmp_path, monkeypatch):
+def test_crashing_windowed_program_leaves_a_report_instead_of_vanishing(tmp_path, shared_state):
     """Sztandarowa obietnica projektu na sciezce GUI: program bez konsoli, ktory
     sie wywala, ma cos POKAZAC i cos ZOSTAWIC, zamiast zniknac bez sladu.
 
@@ -210,7 +229,6 @@ def test_crashing_windowed_program_leaves_a_report_instead_of_vanishing(tmp_path
     czasie — dowodem jest raport zapisany obok EXE, ktory launcher tworzy
     ZANIM pokaze okno.
     """
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
     root = _project(
         tmp_path,
         "awaria-gui",
@@ -236,7 +254,7 @@ def test_crashing_windowed_program_leaves_a_report_instead_of_vanishing(tmp_path
 # --- Minor M10: sekcja 10 specyfikacji wymienia "konsola z input()" ---
 
 
-def test_console_program_reading_input_builds_and_runs(tmp_path, monkeypatch):
+def test_console_program_reading_input_builds_and_runs(tmp_path, shared_state):
     """Program, ktory o cos pyta — dla laika najbardziej typowy skrypt.
 
     ONEFILE rozpakowuje sie przez bootloader, wiec stdin przechodzi przez
@@ -244,7 +262,6 @@ def test_console_program_reading_input_builds_and_runs(tmp_path, monkeypatch):
     zostac konsolowy: program pytajacy o dane bez okna konsoli nie ma gdzie
     zadac pytania.
     """
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
     root = _project(
         tmp_path,
         "pytanie",
