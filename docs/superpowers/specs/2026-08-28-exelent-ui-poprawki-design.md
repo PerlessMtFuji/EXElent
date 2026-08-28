@@ -556,6 +556,20 @@ się nie zmienia.
 Test jednoplikowy musi objąć wariant `.txt`, bo to ścieżka flagowa produktu
 i dokładnie ten przypadek z oryginalnego zgłoszenia.
 
+## 11a. Punkt wyjścia
+
+Zmierzony przed rozpoczęciem prac: `pytest -m "not slow"` daje **503 przechodzące
+i 1 padający** — `tests/build/test_build_backend.py::test_cancel_during_silent_subprocess_returns_promptly`.
+
+Test asertuje czas ścienny (`elapsed < 3.0`). Padł przy pełnym pakiecie na
+obciążonej maszynie, a uruchomiony osobno na bezczynnej przeszedł **5 na 5 razy
+w 0,7–1,1 s**. To niestabilność wrażliwa na obciążenie, nie regresja — ale leży
+dokładnie w kodzie anulowania podprocesu, który §8.2 przepisuje z
+`subprocess.run` na `Popen`. Po tej zmianie test trzeba przebiec wielokrotnie
+pod obciążeniem, bo przejście strumieniowe może realnie wydłużyć drogę do
+zakończenia, a wtedy ten sam objaw przestanie być niestabilnością i zacznie być
+prawdziwą awarią. Rozluźnienie progu bez zrozumienia przyczyny jest zakazane.
+
 ## 12. Kolejność wdrożenia
 
 1. **§5 nawigacja** i **§6 ekran 2** — samodzielne, natychmiast widoczne, bez
