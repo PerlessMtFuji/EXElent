@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -44,6 +45,7 @@ def _mark_recommended(combo: QComboBox, index: int) -> None:
 
 class ReviewScreen(QWidget):
     build_requested = Signal(object)
+    back_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -100,8 +102,16 @@ class ReviewScreen(QWidget):
         self.warnings_label.setWordWrap(True)
         self.warnings_label.setVisible(False)
 
+        self.back_button = QPushButton(t("review_back"), objectName="Link")
+        self.back_button.clicked.connect(self.back_requested)
+
         self.build_button = QPushButton(t("review_build"), objectName="Primary")
         self.build_button.clicked.connect(self._emit_plan)
+
+        actions = QHBoxLayout()
+        actions.addWidget(self.back_button)
+        actions.addStretch(1)
+        actions.addWidget(self.build_button)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(40, 32, 40, 28)
@@ -111,7 +121,7 @@ class ReviewScreen(QWidget):
         outer.addWidget(self.deps_box)
         outer.addWidget(self.warnings_label)
         outer.addStretch(1)
-        outer.addWidget(self.build_button, alignment=Qt.AlignmentFlag.AlignRight)
+        outer.addLayout(actions)
 
     def load(self, analysis: ProjectAnalysis) -> None:
         """Pokazuje wynik analizy. Wołane też przy DRUGIM projekcie w tej samej

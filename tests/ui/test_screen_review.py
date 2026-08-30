@@ -436,3 +436,14 @@ def test_a_fact_row_starts_certain(screen):
 
 def test_a_fact_row_shows_its_caption(screen):
     assert screen.row_entry.caption_text() == t("review_entry")
+
+
+def test_back_button_emits_instead_of_navigating(qtbot, screen, tmp_path):
+    """Ekran nie wie o istnieniu innych ekranow — zglasza zamiar sygnalem.
+
+    To ta sama zasada, ktora trzyma `build_requested`: kolejnosc ekranow zna
+    wylacznie okno.
+    """
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    with qtbot.waitSignal(screen.back_requested, timeout=1000):
+        screen.back_button.click()
