@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -30,8 +29,17 @@ from exelent.models import AppKind, OutputMode, ProjectAnalysis, Severity
 from exelent.planning import make_plan
 from exelent.ui.rows import FactRow
 
-COLLAPSED = "▸"
-EXPANDED = "▾"
+
+def _mark_recommended(combo: QComboBox, index: int) -> None:
+    """Dopisuje „(zalecane)" do etykiety pozycji, NIE ruszając jej danych.
+
+    `setItemText` zmienia wyłącznie napis; `itemData` zostaje tym, czym było.
+    To rozróżnienie jest jedyną rzeczą, która dzieli ten ekran od regresji, w
+    której `currentData()` oddaje napis i program konsolowy udaje okienkowy.
+    """
+    if index < 0:
+        return
+    combo.setItemText(index, f"{combo.itemText(index)} {t('review_recommended_suffix')}")
 
 
 class ReviewScreen(QWidget):
@@ -52,16 +60,32 @@ class ReviewScreen(QWidget):
         self.icon_button = QPushButton(t("review_pick_icon"))
         self.icon_button.clicked.connect(self._pick_icon)
 
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem(t("mode_onefile"), OutputMode.ONEFILE)
+        self.mode_combo.addItem(t("mode_onedir"), OutputMode.ONEDIR)
+
         self.row_entry = FactRow(t("review_entry"), self.entry_combo)
         self.row_kind = FactRow(t("review_kind"), self.kind_combo)
         self.row_name = FactRow(t("review_name"), self.name_edit)
         self.row_icon = FactRow(t("review_icon"), self.icon_button)
+        self.row_mode = FactRow(t("review_mode"), self.mode_combo)
 
         card = QFrame(objectName="Card")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(24, 18, 24, 18)
-        for row in (self.row_entry, self.row_kind, self.row_name, self.row_icon):
+        for row in (self.row_entry, self.row_kind, self.row_name, self.row_icon, self.row_mode):
             card_layout.addWidget(row)
+
+        for row, combo in (
+            (self.row_entry, self.entry_combo),
+            (self.row_kind, self.kind_combo),
+            (self.row_mode, self.mode_combo),
+        ):
+            row.restore_requested.connect(
+                lambda _checked=False, r=row, c=combo: c.setCurrentIndex(
+                    max(c.findText(r.recommended_text() or ""), 0)
+                )
+            )
 
         self.deps_box = QFrame(objectName="Card")
         deps_layout = QVBoxLayout(self.deps_box)
@@ -76,21 +100,6 @@ class ReviewScreen(QWidget):
         self.warnings_label.setWordWrap(True)
         self.warnings_label.setVisible(False)
 
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem(t("mode_onefile"), OutputMode.ONEFILE)
-        self.mode_combo.addItem(t("mode_onedir"), OutputMode.ONEDIR)
-        self.advanced = QFrame(objectName="Card")
-        advanced_layout = QHBoxLayout(self.advanced)
-        advanced_layout.setContentsMargins(24, 14, 24, 14)
-        advanced_layout.addWidget(QLabel(t("review_mode")))
-        advanced_layout.addWidget(self.mode_combo, stretch=1)
-        self.advanced.setVisible(False)
-
-        self.advanced_toggle = QPushButton(objectName="Link")
-        self.advanced_toggle.clicked.connect(self._toggle_advanced)
-        self._advanced_open = False
-        self._show_advanced(False)
-
         self.build_button = QPushButton(t("review_build"), objectName="Primary")
         self.build_button.clicked.connect(self._emit_plan)
 
@@ -101,8 +110,6 @@ class ReviewScreen(QWidget):
         outer.addWidget(card)
         outer.addWidget(self.deps_box)
         outer.addWidget(self.warnings_label)
-        outer.addWidget(self.advanced_toggle, alignment=Qt.AlignmentFlag.AlignLeft)
-        outer.addWidget(self.advanced)
         outer.addStretch(1)
         outer.addWidget(self.build_button, alignment=Qt.AlignmentFlag.AlignRight)
 
@@ -113,16 +120,30 @@ class ReviewScreen(QWidget):
         self._analysis = analysis
         self._icon = analysis.suggested_icon
 
+        # Etykiety list o stalej zawartosci wracaja do postaci bazowej, bo
+        # `_mark_recommended` DOPISUJE sufiks — drugi projekt w tej samej
+        # sesji dostawalby "Program w oknie (zalecane) (zalecane)".
+        self.kind_combo.setItemText(0, t("kind_windowed"))
+        self.kind_combo.setItemText(1, t("kind_console"))
+        self.mode_combo.setItemText(0, t("mode_onefile"))
+        self.mode_combo.setItemText(1, t("mode_onedir"))
+
         self.entry_combo.clear()
         for candidate in analysis.entry_candidates:
             self.entry_combo.addItem(_label_for(analysis.root, candidate.path), candidate.path)
+        _mark_recommended(self.entry_combo, 0)
+        self.entry_combo.setCurrentIndex(0 if analysis.entry_candidates else -1)
+        self.row_entry.set_recommended(self.entry_combo.currentText())
         # Pewność wymaga wartości. `entry_is_certain(())` to prawda w sensie
         # rdzenia („nie ma dwóch kandydatów remisujących"), ale wiersz jest
         # wtedy PUSTY, a `✓` przy pustym polu to fałszywa pewność — dokładnie
         # to, przeciwko czemu ten ekran istnieje.
         self.row_entry.set_certain(analysis.entry_certain and bool(analysis.entry_candidates))
 
-        self.kind_combo.setCurrentIndex(max(self.kind_combo.findData(analysis.app_kind), 0))
+        kind_index = max(self.kind_combo.findData(analysis.app_kind), 0)
+        _mark_recommended(self.kind_combo, kind_index)
+        self.kind_combo.setCurrentIndex(kind_index)
+        self.row_kind.set_recommended(self.kind_combo.currentText())
         self.row_kind.set_certain(analysis.app_kind_certain)
 
         self.name_edit.setText(analysis.suggested_name)
@@ -134,7 +155,10 @@ class ReviewScreen(QWidget):
         self.deps_label.setText(" · ".join(packages))
         self.deps_box.setVisible(bool(packages))
 
-        self.mode_combo.setCurrentIndex(max(self.mode_combo.findData(analysis.output_mode), 0))
+        mode_index = max(self.mode_combo.findData(analysis.output_mode), 0)
+        _mark_recommended(self.mode_combo, mode_index)
+        self.mode_combo.setCurrentIndex(mode_index)
+        self.row_mode.set_recommended(self.mode_combo.currentText())
 
         warnings = [describe(i) for i in analysis.issues if i.severity is not Severity.INFO]
         self.warnings_label.setText("\n".join(warnings))
@@ -142,21 +166,6 @@ class ReviewScreen(QWidget):
 
         blocked = any(i.severity is Severity.BLOCKER for i in analysis.issues)
         self.build_button.setEnabled(not blocked)
-
-    def _show_advanced(self, visible: bool) -> None:
-        self._advanced_open = visible
-        self.advanced.setVisible(visible)
-        arrow = EXPANDED if visible else COLLAPSED
-        self.advanced_toggle.setText(f"{arrow} {t('review_advanced')}")
-
-    def _toggle_advanced(self) -> None:
-        """Stan panelu trzymany osobno, a nie odczytywany z `isVisible()`.
-
-        `isVisible()` mówi o widoczności NA EKRANIE, więc dopóki okno nie jest
-        pokazane, oddaje False także dla panelu, który właśnie odsłoniliśmy —
-        przełącznik potrafiłby wtedy tylko otwierać.
-        """
-        self._show_advanced(not self._advanced_open)
 
     def _pick_icon(self) -> None:
         chosen, _filter = QFileDialog.getOpenFileName(

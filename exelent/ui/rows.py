@@ -89,6 +89,9 @@ class FactRow(QWidget):
         differs = self._recommended is not None and self.value_text() != self._recommended
         self._restore.setVisible(differs)
 
+    def recommended_text(self) -> str | None:
+        return self._recommended
+
     def restore_visible(self) -> bool:
         """Czy link jest POKAZANY jako element wiersza.
 

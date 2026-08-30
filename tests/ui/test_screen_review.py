@@ -139,12 +139,16 @@ def test_entry_choices_distinguish_files_with_the_same_name(screen, tmp_path):
     podkatalogu dawalby dwie identyczne pozycje, a uzytkownik nie mialby jak
     wybrac wlasciwej — ani powiedziec, ktora jest zaznaczona."""
     _load(screen, tmp_path, {"main.py": "import pkg.main", "pkg/main.py": "print(2)"})
-    assert sorted(_entry_choices(screen)) == ["main.py", "pkg/main.py"]
+    suffix = f" {t('review_recommended_suffix')}"
+    stripped = sorted(choice.removesuffix(suffix) for choice in _entry_choices(screen))
+    assert stripped == ["main.py", "pkg/main.py"]
 
 
 def test_kind_follows_the_analysis(screen, tmp_path):
     _load(screen, tmp_path, {"main.py": "import tkinter\ntkinter.Tk()"})
-    assert screen.kind_combo.currentText() == t("kind_windowed")
+    assert (
+        screen.kind_combo.currentText() == f"{t('kind_windowed')} {t('review_recommended_suffix')}"
+    )
 
 
 def test_uncertain_kind_shows_question_mark(screen, tmp_path):
@@ -369,7 +373,7 @@ def test_loading_another_project_replaces_the_choices(screen, tmp_path):
     a wybrany z nich nie istnieje juz w nowym katalogu."""
     _load(screen, tmp_path, {"main.py": "print(1)"})
     _load(screen, tmp_path / "drugi", {"inny.py": "print(2)"})
-    assert _entry_choices(screen) == ["inny.py"]
+    assert _entry_choices(screen) == [f"inny.py {t('review_recommended_suffix')}"]
 
 
 def test_loading_another_project_replaces_the_name(screen, tmp_path):
@@ -379,29 +383,48 @@ def test_loading_another_project_replaces_the_name(screen, tmp_path):
     assert screen.name_edit.text() == "projekt"
 
 
-# --- zaawansowane ---
+# --- postac wyniku, rekomendacje, koniec "zaawansowanych" ---
 
 
-def test_advanced_panel_starts_collapsed(screen, tmp_path):
-    _load(screen, tmp_path, {"main.py": "print(1)"})
-    assert screen.advanced.isVisibleTo(screen) is False
+def test_output_mode_is_visible_without_clicking_anything(screen, tmp_path):
+    """Postac wyniku to informacja o tym, co uzytkownik dostanie na koncu.
+
+    Schowana pod przelacznikiem "Zaawansowane" byla widoczna tylko dla tych,
+    ktorzy i tak wiedza, czego szukac.
+    """
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    assert screen.row_mode.caption_text() == t("review_mode")
+    assert screen.row_mode.isHidden() is False
 
 
-def test_advanced_toggle_opens_and_closes_the_panel(screen, tmp_path):
-    _load(screen, tmp_path, {"main.py": "print(1)"})
-    screen.advanced_toggle.click()
-    assert screen.advanced.isVisibleTo(screen) is True
-    screen.advanced_toggle.click()
-    assert screen.advanced.isVisibleTo(screen) is False
+def test_the_advanced_panel_is_gone_entirely(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    assert not hasattr(screen, "advanced_toggle")
+    assert "review_advanced" not in CATALOGS[current_language()]
 
 
-def test_the_toggle_arrow_shows_the_state(screen):
-    """Strzalka, ktora nigdy nie zmienia kierunku, klamie o stanie panelu."""
-    zwiniety = screen.advanced_toggle.text()
-    screen.advanced_toggle.click()
-    rozwiniety = screen.advanced_toggle.text()
-    assert zwiniety != rozwiniety
-    assert t("review_advanced") in zwiniety and t("review_advanced") in rozwiniety
+def test_recommended_item_is_labelled_but_data_stays_typed(screen, tmp_path):
+    """Dopisek jest ETYKIETA. `currentData()` ma nadal oddawac enum.
+
+    Regresja tego rodzaju nie widac na ekranie: plan po cichu dostaje napis
+    zamiast `AppKind` i uzytkownik, ktory wybral okno, dostaje czarna konsole.
+    """
+    _load(screen, tmp_path, {"main.py": "import tkinter\ntkinter.Tk()\n"})
+    assert "(" in screen.kind_combo.currentText()
+    assert screen.kind_combo.currentData() in (AppKind.WINDOWED, AppKind.CONSOLE)
+    assert screen.mode_combo.currentData() in (OutputMode.ONEFILE, OutputMode.ONEDIR)
+
+
+def test_restore_link_returns_the_recommended_value(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    recommended = screen.kind_combo.currentText()
+    other = 1 - screen.kind_combo.currentIndex()
+    screen.kind_combo.setCurrentIndex(other)
+    assert screen.row_kind.restore_visible() is True
+
+    screen.row_kind.restore_button().click()
+    assert screen.kind_combo.currentText() == recommended
+    assert screen.row_kind.restore_visible() is False
 
 
 # --- wiersz faktu ---
