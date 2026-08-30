@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from exelent.analysis.scanner import scan_directory
+from exelent.analysis.scanner import scan_directory, scan_single_file
 
 
 def _make(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -54,3 +54,41 @@ def test_stops_at_file_limit(tmp_path):
     result = scan_directory(root, max_files=5)
     assert result.truncated is True
     assert result.file_count <= 6
+
+
+def test_single_file_scan_ignores_everything_around_it(tmp_path):
+    """Uzytkownik wskazal PLIK. Katalog nadrzedny to Pobrane, nie projekt."""
+    (tmp_path / "test.py").write_text("print('x')\n", encoding="utf-8")
+    (tmp_path / "cudzy.py").write_text("print('obcy')\n", encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text("requests\n", encoding="utf-8")
+    (tmp_path / "icon.ico").write_bytes(b"\x00")
+    (tmp_path / "dane.csv").write_text("a,b\n", encoding="utf-8")
+
+    result = scan_single_file(tmp_path / "test.py")
+
+    assert result.single_file == tmp_path / "test.py"
+    assert result.root == tmp_path
+    assert result.py_files == (tmp_path / "test.py",)
+    assert result.requirements is None
+    assert result.icon_files == ()
+    assert result.data_files == ()
+
+
+def test_single_file_scan_routes_txt_through_the_same_check(tmp_path):
+    """Plik .txt z kodem to sciezka flagowa produktu — musi trafic do
+    kandydatow do konwersji, a nie do danych."""
+    (tmp_path / "test.txt").write_text("import sys\nprint('x')\n", encoding="utf-8")
+
+    result = scan_single_file(tmp_path / "test.txt")
+
+    assert result.text_candidates == (tmp_path / "test.txt",)
+    assert result.py_files == ()
+
+
+def test_single_file_scan_of_plain_text_finds_no_code(tmp_path):
+    (tmp_path / "notatka.txt").write_text("kup mleko\n", encoding="utf-8")
+
+    result = scan_single_file(tmp_path / "notatka.txt")
+
+    assert result.py_files == ()
+    assert result.text_candidates == ()

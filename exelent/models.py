@@ -86,6 +86,7 @@ class ScanResult:
     file_count: int = 0
     total_bytes: int = 0
     truncated: bool = False
+    single_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,8 @@ class ProjectAnalysis:
     suggested_name: str = "program"
     suggested_icon: Path | None = None
     issues: tuple[Issue, ...] = ()
+    single_file: Path | None = None
+    extra_sources: tuple[Path, ...] = ()
 
     @property
     def entry(self) -> Path | None:

@@ -126,3 +126,37 @@ def scan_directory(
         total_bytes=total,
         truncated=truncated,
     )
+
+
+def scan_single_file(path: Path) -> ScanResult:
+    """Skan dla pojedynczego pliku wskazanego przez użytkownika.
+
+    `root` to katalog nadrzędny, bo ścieżki względne w kodzie użytkownika i
+    `work_dir_for` potrzebują punktu odniesienia — ale katalog NIE jest
+    projektem. Leżące w nim `requirements.txt`, ikona czy pliki danych należą
+    do czegoś innego (najczęściej: do folderu Pobrane) i wciągnięcie ich byłoby
+    tą samą pomyłką, przed którą ta funkcja broni.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+    py: tuple[Path, ...] = ()
+    texts: tuple[Path, ...] = ()
+
+    if suffix in {".py", ".pyw"}:
+        py = (path,)
+    elif suffix == ".txt" and looks_like_python(_read_head(path)):
+        texts = (path,)
+
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+
+    return ScanResult(
+        root=path.parent,
+        py_files=py,
+        text_candidates=texts,
+        file_count=1,
+        total_bytes=size,
+        single_file=path,
+    )
