@@ -445,3 +445,34 @@ def test_the_log_opens_at_its_end(screen, tmp_path):
     screen.on_finished(BuildResult(ok=False, log_path=log))
     tekst = screen.log_view.toPlainText()
     assert screen.log_view.textCursor().position() == len(tekst)
+
+
+# --- powrot do przegladu ---
+
+
+def test_back_to_review_offered_after_failure(qtbot, screen):
+    screen.on_finished(BuildResult(ok=False, issues=(Issue("disk_full", Severity.BLOCKER),)))
+    assert screen.back_button.isHidden() is False
+
+
+def test_back_to_review_offered_after_cancel(qtbot, screen):
+    screen.on_finished(BuildResult(ok=False, issues=(Issue("build_cancelled", Severity.INFO),)))
+    assert screen.back_button.isHidden() is False
+
+
+def test_back_to_review_not_offered_after_success(qtbot, screen, tmp_path):
+    artifact = tmp_path / "Program.exe"
+    artifact.write_bytes(b"x" * 2048)
+    screen.on_finished(BuildResult(ok=True, artifact=artifact, size_bytes=2048))
+    assert screen.back_button.isHidden() is True
+
+
+def test_back_button_is_hidden_while_running(qtbot, screen, tmp_path):
+    """Kazdy stan ma OKRESLAC caly ekran, a nie dokladac sie do poprzedniego.
+
+    Ten sam blad zjadl juz "Zglos na GitHubie", ktorym zostawal po porazce na
+    ekranie przerwania — patrz `_hide_all_actions`.
+    """
+    screen.on_finished(BuildResult(ok=False, issues=(Issue("disk_full", Severity.BLOCKER),)))
+    screen.start(_plan(tmp_path))
+    assert screen.back_button.isHidden() is True

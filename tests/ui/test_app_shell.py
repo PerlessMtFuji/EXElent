@@ -256,3 +256,15 @@ def test_back_from_review_returns_to_the_drop_screen(qtbot, tmp_path):
 
     window.screen_review.back_button.click()
     assert window.stack.currentIndex() == SCREEN_DROP
+
+
+def test_going_back_is_blocked_while_a_build_runs(qtbot, tmp_path, monkeypatch):
+    """Drugi build w trakcie pierwszego jest odrzucany przez `BuildWorker`
+    po cichu — uzytkownik zobaczylby ekran postepu, ktory nigdy nie ruszy."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window.worker, "is_running", lambda: True)
+    window.go_to(SCREEN_BUILD)
+
+    window.screen_build.back_to_review.emit()
+    assert window.stack.currentIndex() == SCREEN_BUILD
