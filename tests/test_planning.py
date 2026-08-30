@@ -307,3 +307,12 @@ def test_cloud_candidate_is_rejected_without_writing_a_probe_file(tmp_path, monk
 
     assert onedrive / "Dokumenty" not in probed, "sonda zapisala plik w katalogu w chmurze"
     assert dest.parent == desktop
+
+
+def test_plan_carries_single_file_mode_from_analysis(tmp_path):
+    """Bez tego `materialize_workspace` nie wie, ze to tryb jednoplikowy,
+    i kopiuje caly katalog nadrzedny — czyli cale Pobrane."""
+    root = _make(tmp_path / "Pobrane", {"test.py": "import helper\n", "helper.py": "X = 1\n"})
+    plan = make_plan(analyze_project(root / "test.py"))
+    assert plan.single_file == root / "test.py"
+    assert root / "helper.py" in plan.extra_sources

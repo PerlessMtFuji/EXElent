@@ -124,7 +124,7 @@ class PyInstallerBackend:
         cancel: CancelToken,
     ) -> BuildResult:
         started = time.monotonic()
-        workspace = workspace_for(plan.root)
+        workspace = workspace_for(plan.root, plan.single_file)
 
         launcher = workspace / LAUNCHER_FILENAME
         launcher.write_text(

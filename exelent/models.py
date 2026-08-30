@@ -135,6 +135,8 @@ class BuildPlan:
     data_files: tuple[Path, ...] = ()
     hidden_imports: tuple[str, ...] = ()
     python_version: str = "3.12"
+    single_file: Path | None = None
+    extra_sources: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)

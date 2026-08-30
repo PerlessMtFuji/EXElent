@@ -140,3 +140,32 @@ def test_uv_stderr_is_diagnosed_not_shown_raw(monkeypatch, tmp_path):
         env.create_build_env(tmp_path / "src", [], noop_progress)
 
     assert "ssl_proxy" in [i.code for i in excinfo.value.issues]
+
+
+def test_two_files_in_one_folder_get_separate_environments(monkeypatch, tmp_path):
+    """Kazdy plik w Pobranych dostaje wlasny venv.
+
+    `work_dir_for` bez `single_file` daje obu plikom ten sam katalog, wiec
+    build drugiego kasuje srodowisko pierwszego — a uzytkownik widzi tylko
+    to, ze program, ktory dopiero co dzialal, przestal sie budowac.
+    """
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
+
+    def fake_run(uv, args, *, cwd=None):
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(env, "run_uv", fake_run)
+    downloads = tmp_path / "Pobrane"
+    a = env.create_build_env(
+        downloads, [], noop_progress, single_file=downloads / "a.py"
+    )
+    b = env.create_build_env(
+        downloads, [], noop_progress, single_file=downloads / "b.py"
+    )
+    assert a.venv != b.venv

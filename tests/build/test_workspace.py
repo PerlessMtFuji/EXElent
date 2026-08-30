@@ -4,14 +4,23 @@ from exelent.build.workspace import materialize_workspace
 from exelent.models import AppKind, BuildPlan, OutputMode
 
 
-def _plan(root: Path, dest: Path) -> BuildPlan:
+def _plan(
+    root: Path,
+    dest: Path | None = None,
+    *,
+    entry: Path | None = None,
+    single_file: Path | None = None,
+    extra: tuple[Path, ...] = (),
+) -> BuildPlan:
     return BuildPlan(
         root=root,
-        entry=root / "main.py",
+        entry=entry or root / "main.py",
         app_kind=AppKind.CONSOLE,
         output_mode=OutputMode.ONEFILE,
         exe_name="Program",
-        dest_dir=dest,
+        dest_dir=dest or root.parent / "out",
+        single_file=single_file,
+        extra_sources=extra,
     )
 
 
@@ -90,6 +99,30 @@ def test_workspace_path_is_ascii(tmp_path, monkeypatch):
     workspace = materialize_workspace(_plan(root, tmp_path / "out"), {})
 
     assert str(workspace.relative_to(tmp_path / "state")).isascii()
+
+
+def test_single_file_workspace_copies_only_the_relevant_files(tmp_path, monkeypatch):
+    """Bez tego `copytree` kopiuje CALE Pobrane do %LOCALAPPDATA%."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    downloads = tmp_path / "Pobrane"
+    downloads.mkdir()
+    (downloads / "test.py").write_text("import helper\n", encoding="utf-8")
+    (downloads / "helper.py").write_text("X = 1\n", encoding="utf-8")
+    (downloads / "wielki_film.mp4").write_bytes(b"x" * 5000)
+    (downloads / "cudzy.py").write_text("Y = 2\n", encoding="utf-8")
+
+    plan = _plan(
+        root=downloads,
+        entry=downloads / "test.py",
+        single_file=downloads / "test.py",
+        extra=(downloads / "helper.py",),
+    )
+    workspace = materialize_workspace(plan, {})
+
+    assert (workspace / "test.py").exists()
+    assert (workspace / "helper.py").exists()
+    assert not (workspace / "wielki_film.mp4").exists()
+    assert not (workspace / "cudzy.py").exists()
 
 
 # --- odrocze minor M6 (Task 15): jedno miejsce, ktore wie, gdzie jest kopia ---
