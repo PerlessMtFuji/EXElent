@@ -16,7 +16,7 @@ from exelent.analysis.apptype import (
     detect_output_mode,
 )
 from exelent.analysis.entrypoint import entry_is_certain, local_module_names, rank_entry_candidates
-from exelent.analysis.scanner import scan_directory
+from exelent.analysis.scanner import scan_directory, scan_single_file
 from exelent.analysis.textconv import convert_text_to_python
 from exelent.deps.resolve import resolve_dependencies
 from exelent.models import Issue, ProjectAnalysis, ScanResult, Severity
@@ -40,12 +40,21 @@ def _detect_other_language(scan: ScanResult) -> str | None:
 
 
 def analyze_project(root: Path) -> ProjectAnalysis:
-    root = Path(root)
-    scan = scan_directory(root)
+    source = Path(root)
+    if source.is_dir():
+        scan = scan_directory(source)
+    else:
+        scan = scan_single_file(source)
+    root = scan.root
     issues: list[Issue] = []
 
     if scan.truncated:
-        issues.append(Issue("scan_truncated", Severity.WARNING, {"files": str(scan.file_count)}))
+        if scan.single_file is not None:
+            issues.append(Issue("single_file_too_many", Severity.WARNING))
+        else:
+            issues.append(
+                Issue("scan_truncated", Severity.WARNING, {"files": str(scan.file_count)})
+            )
 
     sources: dict[Path, str] = {p: _read(p) for p in scan.py_files}
     converted: dict[str, str] = {}
@@ -79,7 +88,12 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             issues.append(Issue("other_language", Severity.BLOCKER, {"suffix": other}))
         else:
             issues.append(Issue("no_python_found", Severity.BLOCKER, {"dir": root.name}))
-        return ProjectAnalysis(root=root, scan=scan, suggested_name=root.name, issues=tuple(issues))
+        return ProjectAnalysis(
+            root=root,
+            scan=scan,
+            suggested_name=scan.single_file.stem if scan.single_file else root.name,
+            issues=tuple(issues),
+        )
 
     candidates = rank_entry_candidates(root, sources)
     certain = entry_is_certain(candidates)
@@ -126,7 +140,11 @@ def analyze_project(root: Path) -> ProjectAnalysis:
         dependencies=dependencies,
         hidden_imports=hidden_imports,
         converted=converted,
-        suggested_name=root.name,
+        suggested_name=scan.single_file.stem if scan.single_file else root.name,
         suggested_icon=scan.icon_files[0] if scan.icon_files else None,
         issues=tuple(issues),
+        single_file=scan.single_file,
+        extra_sources=(
+            tuple(p for p in scan.py_files if p != scan.single_file) if scan.single_file else ()
+        ),
     )

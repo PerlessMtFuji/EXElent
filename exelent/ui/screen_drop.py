@@ -1,12 +1,4 @@
-"""Ekran 1 — pole na folder z kodem.
-
-Ekran ma jedno zadanie: przyjac folder. Upuszczenie PLIKU zamiast folderu to
-najczestszy odruch uzytkownika, wiec traktujemy je jako wskazanie folderu
-nadrzednego, zamiast odrzucac. Wszystko, co nie jest sciezka lokalna (link
-przeciagniety z przegladarki, zaznaczony tekst), odrzucamy jawnie — pusty
-`toLocalFile()` po `Path(...).parent` daje katalog biezacy, wiec cicha
-tolerancja konczylaby sie analiza przypadkowego folderu.
-"""
+"""Ekran 1 — pole na folder albo pojedynczy plik z kodem."""
 
 from __future__ import annotations
 
@@ -27,14 +19,23 @@ from exelent.i18n import t
 from exelent.ui import recent
 
 
-def _folder_from(mime) -> Path | None:
-    """Folder wskazany przez upuszczone dane albo None, gdy to nie sciezka."""
+def _source_from(mime) -> Path | None:
+    """Ścieżka wskazana przez upuszczone dane albo None, gdy to nie ścieżka.
+
+    Plik NIE jest zamieniany na katalog nadrzędny. Poprzednia wersja robiła
+    `path.parent` i przez to `test.txt` upuszczony z Pobranych wybierał całe
+    Pobrane — łącznie z kopiowaniem ich do katalogu roboczego.
+
+    Wszystko, co nie jest ścieżką lokalną (link przeciągnięty z przeglądarki,
+    zaznaczony tekst), nadal odrzucamy jawnie: pusty `toLocalFile()` po
+    `Path(...)` daje katalog bieżący, więc cicha tolerancja kończyłaby się
+    analizą przypadkowego miejsca.
+    """
     for url in mime.urls():
         local = url.toLocalFile()
         if not local:
             continue
-        path = Path(local)
-        return path if path.is_dir() else path.parent
+        return Path(local)
     return None
 
 
@@ -104,7 +105,7 @@ class DropScreen(QWidget):
     # Trzy metody nizej maja nazwy narzucone przez Qt (camelCase) — to
     # nadpisania `QWidget`, nie nasza konwencja.
     def dragEnterEvent(self, event) -> None:
-        if _folder_from(event.mimeData()) is None:
+        if _source_from(event.mimeData()) is None:
             event.ignore()
             return
         self._set_active(True)
@@ -115,9 +116,9 @@ class DropScreen(QWidget):
 
     def dropEvent(self, event) -> None:
         self._set_active(False)
-        folder = _folder_from(event.mimeData())
-        if folder is None:
+        source = _source_from(event.mimeData())
+        if source is None:
             event.ignore()
             return
         event.acceptProposedAction()
-        self._choose(folder)
+        self._choose(source)

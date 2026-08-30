@@ -92,11 +92,16 @@ def test_missing_directories_are_dropped(tmp_path):
     assert recent.load_recent() == []
 
 
-def test_a_file_is_not_a_project_folder(tmp_path):
-    plik = tmp_path / "main.py"
-    plik.write_text("print(1)", encoding="utf-8")
-    recent.remember(plik)
-    assert recent.load_recent() == []
+def test_recent_keeps_single_files(tmp_path, monkeypatch):
+    """Po wprowadzeniu trybu jednoplikowego filtr `is_dir()` cicho gubilby
+    kazdy wpis bedacy plikiem."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    script = tmp_path / "test.py"
+    script.write_text("print('x')\n", encoding="utf-8")
+
+    recent.remember(script)
+
+    assert script.resolve() in recent.load_recent()
 
 
 def test_corrupt_file_does_not_crash():

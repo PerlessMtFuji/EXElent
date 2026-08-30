@@ -89,6 +89,10 @@ class ReviewScreen(QWidget):
                 )
             )
 
+        self.extra_label = QLabel("", objectName="Muted")
+        self.extra_label.setWordWrap(True)
+        self.extra_label.setVisible(False)
+
         self.deps_box = QFrame(objectName="Card")
         deps_layout = QVBoxLayout(self.deps_box)
         deps_layout.setContentsMargins(24, 18, 24, 18)
@@ -118,6 +122,7 @@ class ReviewScreen(QWidget):
         outer.setSpacing(16)
         outer.addWidget(self.headline)
         outer.addWidget(card)
+        outer.addWidget(self.extra_label)
         outer.addWidget(self.deps_box)
         outer.addWidget(self.warnings_label)
         outer.addStretch(1)
@@ -160,6 +165,10 @@ class ReviewScreen(QWidget):
         self.icon_button.setText(
             analysis.suggested_icon.name if analysis.suggested_icon else t("review_pick_icon")
         )
+
+        extra = ", ".join(p.name for p in analysis.extra_sources)
+        self.extra_label.setText(t("single_file_extra", files=extra) if extra else "")
+        self.extra_label.setVisible(bool(extra))
 
         packages = [d.package for d in analysis.dependencies if not d.optional]
         self.deps_label.setText(" · ".join(packages))

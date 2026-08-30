@@ -153,3 +153,34 @@ def test_short_fenced_program_amid_prose_is_converted(tmp_path):
     assert result.converted["kod.py"] == "print('hi')"
     assert result.entry is not None
     assert result.entry.name == "kod.py"
+
+
+def test_analyze_of_a_single_file_ignores_the_neighbours(tmp_path):
+    (tmp_path / "test.txt").write_text("print('czesc')\n", encoding="utf-8")
+    (tmp_path / "cudzy_projekt.py").write_text("import torch\n", encoding="utf-8")
+
+    analysis = analyze_project(tmp_path / "test.txt")
+
+    assert analysis.single_file == tmp_path / "test.txt"
+    assert [d.package for d in analysis.dependencies] == []
+    assert analysis.entry is not None
+
+
+def test_analyze_of_a_single_file_reports_pulled_in_modules(tmp_path):
+    (tmp_path / "main.py").write_text("import helper\n", encoding="utf-8")
+    (tmp_path / "helper.py").write_text("X = 1\n", encoding="utf-8")
+
+    analysis = analyze_project(tmp_path / "main.py")
+
+    assert analysis.extra_sources == (tmp_path / "helper.py",)
+
+
+def test_analyze_of_a_directory_is_unchanged(tmp_path):
+    root = tmp_path / "projekt"
+    root.mkdir()
+    (root / "main.py").write_text("print('x')\n", encoding="utf-8")
+
+    analysis = analyze_project(root)
+
+    assert analysis.single_file is None
+    assert analysis.extra_sources == ()
