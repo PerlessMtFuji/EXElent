@@ -184,3 +184,27 @@ def test_analyze_of_a_directory_is_unchanged(tmp_path):
 
     assert analysis.single_file is None
     assert analysis.extra_sources == ()
+
+
+def test_single_file_analysis_does_not_walk_the_parent_directory(tmp_path, monkeypatch):
+    """`_detect_other_language` chodzilo po `scan.root`, ktore w trybie
+    jednoplikowym jest katalogiem NADRZEDNYM dropnietego pliku — dokladnie ta
+    szkoda, ktora zadanie 7 mialo usunac (jeden dropniety plik == skan calego
+    Pobierz). Monkeypatch wywala test, jesli chodzenie po dysku wroci; asercje
+    na `issues` pilnuja, ze wynik jest ten sam co bez sasiadow innego jezyka.
+    """
+    (tmp_path / "cudzy1.js").write_text("const x = 1;\n", encoding="utf-8")
+    (tmp_path / "cudzy2.js").write_text("const y = 2;\n", encoding="utf-8")
+    dropped = tmp_path / "notatka.txt"
+    dropped.write_text("zwykly tekst bez kodu", encoding="utf-8")
+
+    def _forbidden_rglob(self, pattern):
+        raise AssertionError("analiza pojedynczego pliku nie moze chodzic po katalogu nadrzednym")
+
+    monkeypatch.setattr(Path, "rglob", _forbidden_rglob)
+
+    analysis = analyze_project(dropped)
+
+    codes = {i.code for i in analysis.issues}
+    assert "other_language" not in codes
+    assert "no_python_found" in codes
