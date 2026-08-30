@@ -146,7 +146,7 @@ CATALOG: dict[str, str] = {
     "review_icon_filter": "Obrazy (*.png *.jpg *.jpeg *.ico)",
     "review_deps_title": "Potrzebne dodatki — zostaną pobrane automatycznie",
     "review_mode": "Postać wyniku",
-    "review_advanced": "Zaawansowane",
+    "review_recommended_suffix": "(zalecane)",
     "review_restore": "przywróć zalecane",
     "review_build": "Stwórz EXE",
     "kind_windowed": "Program w oknie",
