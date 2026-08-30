@@ -154,6 +154,7 @@ CATALOG: dict[str, str] = {
     "build_report_filter": "Text file (*.txt)",
     "build_report_github": "Report on GitHub",
     "build_again": "Make another program",
+    "build_back_to_review": "← Back to settings",
     "build_show_log": "Show details",
     "build_hide_log": "Hide details",
     "build_success": "Done! {name} — {size}",

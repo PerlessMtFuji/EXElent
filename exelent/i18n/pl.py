@@ -162,6 +162,7 @@ CATALOG: dict[str, str] = {
     "build_report_filter": "Plik tekstowy (*.txt)",
     "build_report_github": "Zgłoś na GitHubie",
     "build_again": "Zrób następny program",
+    "build_back_to_review": "← Wróć do ustawień",
     "build_show_log": "Pokaż szczegóły",
     "build_hide_log": "Ukryj szczegóły",
     "build_success": "Gotowe! {name} — {size}",

@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self.screen_review.back_requested.connect(self._on_back_to_drop)
         self.screen_build = BuildScreen()
         self.screen_build.restart_requested.connect(self._on_restart)
+        self.screen_build.back_to_review.connect(self._on_back_to_review)
 
         # JEDEN worker na całe życie okna, podpięty RAZ. Worker tworzony przy
         # każdym buildzie dokładałby kolejne połączenie do „Przerwij" (po trzech
@@ -102,13 +103,32 @@ class MainWindow(QMainWindow):
         niej trafił (`DropScreen._choose` woła `recent.remember` przed emisją),
         a ekran 1 czytał ją ostatnio przy uruchamianiu programu.
         """
+        if self.worker.is_running():
+            return
         self.screen_drop.refresh_recent()
         self.go_to(SCREEN_DROP)
+
+    def _on_back_to_review(self) -> None:
+        """Powrót na ekran 2 z ZACHOWANĄ analizą.
+
+        Ekran 2 jest widgetem długożyjącym i trzyma ostatnią `ProjectAnalysis`
+        w swoim polu, więc poprawienie nazwy po nieudanym buildzie nie kosztuje
+        ponownego skanu katalogu.
+
+        Blokada przy trwającym buildzie nie jest ostrożnością na wyrost:
+        `BuildWorker.start` odrzuca drugi build po cichu, więc użytkownik
+        dostałby ekran postępu, który nigdy nie ruszy.
+        """
+        if self.worker.is_running():
+            return
+        self.go_to(SCREEN_REVIEW)
 
     def _on_restart(self) -> None:
         """Powrót na start. Lista ostatnich projektów jest odświeżana, bo
         właśnie doszedł do niej projekt zbudowany przed chwilą — ekran 1 czytał
         ją ostatnio przy uruchamianiu programu."""
+        if self.worker.is_running():
+            return
         self.screen_drop.refresh_recent()
         self.go_to(SCREEN_DROP)
 

@@ -41,6 +41,7 @@ CANCELLED = "build_cancelled"
 
 class BuildScreen(QWidget):
     restart_requested = Signal()
+    back_to_review = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -68,9 +69,11 @@ class BuildScreen(QWidget):
         self.run_button = QPushButton(t("build_run"))
         self.report_button = QPushButton(t("build_save_report"))
         self.github_button = QPushButton(t("build_report_github"))
+        self.back_button = QPushButton(t("build_back_to_review"))
         self.again_button = QPushButton(t("build_again"), objectName="Primary")
 
         self.again_button.clicked.connect(self.restart_requested)
+        self.back_button.clicked.connect(self.back_to_review)
         self.open_folder_button.clicked.connect(self._open_folder)
         self.run_button.clicked.connect(self._run_artifact)
         self.report_button.clicked.connect(self._save_report)
@@ -78,6 +81,7 @@ class BuildScreen(QWidget):
 
         actions = QHBoxLayout()
         for button in (
+            self.back_button,
             self.cancel_button,
             self.open_folder_button,
             self.run_button,
@@ -118,6 +122,7 @@ class BuildScreen(QWidget):
             self.run_button,
             self.report_button,
             self.github_button,
+            self.back_button,
             self.again_button,
         ):
             button.setVisible(False)
@@ -188,6 +193,7 @@ class BuildScreen(QWidget):
         self.summary_label.setText(
             "\n".join(describe(i) for i in result.issues if i.code != CANCELLED)
         )
+        self.back_button.setVisible(True)
 
     def _show_failure(self, result: BuildResult) -> None:
         """Diagnozy tu NIE robimy.
@@ -204,6 +210,7 @@ class BuildScreen(QWidget):
         )
         self.report_button.setVisible(True)
         self.github_button.setVisible(True)
+        self.back_button.setVisible(True)
 
     # --- log ---
 
