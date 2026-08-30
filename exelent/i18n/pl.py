@@ -147,6 +147,7 @@ CATALOG: dict[str, str] = {
     "review_deps_title": "Potrzebne dodatki — zostaną pobrane automatycznie",
     "review_mode": "Postać wyniku",
     "review_advanced": "Zaawansowane",
+    "review_restore": "przywróć zalecane",
     "review_build": "Stwórz EXE",
     "kind_windowed": "Program w oknie",
     "kind_console": "Program konsolowy",
