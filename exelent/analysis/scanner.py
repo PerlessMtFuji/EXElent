@@ -7,7 +7,12 @@ import re
 from pathlib import Path
 
 from exelent.analysis.textconv import convert_text_to_python
-from exelent.constants import EXCLUDED_DIRS, MAX_SCAN_BYTES, MAX_SCAN_FILES
+from exelent.constants import (
+    EXCLUDED_DIRS,
+    MAX_SCAN_BYTES,
+    MAX_SCAN_FILES,
+    MAX_SINGLE_FILE_IMPORTS,
+)
 from exelent.models import ScanResult
 
 DATA_SUFFIXES = frozenset(
@@ -65,6 +70,65 @@ def _read_head(path: Path, limit: int = 64_000) -> str:
         return path.read_bytes()[:limit].decode("utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def _local_target(root: Path, name: str) -> Path | None:
+    """Ścieżka modułu lokalnego o tej nazwie albo None, gdy go tu nie ma."""
+    module = root / f"{name}.py"
+    if module.is_file():
+        return module
+    package = root / name / "__init__.py"
+    if package.is_file():
+        return package
+    return None
+
+
+def _imported_names(code: str) -> list[str]:
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        # Plik z bledem skladni nadal moze byc czescia projektu; po prostu nie
+        # wiemy, co importuje. To nie jest powod, zeby go pominac.
+        return []
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.extend(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.append(node.module.split(".")[0])
+    return names
+
+
+def local_import_closure(
+    entry: Path,
+    root: Path,
+    limit: int = MAX_SINGLE_FILE_IMPORTS,
+) -> tuple[tuple[Path, ...], bool]:
+    """Moduły lokalne, których potrzebuje `entry`, wraz z ich własnymi.
+
+    Zwraca `(pliki_bez_entry, przekroczono_limit)`. Po przekroczeniu limitu
+    wynikiem jest PUSTA krotka, a nie obcięta lista: wciągnięcie losowej
+    połowy łańcucha importów dałoby EXE, które wywala się u odbiorcy na
+    brakującym module — czyli awarię gorszą i późniejszą niż uczciwe
+    „nie dam rady, zostaje sam plik".
+    """
+    seen: set[Path] = {entry}
+    queue = [entry]
+    found: list[Path] = []
+
+    while queue:
+        current = queue.pop(0)
+        for name in _imported_names(_read_head(current, limit=1_000_000)):
+            target = _local_target(root, name)
+            if target is None or target in seen:
+                continue
+            if len(found) >= limit:
+                return (), True
+            seen.add(target)
+            found.append(target)
+            queue.append(target)
+
+    return tuple(found), False
 
 
 def scan_directory(
@@ -152,6 +216,14 @@ def scan_single_file(path: Path) -> ScanResult:
     except OSError:
         size = 0
 
+    extra, truncated = local_import_closure(path, path.parent)
+    if py:
+        py = (path, *extra)
+    elif texts:
+        # Plik glowny jest kandydatem do konwersji, ale jego sasiedzi to juz
+        # zwykly Python — nie przepuszczamy ich przez konwersje.
+        py = extra
+
     return ScanResult(
         root=path.parent,
         py_files=py,
@@ -159,4 +231,5 @@ def scan_single_file(path: Path) -> ScanResult:
         file_count=1,
         total_bytes=size,
         single_file=path,
+        truncated=truncated,
     )

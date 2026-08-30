@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from exelent.analysis.scanner import scan_directory, scan_single_file
+from exelent.analysis.scanner import local_import_closure, scan_directory, scan_single_file
 
 
 def _make(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -92,3 +92,69 @@ def test_single_file_scan_of_plain_text_finds_no_code(tmp_path):
 
     assert result.py_files == ()
     assert result.text_candidates == ()
+
+
+def test_local_import_closure_follows_neighbours_transitively(tmp_path):
+    (tmp_path / "main.py").write_text("import helper\n", encoding="utf-8")
+    (tmp_path / "helper.py").write_text("import util\n", encoding="utf-8")
+    (tmp_path / "util.py").write_text("X = 1\n", encoding="utf-8")
+    (tmp_path / "obcy.py").write_text("Y = 2\n", encoding="utf-8")
+
+    found, truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "helper.py", tmp_path / "util.py"}
+    assert truncated is False
+
+
+def test_local_import_closure_resolves_packages(tmp_path):
+    (tmp_path / "main.py").write_text("from pakiet import rzecz\n", encoding="utf-8")
+    (tmp_path / "pakiet").mkdir()
+    (tmp_path / "pakiet" / "__init__.py").write_text("rzecz = 1\n", encoding="utf-8")
+
+    found, _truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert found == (tmp_path / "pakiet" / "__init__.py",)
+
+
+def test_local_import_closure_ignores_installed_packages(tmp_path):
+    """`requests` nie lezy obok pliku, wiec nie jest modulem lokalnym —
+    to zaleznosc do zainstalowania, a tym zajmuje sie `resolve_dependencies`."""
+    (tmp_path / "main.py").write_text("import requests\nimport os\n", encoding="utf-8")
+
+    found, _truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert found == ()
+
+
+def test_local_import_closure_survives_a_cycle(tmp_path):
+    (tmp_path / "main.py").write_text("import a\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text("import b\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("import a\n", encoding="utf-8")
+
+    found, _truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "a.py", tmp_path / "b.py"}
+
+
+def test_local_import_closure_stops_at_the_limit(tmp_path):
+    """Limit chroni przed wciagnieciem polowy katalogu Pobrane przez lancuch
+    importow. Po jego przekroczeniu zostaje sam plik wskazany."""
+    (tmp_path / "main.py").write_text("import m0\n", encoding="utf-8")
+    for i in range(10):
+        nxt = f"import m{i + 1}\n" if i < 9 else "X = 1\n"
+        (tmp_path / f"m{i}.py").write_text(nxt, encoding="utf-8")
+
+    found, truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=3)
+
+    assert truncated is True
+    assert found == ()
+
+
+def test_local_import_closure_ignores_unparsable_files(tmp_path):
+    (tmp_path / "main.py").write_text("import zepsuty\n", encoding="utf-8")
+    (tmp_path / "zepsuty.py").write_text("def (\n", encoding="utf-8")
+
+    found, truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert found == (tmp_path / "zepsuty.py",)
+    assert truncated is False
