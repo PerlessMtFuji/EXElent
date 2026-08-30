@@ -92,10 +92,9 @@ def test_missing_directories_are_dropped(tmp_path):
     assert recent.load_recent() == []
 
 
-def test_recent_keeps_single_files(tmp_path, monkeypatch):
+def test_recent_keeps_single_files(tmp_path):
     """Po wprowadzeniu trybu jednoplikowego filtr `is_dir()` cicho gubilby
     kazdy wpis bedacy plikiem."""
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     script = tmp_path / "test.py"
     script.write_text("print('x')\n", encoding="utf-8")
 

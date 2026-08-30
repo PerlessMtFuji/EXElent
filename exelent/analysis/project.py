@@ -29,6 +29,17 @@ def _read(path: Path) -> str:
 
 
 def _detect_other_language(scan: ScanResult) -> str | None:
+    """Sufiks jezyka, jesli to on wypelnia projekt zamiast Pythona.
+
+    W trybie jednoplikowym `scan.root` to katalog NADRZEDNY dropnietego pliku —
+    zwykle cudzy folder (Pobrane). Chodzenie po nim (`rglob`) to dokladnie ta
+    szkoda, ktora zadanie 7 mialo usunac: pojedynczy dropniety plik nie moze
+    uruchamiac skanu calego sasiedztwa. Sygnal jednoplikowy jest wiec wziety
+    wylacznie z sufiksu dropnietego pliku, bez zadnego chodzenia po dysku.
+    """
+    if scan.single_file is not None:
+        suffix = scan.single_file.suffix.lower()
+        return suffix if suffix in OTHER_LANGUAGE_SUFFIXES else None
     counts: Counter[str] = Counter()
     for path in scan.root.rglob("*"):
         if path.suffix.lower() in OTHER_LANGUAGE_SUFFIXES:
