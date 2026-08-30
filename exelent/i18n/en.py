@@ -141,6 +141,7 @@ CATALOG: dict[str, str] = {
     "review_recommended_suffix": "(recommended)",
     "review_restore": "restore recommended",
     "review_build": "Create EXE",
+    "review_back": "← Back",
     "kind_windowed": "A program in a window",
     "kind_console": "A console program",
     "mode_onefile": "A single EXE file",

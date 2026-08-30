@@ -242,3 +242,17 @@ def test_closing_the_window_stops_a_running_build(window, fake_build, tmp_path):
 
     assert window.worker.is_running() is False
     assert fake_build["anulowany"] is True
+
+
+def test_back_from_review_returns_to_the_drop_screen(qtbot, tmp_path):
+    project = tmp_path / "projekt"
+    project.mkdir()
+    (project / "main.py").write_text("print('x')\n", encoding="utf-8")
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.screen_drop.folder_chosen.emit(project)
+    assert window.stack.currentIndex() == SCREEN_REVIEW
+
+    window.screen_review.back_button.click()
+    assert window.stack.currentIndex() == SCREEN_DROP

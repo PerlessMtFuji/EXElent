@@ -45,6 +45,7 @@ class MainWindow(QMainWindow):
         self.screen_drop.folder_chosen.connect(self._on_folder_chosen)
         self.screen_review = ReviewScreen()
         self.screen_review.build_requested.connect(self._on_build_requested)
+        self.screen_review.back_requested.connect(self._on_back_to_drop)
         self.screen_build = BuildScreen()
         self.screen_build.restart_requested.connect(self._on_restart)
 
@@ -93,6 +94,16 @@ class MainWindow(QMainWindow):
         self.screen_build.start(plan)
         self.go_to(SCREEN_BUILD)
         self.worker.start(plan)
+
+    def _on_back_to_drop(self) -> None:
+        """Powrót na start bez budowania.
+
+        Lista ostatnich jest odświeżana, bo projekt wybrany przed chwilą już do
+        niej trafił (`DropScreen._choose` woła `recent.remember` przed emisją),
+        a ekran 1 czytał ją ostatnio przy uruchamianiu programu.
+        """
+        self.screen_drop.refresh_recent()
+        self.go_to(SCREEN_DROP)
 
     def _on_restart(self) -> None:
         """Powrót na start. Lista ostatnich projektów jest odświeżana, bo
