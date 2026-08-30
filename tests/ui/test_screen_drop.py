@@ -130,14 +130,15 @@ def test_dropping_folder_emits_signal(screen, qtbot, mime, tmp_path):
     assert blocker.args == [project]
 
 
-def test_dropping_single_file_uses_its_folder(screen, qtbot, mime, tmp_path):
-    project = tmp_path / "projekt"
-    project.mkdir()
-    code = project / "main.py"
-    code.write_text("print(1)", encoding="utf-8")
+def test_dropping_a_file_selects_the_file_not_its_folder(screen, qtbot, mime, tmp_path):
+    """Upuszczenie pojedynczego pliku wybiera SAM plik, nie jego folder
+    nadrzedny — plik `test.txt` z Pobranych nie moze wciagnac calych
+    Pobranych do analizy."""
+    script = tmp_path / "test.txt"
+    script.write_text("print('x')\n", encoding="utf-8")
     with qtbot.waitSignal(screen.folder_chosen, timeout=1000) as blocker:
-        screen.dropEvent(_drop(mime(code)))
-    assert blocker.args == [project]
+        screen.dropEvent(_drop(mime(script)))
+    assert blocker.args == [script]
 
 
 def test_a_handled_drop_is_accepted(screen, mime, tmp_path):

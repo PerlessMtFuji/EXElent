@@ -20,6 +20,10 @@ CATALOG: dict[str, str] = {
     "scan_truncated": (
         "This folder is very large ({files} files). Check that you picked the right place."
     ),
+    "single_file_too_many": (
+        "This file pulls in a great many other files from the same folder. "
+        "Building just the file you picked — if that is not enough, point me at the whole folder."
+    ),
     "txt_syntax_error": (
         "There is an error in {file}, line {line}: {detail}. Fix it and try again."
     ),
@@ -137,6 +141,7 @@ CATALOG: dict[str, str] = {
     "review_pick_icon": "choose",
     "review_icon_filter": "Images (*.png *.jpg *.jpeg *.ico)",
     "review_deps_title": "Add-ons needed — they will be downloaded automatically",
+    "single_file_extra": "Also including: {files}",
     "review_mode": "Result layout",
     "review_recommended_suffix": "(recommended)",
     "review_restore": "restore recommended",

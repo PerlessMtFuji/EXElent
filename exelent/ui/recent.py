@@ -30,7 +30,7 @@ def load_recent(limit: int = LIMIT) -> list[Path]:
     result: list[Path] = []
     for item in raw:
         path = Path(str(item))
-        if path.is_dir() and path not in result:
+        if path.exists() and path not in result:
             result.append(path)
     return result[:limit]
 

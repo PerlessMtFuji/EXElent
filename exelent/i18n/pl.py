@@ -22,6 +22,10 @@ CATALOG: dict[str, str] = {
         "Ten folder jest bardzo duży ({files} plików). "
         "Sprawdź, czy na pewno wskazałeś właściwe miejsce."
     ),
+    "single_file_too_many": (
+        "Ten plik wciąga bardzo wiele innych plików z tego samego folderu. "
+        "Buduję sam wskazany plik — jeśli to za mało, wskaż cały folder z programem."
+    ),
     "txt_syntax_error": (
         "W pliku {file} jest błąd w linii {line}: {detail}. Popraw go i spróbuj ponownie."
     ),
@@ -145,6 +149,7 @@ CATALOG: dict[str, str] = {
     "review_pick_icon": "wybierz",
     "review_icon_filter": "Obrazy (*.png *.jpg *.jpeg *.ico)",
     "review_deps_title": "Potrzebne dodatki — zostaną pobrane automatycznie",
+    "single_file_extra": "Dołączam też: {files}",
     "review_mode": "Postać wyniku",
     "review_recommended_suffix": "(zalecane)",
     "review_restore": "przywróć zalecane",
