@@ -22,8 +22,15 @@ def path_hash(source: Path) -> str:
     return hashlib.sha256(normalized).hexdigest()[:8]
 
 
-def work_dir_for(source: Path) -> Path:
-    return state_dir() / "b" / path_hash(source)
+def work_dir_for(source: Path, single_file: Path | None = None) -> Path:
+    """Katalog roboczy dla tego przebiegu.
+
+    W trybie jednoplikowym hashujemy PLIK, nie katalog. Inaczej `a.py` i
+    `b.py` lezace w Pobranych dziela jeden katalog roboczy i drugi build
+    kasuje srodowisko pierwszego — a `path_hash` jest jedyna rzecza, ktora
+    te przebiegi rozdziela.
+    """
+    return state_dir() / "b" / path_hash(single_file or source)
 
 
 def tools_dir() -> Path:

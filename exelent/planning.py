@@ -268,4 +268,6 @@ def make_plan(
         # Policzone raz, w zadaniu 8, na prawdziwych treściach plików
         # (łącznie z tymi skonwertowanymi z `.txt`, których nie ma na dysku).
         hidden_imports=analysis.hidden_imports,
+        single_file=analysis.single_file,
+        extra_sources=analysis.extra_sources,
     )

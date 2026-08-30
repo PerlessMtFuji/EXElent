@@ -59,9 +59,10 @@ def create_build_env(
     progress: ProgressFn,
     *,
     python_version: str = TARGET_PYTHON,
+    single_file: Path | None = None,
 ) -> BuildEnv:
     uv = ensure_uv(progress)
-    work = work_dir_for(source)
+    work = work_dir_for(source, single_file)
     venv = work / "venv"
     venv.parent.mkdir(parents=True, exist_ok=True)
 

@@ -54,7 +54,7 @@ def stub_build(monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli,
         "create_build_env",
-        lambda source, packages, progress: BuildEnv(
+        lambda source, packages, progress, **_kw: BuildEnv(
             uv=Path("uv.exe"), venv=Path("venv"), python=Path("python.exe")
         ),
     )
@@ -97,7 +97,7 @@ def test_failed_packages_are_reported_as_a_warning(tmp_path, monkeypatch, stub_b
     monkeypatch.setattr(
         cli,
         "create_build_env",
-        lambda source, packages, progress: BuildEnv(
+        lambda source, packages, progress, **_kw: BuildEnv(
             uv=Path("uv.exe"),
             venv=Path("venv"),
             python=Path("python.exe"),
@@ -133,7 +133,7 @@ def test_failed_packages_survive_a_failed_build(tmp_path, monkeypatch, stub_buil
     monkeypatch.setattr(
         cli,
         "create_build_env",
-        lambda source, packages, progress: BuildEnv(
+        lambda source, packages, progress, **_kw: BuildEnv(
             uv=Path("uv.exe"),
             venv=Path("venv"),
             python=Path("python.exe"),
@@ -325,7 +325,7 @@ def test_env_setup_failure_reaches_the_user_as_an_issue(tmp_path, monkeypatch, s
     root = _project(tmp_path, {"main.py": "print(1)"})
     issue = Issue("env_setup_failed", Severity.BLOCKER, {"step": "create_env"})
 
-    def _boom(_source, _packages, _progress):
+    def _boom(_source, _packages, _progress, **_kw):
         raise BuildEnvError(issue, RuntimeError("uv venv padlo"))
 
     monkeypatch.setattr(cli, "create_build_env", _boom)
@@ -360,7 +360,7 @@ def test_failed_packages_survive_an_unexpected_crash(tmp_path, monkeypatch, stub
     monkeypatch.setattr(
         cli,
         "create_build_env",
-        lambda source, packages, progress: BuildEnv(
+        lambda source, packages, progress, **_kw: BuildEnv(
             uv=Path("uv.exe"),
             venv=Path("venv"),
             python=Path("python.exe"),
@@ -766,7 +766,7 @@ def _progress_through_run_build(tmp_path, monkeypatch, stub_build, env_steps, bu
     monkeypatch.setattr(
         cli,
         "create_build_env",
-        lambda source, packages, progress: (
+        lambda source, packages, progress, **_kw: (
             [progress(phase, value) for phase, value in env_steps],
             BuildEnv(uv=Path("uv.exe"), venv=Path("venv"), python=Path("python.exe")),
         )[1],

@@ -221,7 +221,12 @@ def _build(
     materialize_workspace(plan, analysis.converted)
 
     scale = _Progress(progress)
-    env = create_build_env(plan.root, plan.packages, scale.stage(0.0, ENV_PROGRESS_SHARE))
+    env = create_build_env(
+        plan.root,
+        plan.packages,
+        scale.stage(0.0, ENV_PROGRESS_SHARE),
+        single_file=plan.single_file,
+    )
     carried.extend(_packages_failed_issue(env.failed_packages))
 
     result = PyInstallerBackend().build(plan, env, scale.stage(ENV_PROGRESS_SHARE, 1.0), cancel)
