@@ -7,7 +7,7 @@ tekstowe czy przycisk.
 """
 
 import pytest
-from PySide6.QtWidgets import QComboBox
+from PySide6.QtWidgets import QComboBox, QLineEdit, QPushButton
 
 from exelent.ui.rows import FactRow
 
@@ -60,3 +60,42 @@ def test_clicking_the_link_asks_the_screen_instead_of_setting_the_value(qtbot, c
     with qtbot.waitSignal(row.restore_requested, timeout=1000):
         row.restore_button().click()
     assert combo.currentIndex() == 1  # wiersz NIE ustawil nic sam
+
+
+def test_button_editor_raises_type_error_on_set_recommended(qtbot):
+    """Edytor bez sygnalow zmian powinien rzucic blad, nie milczec.
+
+    QPushButton nie emituje `currentIndexChanged` ani `textChanged`, wiec
+    wiersz nie mogl by nigdy pokazac linku powrotu. To gorsze niz brak API.
+    """
+    button = QPushButton("Wybierz ikone")
+    row = FactRow("Ikona", button)
+    qtbot.addWidget(row)
+    with pytest.raises(TypeError, match="does not emit change signals"):
+        row.set_recommended("jakas-rekomendacja")
+
+
+@pytest.fixture
+def line_edit_row(qtbot):
+    line_edit = QLineEdit()
+    line_edit.setText("domyslna nazwa")
+    row = FactRow("Nazwa pliku", line_edit)
+    qtbot.addWidget(row)
+    return row, line_edit
+
+
+def test_line_edit_editor_tracks_text_changes(line_edit_row):
+    """QLineEdit emituje textChanged, wiec restore link powinien dzialac.
+
+    Weryfikujemy pelny cykl: ustaw rekomendacje, zmien tekst (link sie pojawi),
+    przywroc oryginal (link sie schowa).
+    """
+    row, line_edit = line_edit_row
+    row.set_recommended("domyslna nazwa")
+    assert row.restore_visible() is False
+
+    line_edit.setText("nowa nazwa")
+    assert row.restore_visible() is True
+
+    line_edit.setText("domyslna nazwa")
+    assert row.restore_visible() is False

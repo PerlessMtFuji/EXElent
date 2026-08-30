@@ -18,8 +18,8 @@ CERTAIN = "✓"
 UNCERTAIN = "?"
 
 # Sygnaly zmiany, ktore moze miec edytor. Kolejnosc ma znaczenie: `QComboBox`
-# ma OBA, a `currentIndexChanged` jest wierniejszy — `textChanged` nie istnieje
-# na liscie, za to `QLineEdit` ma tylko jego.
+# ma `currentIndexChanged`, `QLineEdit` ma `textChanged`. Kolej prioretyzuje
+# `currentIndexChanged` bo jest bardziej niezawodny.
 _CHANGE_SIGNALS = ("currentIndexChanged", "textChanged")
 
 
@@ -34,6 +34,7 @@ class FactRow(QWidget):
         self._caption.setMinimumWidth(150)
         self._editor = editor
         self._recommended: str | None = None
+        self._tracks_changes = False
 
         self._restore = QPushButton(t("review_restore"), objectName="Link")
         self._restore.setVisible(False)
@@ -52,6 +53,7 @@ class FactRow(QWidget):
             signal = getattr(editor, name, None)
             if signal is not None:
                 signal.connect(self._sync_restore)
+                self._tracks_changes = True
                 break
 
     def set_certain(self, certain: bool) -> None:
@@ -71,6 +73,13 @@ class FactRow(QWidget):
         Rekomendacja przeliczana po każdej zmianie użytkownika goniłaby jego
         wybór i nigdy nie zapaliłaby linku — czyli nie byłaby rekomendacją.
         """
+        if not self._tracks_changes:
+            raise TypeError(
+                f"Editor {self._editor.__class__.__name__} does not emit change signals. "
+                "FactRow cannot track when the user changes the value, so the restore "
+                "link would never appear. This is worse than no API. Do not set a "
+                "recommendation on this editor."
+            )
         self._recommended = value
         self._sync_restore()
 
