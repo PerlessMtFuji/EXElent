@@ -14,7 +14,7 @@ from pathlib import Path
 from exelent.constants import PYINSTALLER_SPEC, TARGET_PYTHON
 from exelent.diagnostics.patterns import explain_log
 from exelent.models import Issue, IssueError, Severity
-from exelent.runtime import ProgressFn
+from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.bootstrap import ensure_uv
 from exelent.runtime.paths import work_dir_for
 
@@ -66,17 +66,17 @@ def create_build_env(
     venv = work / "venv"
     venv.parent.mkdir(parents=True, exist_ok=True)
 
-    progress("install_python", 0.0)
+    progress(Progress(phase="install_python", fraction=0.0))
     installed = run_uv(uv, ["python", "install", python_version])
 
-    progress("create_env", 0.3)
+    progress(Progress(phase="create_env", fraction=0.3))
     created = run_uv(uv, ["venv", str(venv), "--python", python_version])
     if created.returncode != 0:
         raise _env_failure(installed, created)
 
     python = venv / "Scripts" / "python.exe"
 
-    progress("install_packages", 0.5)
+    progress(Progress(phase="install_packages", fraction=0.5))
     wanted = [PYINSTALLER_SPEC, *packages]
     result = run_uv(uv, ["pip", "install", "--python", str(python), *wanted])
 
@@ -89,7 +89,7 @@ def create_build_env(
             if single.returncode != 0:
                 failed.append(spec)
 
-    progress("install_packages", 1.0)
+    progress(Progress(phase="install_packages", fraction=1.0))
     return BuildEnv(uv=uv, venv=venv, python=python, failed_packages=tuple(failed))
 
 

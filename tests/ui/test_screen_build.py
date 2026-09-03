@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QFileDialog, QWidget
 
 from exelent.i18n import CATALOGS, current_language, set_language, t
 from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, Severity
+from exelent.runtime import Progress
 from exelent.ui import screen_build as screen_build_module
 from exelent.ui.screen_build import BuildScreen
 
@@ -69,7 +70,7 @@ def test_no_widget_shows_a_raw_key(screen, tmp_path):
 
 
 def test_the_phase_is_a_sentence_not_a_key(screen):
-    screen.on_progress("analyze", 0.4)
+    screen.on_progress(Progress(phase="analyze", fraction=0.4))
     assert screen.phase_label.text() == t("analyze")
 
 
@@ -77,7 +78,7 @@ def test_the_phase_is_a_sentence_not_a_key(screen):
 
 
 def test_progress_updates_bar_and_phase_text(screen):
-    screen.on_progress("analyze", 0.4)
+    screen.on_progress(Progress(phase="analyze", fraction=0.4))
     assert screen.bar.value() == 40
     assert screen.phase_label.text() != ""
 
@@ -107,7 +108,7 @@ def test_success_shows_antivirus_note(screen, tmp_path):
 
 
 def test_success_fills_the_bar(screen, tmp_path):
-    screen.on_progress("analyze", 0.4)
+    screen.on_progress(Progress(phase="analyze", fraction=0.4))
     screen.on_finished(BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048))
     assert screen.bar.value() == 100
 
@@ -426,7 +427,7 @@ def test_a_failure_after_a_success_drops_the_run_button(screen, tmp_path):
 def test_the_bar_disappears_when_it_has_nothing_left_to_measure(screen, tmp_path):
     """Pasek zatrzymany na 92% pod naglowkiem "Nie udalo sie" mowi dwie
     sprzeczne rzeczy naraz. Po sukcesie zostaje — pelny pasek to potwierdzenie."""
-    screen.on_progress("package", 0.92)
+    screen.on_progress(Progress(phase="package", fraction=0.92))
     screen.on_finished(BuildResult(ok=False))
     assert _visible(screen.bar, screen) is False
 

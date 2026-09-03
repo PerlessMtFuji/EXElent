@@ -21,7 +21,7 @@ from exelent.models import (
     ScanResult,
     Severity,
 )
-from exelent.runtime import noop_progress
+from exelent.runtime import Progress, noop_progress
 from exelent.runtime.bootstrap import UvDownloadError
 from exelent.runtime.env import BuildEnv, BuildEnvError
 
@@ -767,7 +767,7 @@ def _progress_through_run_build(tmp_path, monkeypatch, stub_build, env_steps, bu
         cli,
         "create_build_env",
         lambda source, packages, progress, **_kw: (
-            [progress(phase, value) for phase, value in env_steps],
+            [progress(Progress(phase=phase, fraction=value)) for phase, value in env_steps],
             BuildEnv(uv=Path("uv.exe"), venv=Path("venv"), python=Path("python.exe")),
         )[1],
     )
@@ -775,7 +775,7 @@ def _progress_through_run_build(tmp_path, monkeypatch, stub_build, env_steps, bu
     class _Reporting(_FakeBackend):
         def build(self, plan, env, progress, cancel):
             for phase, value in build_steps:
-                progress(phase, value)
+                progress(Progress(phase=phase, fraction=value))
             return type(self).result
 
     monkeypatch.setattr(cli, "PyInstallerBackend", _Reporting)
@@ -783,7 +783,7 @@ def _progress_through_run_build(tmp_path, monkeypatch, stub_build, env_steps, bu
     widziane: list[tuple[str, float]] = []
     cli.run_build(
         _project(tmp_path, {"main.py": "print(1)"}),
-        lambda phase, value: widziane.append((phase, value)),
+        lambda update: widziane.append((update.phase, update.fraction)),
         dest_dir=tmp_path / "out",
     )
     return widziane

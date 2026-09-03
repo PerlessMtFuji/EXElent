@@ -1,11 +1,13 @@
 from collections.abc import Callable
 
-ProgressFn = Callable[[str, float], None]
-"""Wywoływane z (kod_fazy, postęp 0.0-1.0). Kod fazy tłumaczy warstwa UI."""
+from exelent.runtime.progress import Progress
+
+ProgressFn = Callable[[Progress], None]
+"""Wywoływane z jednym `Progress`. Kod fazy tłumaczy warstwa UI."""
 
 
-def noop_progress(phase: str, fraction: float) -> None:
+def noop_progress(update: Progress) -> None:
     return None
 
 
-__all__ = ["ProgressFn", "noop_progress"]
+__all__ = ["Progress", "ProgressFn", "noop_progress"]
