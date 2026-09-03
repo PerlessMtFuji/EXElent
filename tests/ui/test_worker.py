@@ -11,6 +11,7 @@ import pytest
 
 from exelent.i18n import describe
 from exelent.models import AppKind, BuildPlan, BuildResult, OutputMode
+from exelent.runtime import Progress
 from exelent.ui import worker as worker_module
 from exelent.ui.worker import BuildWorker
 
@@ -94,12 +95,12 @@ def test_nothing_is_left_running_after_the_build(worker, qtbot, blocking_build, 
 
 def test_progress_signals_reach_the_gui(worker, qtbot, monkeypatch, tmp_path):
     def fake_run(root, progress, cancel, **kwargs):
-        progress("analyze", 0.4)
+        progress(Progress(phase="analyze", fraction=0.4))
         return BuildResult(ok=True, artifact=tmp_path / "Program.exe", size_bytes=1024)
 
     monkeypatch.setattr(worker_module, "run_build", fake_run)
     received = []
-    worker.progress.connect(lambda phase, value: received.append((phase, value)))
+    worker.progress.connect(lambda update: received.append((update.phase, update.fraction)))
 
     with qtbot.waitSignal(worker.finished, timeout=5000):
         worker.start(_plan(tmp_path))

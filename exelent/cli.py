@@ -20,13 +20,13 @@ from exelent.build.workspace import materialize_workspace
 from exelent.diagnostics.patterns import explain_log, filename_of, map_os_error, sort_issues
 from exelent.models import BuildPlan, BuildResult, Issue, IssueError, Severity
 from exelent.planning import is_cloud_synced, make_plan
-from exelent.runtime import ProgressFn
+from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.bootstrap import check_preconditions
 from exelent.runtime.env import create_build_env
 
 
-def _print_progress(phase: str, fraction: float) -> None:
-    print(f"[{fraction * 100:5.1f}%] {phase}", flush=True)
+def _print_progress(update: Progress) -> None:
+    print(f"[{update.fraction * 100:5.1f}%] {update.phase}", flush=True)
 
 
 # Ile paska zajmuje przygotowanie środowiska. Reszta należy do PyInstallera,
@@ -53,10 +53,10 @@ class _Progress:
         self._highest = 0.0
 
     def stage(self, start: float, end: float) -> ProgressFn:
-        def report(phase: str, fraction: float) -> None:
-            value = start + (end - start) * min(max(fraction, 0.0), 1.0)
+        def report(update: Progress) -> None:
+            value = start + (end - start) * min(max(update.fraction, 0.0), 1.0)
             self._highest = max(self._highest, value)
-            self._report(phase, self._highest)
+            self._report(replace(update, fraction=self._highest))
 
         return report
 

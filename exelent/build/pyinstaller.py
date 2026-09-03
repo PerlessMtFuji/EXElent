@@ -16,7 +16,7 @@ from exelent.build.icon import ensure_ico
 from exelent.build.launcher import LAUNCHER_FILENAME, render_launcher
 from exelent.build.workspace import workspace_for
 from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, Severity
-from exelent.runtime import ProgressFn
+from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.env import CREATE_NO_WINDOW, BuildEnv
 from exelent.runtime.paths import logs_dir, path_hash
 
@@ -156,7 +156,7 @@ class PyInstallerBackend:
             creationflags=CREATE_NO_WINDOW,
         )
 
-        progress("build_start", 0.2)
+        progress(Progress(phase="build_start", fraction=0.2))
         assert process.stdout is not None
 
         # Read stdout on a worker thread so the main loop can poll the
@@ -190,7 +190,7 @@ class PyInstallerBackend:
             lines.append(line.rstrip("\n"))
             for pattern, phase in PHASES.items():
                 if re.search(pattern, line):
-                    progress(phase, _PHASE_PROGRESS[phase])
+                    progress(Progress(phase=phase, fraction=_PHASE_PROGRESS[phase]))
                     break
 
         if cancelled:
@@ -245,7 +245,7 @@ class PyInstallerBackend:
                 issues=(issue,) if issue is not None else (),
             )
 
-        progress("done", 1.0)
+        progress(Progress(phase="done", fraction=1.0))
         return BuildResult(
             ok=True,
             artifact=produced,

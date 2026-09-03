@@ -17,7 +17,7 @@ from pathlib import Path
 
 from exelent.constants import MIN_FREE_DISK_BYTES, UV_VERSION
 from exelent.models import Issue, IssueError, Severity
-from exelent.runtime import ProgressFn
+from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.paths import state_dir, tools_dir
 
 UV_URL = (
@@ -76,7 +76,9 @@ def _download(url: str, progress: ProgressFn) -> bytes:
         while chunk := response.read(64 * 1024):
             buffer.write(chunk)
             read += len(chunk)
-            progress("download_uv", read / total if total else 0.0)
+            progress(
+                Progress(phase="download_uv", fraction=read / total if total else 0.0)
+            )
     return buffer.getvalue()
 
 

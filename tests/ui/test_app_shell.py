@@ -12,6 +12,7 @@ import pytest
 
 from exelent.i18n import CATALOGS, set_language
 from exelent.models import AppKind, BuildPlan, BuildResult, OutputMode
+from exelent.runtime import Progress
 from exelent.ui import worker as worker_module
 from exelent.ui.app import SCREEN_BUILD, SCREEN_DROP, SCREEN_REVIEW, MainWindow
 from exelent.ui.screen_build import BuildScreen
@@ -145,7 +146,7 @@ def fake_build(monkeypatch):
 
     def fake(root, progress, cancel, **kwargs):
         wystartowal.set()
-        progress("analyze", 0.35)
+        progress(Progress(phase="analyze", fraction=0.35))
         for _ in range(1000):
             if zwolnij.is_set() or cancel.cancelled:
                 break

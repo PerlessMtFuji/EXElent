@@ -24,7 +24,7 @@ _THREAD_QUIT_TIMEOUT_MS = 5000
 class _Job(QObject):
     """Właściwa robota, wykonywana w wątku roboczym."""
 
-    progress = Signal(str, float)
+    progress = Signal(object)
     finished = Signal(object)
 
     def __init__(self, plan: BuildPlan, cancel: CancelToken) -> None:
@@ -64,7 +64,7 @@ class _Job(QObject):
 
 
 class BuildWorker(QObject):
-    progress = Signal(str, float)
+    progress = Signal(object)
     finished = Signal(object)
 
     def __init__(self) -> None:

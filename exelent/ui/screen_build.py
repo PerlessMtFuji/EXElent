@@ -149,9 +149,9 @@ class BuildScreen(QWidget):
         self._result = None
         self._show_running()
 
-    def on_progress(self, phase: str, fraction: float) -> None:
-        self.phase_label.setText(t(phase))
-        self.bar.setValue(int(fraction * 100))
+    def on_progress(self, update) -> None:
+        self.phase_label.setText(t(update.phase))
+        self.bar.setValue(int(update.fraction * 100))
 
     def on_finished(self, result: BuildResult) -> None:
         self._result = result
