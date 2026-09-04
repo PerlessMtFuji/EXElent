@@ -129,9 +129,7 @@ def _phase_of(node: ast.Call) -> str | None:
 
 def phase_keys() -> set[str]:
     literal = {
-        phase
-        for _where, node in _calls("progress")
-        if (phase := _phase_of(node)) is not None
+        phase for _where, node in _calls("progress") if (phase := _phase_of(node)) is not None
     }
     return literal | set(PHASES.values())
 

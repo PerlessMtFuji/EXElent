@@ -76,9 +76,7 @@ def _download(url: str, progress: ProgressFn) -> bytes:
         while chunk := response.read(64 * 1024):
             buffer.write(chunk)
             read += len(chunk)
-            progress(
-                Progress(phase="download_uv", fraction=read / total if total else 0.0)
-            )
+            progress(Progress(phase="download_uv", fraction=read / total if total else 0.0))
     return buffer.getvalue()
 
 
