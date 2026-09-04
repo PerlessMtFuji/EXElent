@@ -84,3 +84,32 @@ def test_tab_expansion_preserves_program_structure():
     result = convert_text_to_python(raw)
     assert result.ok
     assert ast.dump(ast.parse(result.code)) == ast.dump(ast.parse(raw.decode()))
+
+
+def test_rejects_future_import_pushed_off_the_first_line():
+    """Regression: `ast.parse` is not a strong enough gate for this module.
+
+    `ast.parse` runs the parser only (PyCF_ONLY_AST); the rule that a
+    `from __future__` import must precede every other statement lives in the
+    COMPILER, one stage later. A chat window that copies the fence label but
+    not the backticks leaves a bare `python` line on top -- valid as an
+    expression statement, so the parser is happy, and the whole file then
+    fails to compile.
+
+    Letting that through is not a cosmetic miss. PyInstaller compiles every
+    module while writing the PYZ, catches the SyntaxError, DROPS the module
+    and exits 0, so the user gets an EXE that dies with
+    "ImportError: No module named <their program>".
+    """
+    raw = b"python\nfrom __future__ import annotations\n\nprint(1)\n"
+    result = convert_text_to_python(raw)
+    assert result.ok is False
+    assert result.error_line == 2
+    assert result.code is None
+
+
+def test_rejects_return_outside_a_function():
+    """Second compile-stage-only check, same gap as the future-import one:
+    `ast.parse` accepts a bare `return`, the compiler rejects it."""
+    result = convert_text_to_python(b"x = 1\nreturn x\n")
+    assert result.ok is False

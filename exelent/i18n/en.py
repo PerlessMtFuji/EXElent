@@ -72,6 +72,10 @@ CATALOG: dict[str, str] = {
         "The finished file {name} disappeared during the build. This is usually antivirus "
         "software — add an exception and try again."
     ),
+    "module_dropped": (
+        "{file} contains an error that stopped it from loading, so it was left out of the "
+        "finished program. Fix that file and build again."
+    ),
     "package_not_found": (
         "One of the required libraries could not be downloaded. "
         "Check that its name in the code is correct."

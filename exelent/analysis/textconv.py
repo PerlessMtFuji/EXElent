@@ -3,7 +3,6 @@ więc ta ścieżka jest bardziej podejrzliwa niż reszta analizy."""
 
 from __future__ import annotations
 
-import ast
 import re
 
 from exelent.models import ConversionResult
@@ -82,9 +81,9 @@ def _mixes_tabs_and_spaces(text: str) -> bool:
     """Wykrywa mieszanie tabów i spacji we wcięciach różnych linii kodu.
 
     To nie jest zgadywanie głębokości wcięcia — sprawdzamy jedynie, jakie
-    znaki występują w już istniejącym wcięciu. `ast.parse` nie zawsze
-    zgłasza `TabError` dla takiego miksu (np. gdy taby i spacje trafiają
-    do odrębnych, niezagnieżdżonych bloków), więc to jedyny sposób, by
+    znaki występują w już istniejącym wcięciu. CPython nie zawsze zgłasza
+    `TabError` dla takiego miksu (np. gdy taby i spacje trafiają do
+    odrębnych, niezagnieżdżonych bloków), więc to jedyny sposób, by
     złapać ten przypadek przed dalszą konwersją.
     """
     has_tab = False
@@ -98,6 +97,26 @@ def _mixes_tabs_and_spaces(text: str) -> bool:
         if " " in indent:
             has_space = True
     return has_tab and has_space
+
+
+def _check_syntax(text: str) -> None:
+    """Rzuca `SyntaxError`, jesli `text` nie jest poprawnym Pythonem.
+
+    `compile(..., "exec")`, a NIE `ast.parse` — i to jest cala rzecz. `ast.parse`
+    uruchamia sam parser (`PyCF_ONLY_AST`) i zatrzymuje sie przed kompilatorem,
+    a czesc regul jezyka jest sprawdzana dopiero tam: `from __future__ import`
+    poza poczatkiem pliku, `return` poza funkcja, `yield`/`await` w zlym
+    miejscu, powtorzony argument. `ast.parse` przepuszcza je wszystkie.
+
+    Ta luka nie byla kosmetyczna. Wystarczylo, ze czat skopiowal etykiete
+    ogrodzenia bez samych backtickow — zostawala goła linia `python` na
+    gorze, czyli poprawne wyrazenie, ktore spycha `from __future__` z
+    pierwszej linii. Konwersja mowila "ok", PyInstaller kompilowal ten plik
+    dopiero przy skladaniu PYZ, lapal `SyntaxError`, WYRZUCAL modul z paczki
+    i konczyl z kodem 0 — a uzytkownik dostawal EXE, ktore wita go
+    "ImportError: No module named <jego program>".
+    """
+    compile(text, "<exelent>", "exec")
 
 
 def convert_text_to_python(raw: bytes) -> ConversionResult:
@@ -129,11 +148,11 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
         steps.append("tabs")
 
     try:
-        ast.parse(text)
+        _check_syntax(text)
     except TabError:
         fixed = text.expandtabs(8)
         try:
-            ast.parse(fixed)
+            _check_syntax(fixed)
         except SyntaxError as exc:
             return ConversionResult(
                 ok=False,

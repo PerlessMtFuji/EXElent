@@ -3,12 +3,14 @@ jego log na fazy paska postępu."""
 
 from __future__ import annotations
 
+import os
 import queue
 import re
 import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 from exelent.build.backend import CancelToken
@@ -60,6 +62,23 @@ _CANCEL_POLL_SECONDS = 0.2
 _CANCEL_KILL_WAIT_SECONDS = 3.0
 _CANCEL_READER_JOIN_SECONDS = 1.0
 
+# PyInstaller kompiluje kazdy zebrany modul dopiero przy skladaniu PYZ. Gdy
+# ktorys sie nie kompiluje, `PYZ.assemble` lapie `SyntaxError`, loguje TO
+# ostrzezenie, po czym robi `continue`: modul wypada z archiwum, a build
+# konczy sie kodem 0 i gotowym EXE. Dla cudzego modulu napisanego pod inna
+# wersje Pythona (komentarz w zrodle PyInstallera mowi wprost o tym
+# przypadku) to rozsadne zachowanie i nie mamy powodu psuc takiego builda.
+#
+# Dla pliku z projektu uzytkownika rozsadne nie jest nigdy: EXE wyjezdza bez
+# jego kodu i umiera na starcie z "No module named <jego program>", a jedynym
+# sladem jest jedno WARNING w srodku logu, ktorego nikt nie czyta, bo build
+# przeciez "sie udal". Stad rozroznienie po sciezce w `dropped_project_modules`.
+#
+# "Sytnax" to literowka w PyInstallerze 6.16.0 (building/utils.py). Wzorzec
+# przyjmuje obie pisownie, zeby ten straznik nie umarl po cichu w dniu, w
+# ktorym literowka zostanie poprawiona.
+_COMPILE_DROPPED = re.compile(r"S(?:yntax|ytnax) error while compiling (.+?)\s*$")
+
 
 def build_arguments(
     plan: BuildPlan, workspace: Path, launcher: Path, icon: Path | None
@@ -97,6 +116,26 @@ def build_arguments(
 
     args.append(str(launcher))
     return args
+
+
+def dropped_project_modules(lines: Iterable[str], workspace: Path) -> tuple[str, ...]:
+    """Pliki Z PROJEKTU, ktore PyInstaller wyrzucil z paczki — patrz
+    `_COMPILE_DROPPED`. Zwraca nazwy plikow, w kolejnosci wystapienia w logu."""
+    # normcase po obu stronach: Windows nie rozroznia wielkosci liter w
+    # sciezkach, a niedopasowanie tutaj nie halasuje — po prostu wylacza tego
+    # straznika i wracamy do cichego, zepsutego EXE.
+    prefix = os.path.normcase(str(workspace))
+    dropped: list[str] = []
+    for line in lines:
+        match = _COMPILE_DROPPED.search(line)
+        if match is None:
+            continue
+        path = Path(match.group(1))
+        if not os.path.normcase(str(path)).startswith(prefix + os.sep):
+            continue
+        if path.name not in dropped:
+            dropped.append(path.name)
+    return tuple(dropped)
 
 
 def log_path_for(plan: BuildPlan) -> Path:
@@ -235,6 +274,17 @@ class PyInstallerBackend:
 
         if returncode != 0:
             return BuildResult(ok=False, log_path=log_path, duration_s=duration)
+
+        dropped = dropped_project_modules(lines, workspace)
+        if dropped:
+            # Kod wyjscia 0 i EXE na dysku, ale bez kodu uzytkownika. To NIE
+            # jest udany build, choc PyInstaller tak twierdzi.
+            return BuildResult(
+                ok=False,
+                log_path=log_path,
+                duration_s=duration,
+                issues=(Issue("module_dropped", Severity.BLOCKER, {"file": dropped[0]}),),
+            )
 
         produced, issue = self._collect_artifact(plan, workspace)
         if produced is None:
