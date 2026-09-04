@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -37,6 +38,52 @@ def _source_from(mime) -> Path | None:
             continue
         return Path(local)
     return None
+
+
+class SourceDialog(QFileDialog):
+    """Okno wyboru, ktore przyjmuje ZAROWNO plik, jak i katalog.
+
+    Qt nie ma takiego trybu. `getExistingDirectory` pozwala kliknac wylacznie
+    katalog, wiec uzytkownik proszony o wskazanie swojego `program.txt`
+    zaznaczal folder, w ktorym ten plik lezy — i EXElent bral caly folder,
+    z Pobranymi wlacznie. `getOpenFileName` ma odwrotna wade: nie da sie nim
+    wskazac projektu zlozonego z wielu plikow.
+
+    Dlatego tryb katalogu (zeby katalog dalo sie zatwierdzic) z widocznymi
+    plikami, plus `accept()` ponizej, ktore przepuszcza plik. Okno musi byc
+    nienatywne: natywne okno Windows realizuje tryb katalogu po swojemu i w
+    ogole nie pokazuje plikow, wiec nie byloby czego klikac.
+    """
+
+    def __init__(self, parent: QWidget | None, caption: str) -> None:
+        super().__init__(parent, caption)
+        self.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        self.setFileMode(QFileDialog.FileMode.Directory)
+        self.setOption(QFileDialog.Option.ShowDirsOnly, False)
+
+    def accept(self) -> None:
+        selected = self.selectedFiles()
+        if selected and Path(selected[0]).is_file():
+            # QFileDialog.accept() w trybie katalogu odrzuciloby plik (albo
+            # potraktowalo go jak katalog do wejscia). QDialog.accept() konczy
+            # okno z pominieciem tej walidacji, a wybor zostaje w selectedFiles().
+            QDialog.accept(self)
+            return
+        super().accept()
+
+
+def choose_source(parent: QWidget | None, caption: str) -> Path | None:
+    """Sciezka z okna wyboru albo None, gdy uzytkownik zrezygnowal.
+
+    Osobna funkcja modulu, a nie metoda ekranu: to jedyne miejsce, ktore
+    naprawde otwiera okno, wiec testy ekranu podmieniaja wlasnie ja zamiast
+    uruchamiac modalny dialog.
+    """
+    dialog = SourceDialog(parent, caption)
+    if not dialog.exec():
+        return None
+    selected = dialog.selectedFiles()
+    return Path(selected[0]) if selected else None
 
 
 class DropScreen(QWidget):
@@ -103,16 +150,19 @@ class DropScreen(QWidget):
                 item.widget().deleteLater()
         entries = recent.load_recent()
         self.recent_label.setVisible(bool(entries))
-        for path in entries:
-            button = QPushButton(path.name, objectName="Link")
+        # Etykiety liczone dla CALEJ listy naraz: skrot jest jednoznaczny
+        # tylko w kontekscie pozostalych wpisow (patrz `recent.display_labels`).
+        for path, label in zip(entries, recent.display_labels(entries), strict=True):
+            button = QPushButton(label, objectName="Link")
+            button.setToolTip(str(path))
             button.clicked.connect(lambda _checked=False, p=path: self._choose(p))
             self.recent_row.addWidget(button)
         self.recent_row.addStretch(1)
 
     def _browse(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, t("drop_browse"))
-        if chosen:
-            self._choose(Path(chosen))
+        chosen = choose_source(self, t("drop_browse"))
+        if chosen is not None:
+            self._choose(chosen)
 
     def _choose(self, path: Path) -> None:
         recent.remember(path)

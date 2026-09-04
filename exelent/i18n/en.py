@@ -160,8 +160,8 @@ CATALOG: dict[str, str] = {
     "settings_language": "Language",
     "settings_language_system": "Same as system",
     # screen 1 - picking the folder
-    "drop_headline": "Drag a folder with your code here",
-    "drop_browse": "Choose folder",
+    "drop_headline": "Drag a folder or a file with your code here",
+    "drop_browse": "Choose…",
     "drop_recent": "Recent",
     # screen 2 - what I understood
     "review_headline": "Here is what I understood",
