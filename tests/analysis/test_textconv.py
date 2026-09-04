@@ -100,8 +100,13 @@ def test_rejects_future_import_pushed_off_the_first_line():
     module while writing the PYZ, catches the SyntaxError, DROPS the module
     and exits 0, so the user gets an EXE that dies with
     "ImportError: No module named <their program>".
+
+    The bare `python` label that first produced this is stripped now (see
+    `test_strips_a_bare_fence_label_left_by_the_chat_window`), so the gate is
+    tested here with a displacing line the converter has no business
+    removing.
     """
-    raw = b"python\nfrom __future__ import annotations\n\nprint(1)\n"
+    raw = b"x = 1\nfrom __future__ import annotations\n\nprint(1)\n"
     result = convert_text_to_python(raw)
     assert result.ok is False
     assert result.error_line == 2
@@ -113,3 +118,32 @@ def test_rejects_return_outside_a_function():
     `ast.parse` accepts a bare `return`, the compiler rejects it."""
     result = convert_text_to_python(b"x = 1\nreturn x\n")
     assert result.ok is False
+
+
+def test_strips_a_bare_fence_label_left_by_the_chat_window():
+    """Some chat windows copy the fence LABEL but not the backticks, leaving
+    a bare `python` on top. It parses (it is just a name expression), so the
+    file looks fine until the compiler rejects whatever it displaced."""
+    raw = b"python\nfrom __future__ import annotations\n\nprint(1)\n"
+    result = convert_text_to_python(raw)
+    assert result.ok
+    assert result.code.startswith("from __future__")
+    assert "fence_label" in result.steps
+
+
+def test_strips_bare_label_in_its_other_spellings():
+    for label in (b"py", b"python3", b"  Python  "):
+        result = convert_text_to_python(label + b"\nprint(1)\n")
+        assert result.ok and result.code == "print(1)", label
+
+
+def test_keeps_a_first_line_that_is_real_code():
+    """`python` is only a stray label when it stands alone on the line."""
+    result = convert_text_to_python(b"python = 3\nprint(python)\n")
+    assert result.ok and result.code.startswith("python = 3")
+    assert "fence_label" not in result.steps
+
+
+def test_does_not_strip_the_label_when_nothing_would_be_left():
+    result = convert_text_to_python(b"python\n\n\n")
+    assert "fence_label" not in result.steps

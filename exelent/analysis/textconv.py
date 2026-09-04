@@ -30,6 +30,14 @@ _REPLACEMENTS = {
 _FENCE = re.compile(
     r"```[ \t]*(?:python|py|python3)?[ \t]*\n(.*?)(?:\n)?```", re.DOTALL | re.IGNORECASE
 )
+# Sama ETYKIETA ogrodzenia, bez backtickow. Czesc okien czatu kopiuje ja
+# razem z kodem, a samych backtickow juz nie — zostaje gola linia "python"
+# na gorze. Parser ja przyjmuje (to zwykle wyrazenie-nazwa), wiec plik
+# wyglada na dobry az do chwili, w ktorej kompilator odrzuca to, co ta linia
+# zepchnela w dol — najczesciej `from __future__ import`, ktory musi stac
+# jako pierwszy. Wymagany znak nowej linii na koncu: bez niego w pliku nie
+# ma nic poza sama etykieta.
+_FENCE_LABEL = re.compile(r"^[ \t]*(?:python3?|py)[ \t]*\n", re.IGNORECASE)
 _LINE_NUMBER = re.compile(r"^[ \t]*\d+[ \t]*[:|.]?[ \t]{1,4}(?=\S)")
 _PROMPT = re.compile(r"^(?:>>>|\.\.\.) ?")
 
@@ -53,6 +61,24 @@ def _strip_fences(text: str) -> tuple[str, bool]:
     if not blocks:
         return text, False
     return "\n".join(b.strip("\n") for b in blocks), True
+
+
+def _strip_fence_label(text: str) -> tuple[str, bool]:
+    """Zdejmuje osamotniona etykiete ogrodzenia z pierwszej linii.
+
+    Tylko gdy stoi SAMA na linii — `python = 3` to prawdziwy kod i zostaje.
+    Tylko gdy cos po niej zostaje: plik zlozony z samego slowa "python" nie
+    jest kodem, ktoremu ta funkcja ma pomoc, a pusty wynik zbudowalby EXE,
+    ktory nic nie robi.
+    """
+    body = text.lstrip("\n")
+    match = _FENCE_LABEL.match(body)
+    if match is None:
+        return text, False
+    rest = body[match.end() :]
+    if not rest.strip():
+        return text, False
+    return rest, True
 
 
 def _strip_line_numbers(text: str) -> tuple[str, bool]:
@@ -134,6 +160,9 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
     text, changed = _strip_fences(text)
     if changed:
         steps.append("fence")
+    text, changed = _strip_fence_label(text)
+    if changed:
+        steps.append("fence_label")
     text, changed = _strip_line_numbers(text)
     if changed:
         steps.append("line_numbers")
