@@ -8,7 +8,8 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from exelent.deps.aliases import ALIASES, HEAVY_PACKAGES
+from exelent.deps.aliases import ALIASES
+from exelent.deps.sizes import is_heavy
 from exelent.models import Dependency
 
 _REQ_LINE = re.compile(r"^\s*([A-Za-z0-9_.\-]+(?:\[[^\]]+\])?(?:[<>=!~]=?[^\s#]+)?)")
@@ -73,7 +74,7 @@ def resolve_dependencies(
                 Dependency(
                     import_name=base,
                     package=spec,
-                    heavy=base in HEAVY_PACKAGES,
+                    heavy=is_heavy(base),
                 )
             )
         return tuple(deps_from_req)
@@ -116,7 +117,7 @@ def resolve_dependencies(
             import_name=min(package_import_names[package]),
             package=package,
             optional=optional,
-            heavy=package in HEAVY_PACKAGES,
+            heavy=is_heavy(package),
         )
         for package, optional in package_optional.items()
     ]

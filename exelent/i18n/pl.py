@@ -50,9 +50,12 @@ CATALOG: dict[str, str] = {
         "Twój program wczytuje biblioteki w trakcie działania. "
         "Może się zdarzyć, że któraś nie trafi do EXE."
     ),
-    "heavy_packages": (
-        "Ten program używa dużych bibliotek ({packages}). Plik EXE może mieć kilkaset "
-        "megabajtów, a budowanie potrwa dłużej."
+    "size_estimate": (
+        "Gotowy program zajmie około {low}–{high} MB. Najwięcej miejsca zajmą: {packages}."
+    ),
+    "size_estimate_large": (
+        "Gotowy program zajmie około {low}–{high} MB, a budowanie potrwa dłużej niż zwykle. "
+        "Najwięcej miejsca zajmą: {packages}."
     ),
     # środowisko
     "no_network": (

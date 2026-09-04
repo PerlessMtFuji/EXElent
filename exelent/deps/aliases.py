@@ -91,20 +91,3 @@ ALIASES: dict[str, str] = {
     "openai": "openai",
     "anthropic": "anthropic",
 }
-
-HEAVY_PACKAGES: frozenset[str] = frozenset(
-    {
-        "torch",
-        "tensorflow",
-        "transformers",
-        "scipy",
-        "opencv-python",
-        "matplotlib",
-        "pandas",
-        "PySide6",
-        "PyQt5",
-        "PyQt6",
-        "librosa",
-        "moviepy",
-    }
-)

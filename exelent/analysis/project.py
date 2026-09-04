@@ -19,6 +19,7 @@ from exelent.analysis.entrypoint import entry_is_certain, local_module_names, ra
 from exelent.analysis.scanner import scan_directory, scan_single_file
 from exelent.analysis.textconv import convert_text_to_python
 from exelent.deps.resolve import resolve_dependencies
+from exelent.deps.sizes import LARGE_WARNING_MB, estimate_exe_size
 from exelent.models import Issue, ProjectAnalysis, ScanResult, Severity
 
 OTHER_LANGUAGE_SUFFIXES = {".js", ".ts", ".java", ".cs", ".cpp", ".c", ".go", ".rb", ".php"}
@@ -130,15 +131,18 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     )
     hidden_imports = collect_hidden_imports(sources)
 
-    heavy_packages = sorted(dep.package for dep in dependencies if dep.heavy)
-    if heavy_packages:
-        issues.append(
-            Issue(
-                "heavy_packages",
-                Severity.WARNING,
-                {"packages": ", ".join(heavy_packages)},
-            )
-        )
+    heavy_packages = [dep.package for dep in dependencies if dep.heavy]
+    low, high, heaviest = estimate_exe_size(heavy_packages)
+    if heaviest:
+        # Widełki, a nie jedna liczba: PyInstaller wyrzuca z paczki to, czego
+        # kod nie dotyka, więc stałe „kilkaset megabajtów" mijało się z
+        # prawdą o 26-megabajtowym EXE (zgłoszenie 7). Powyżej progu to nadal
+        # ostrzeżenie — poniżej jest zwykłą informacją, nie alarmem.
+        size_data = {"low": str(low), "high": str(high), "packages": ", ".join(heaviest[:3])}
+        if high >= LARGE_WARNING_MB:
+            issues.append(Issue("size_estimate_large", Severity.WARNING, size_data))
+        else:
+            issues.append(Issue("size_estimate", Severity.INFO, size_data))
 
     return ProjectAnalysis(
         root=root,

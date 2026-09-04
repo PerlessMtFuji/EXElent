@@ -106,6 +106,13 @@ class ReviewScreen(QWidget):
         self.warnings_label.setWordWrap(True)
         self.warnings_label.setVisible(False)
 
+        # Informacja ma WŁASNĄ etykietę, a nie miejsce w ostrzeżeniach:
+        # zdanie „program zajmie 26–45 MB" nie jest ostrzeżeniem i nie ma
+        # wyglądać jak ostrzeżenie.
+        self.notes_label = QLabel("", objectName="Muted")
+        self.notes_label.setWordWrap(True)
+        self.notes_label.setVisible(False)
+
         self.back_button = QPushButton(t("review_back"), objectName="Link")
         self.back_button.clicked.connect(self.back_requested)
 
@@ -125,6 +132,7 @@ class ReviewScreen(QWidget):
         outer.addWidget(self.extra_label)
         outer.addWidget(self.deps_box)
         outer.addWidget(self.warnings_label)
+        outer.addWidget(self.notes_label)
         outer.addStretch(1)
         outer.addLayout(actions)
 
@@ -180,8 +188,11 @@ class ReviewScreen(QWidget):
         self.row_mode.set_recommended(self.mode_combo.currentText())
 
         warnings = [describe(i) for i in analysis.issues if i.severity is not Severity.INFO]
+        notes = [describe(i) for i in analysis.issues if i.severity is Severity.INFO]
         self.warnings_label.setText("\n".join(warnings))
         self.warnings_label.setVisible(bool(warnings))
+        self.notes_label.setText("\n".join(notes))
+        self.notes_label.setVisible(bool(notes))
 
         blocked = any(i.severity is Severity.BLOCKER for i in analysis.issues)
         self.build_button.setEnabled(not blocked)
