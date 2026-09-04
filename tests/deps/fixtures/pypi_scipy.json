@@ -1,0 +1,24 @@
+{
+  "urls": [
+    {
+      "packagetype": "sdist",
+      "filename": "scipy-1.18.1.tar.gz",
+      "size": 30000000
+    },
+    {
+      "packagetype": "bdist_wheel",
+      "filename": "scipy-1.18.1-cp311-cp311-win_amd64.whl",
+      "size": 34000000
+    },
+    {
+      "packagetype": "bdist_wheel",
+      "filename": "scipy-1.18.1-cp312-cp312-win_amd64.whl",
+      "size": 36700160
+    },
+    {
+      "packagetype": "bdist_wheel",
+      "filename": "scipy-1.18.1-cp312-cp312-manylinux_x86_64.whl",
+      "size": 41000000
+    }
+  ]
+}
