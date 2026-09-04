@@ -14,6 +14,7 @@ from exelent.deps.sizes import (
     LARGE_WARNING_MB,
     download_size,
     estimate_exe_size,
+    resolve_download_plan,
     wheel_size,
 )
 
@@ -90,3 +91,48 @@ def test_download_size_degrades_quietly_when_pypi_is_unreachable(monkeypatch):
 
     monkeypatch.setattr(sizes_module, "_fetch_release", boom)
     assert download_size(["scipy==1.18.1", "numpy==2.5.2"]) == 0
+
+
+# --- plan pobierania: co uv naprawde sciagnie, z uwzglednieniem cache ---
+
+
+def test_dry_run_yields_pinned_specs_and_the_missing_count():
+    transcript = (FIXTURES.parent.parent / "runtime" / "fixtures" / "uv_dry_run.txt").read_text(
+        encoding="utf-8"
+    )
+    plan = resolve_download_plan(
+        uv=Path("uv.exe"),
+        python=Path("python.exe"),
+        packages=["matplotlib", "pandas", "scipy"],
+        run_dry=lambda *_a, **_k: transcript,
+        measure=lambda specs, **_k: 0,
+    )
+    assert plan.would_download == 8
+    assert "scipy==1.18.1" in plan.specs
+    assert len(plan.specs) == 14
+
+
+def test_nothing_to_download_when_everything_is_cached():
+    """Pytanie o zgode na pobranie zera megabajtow uczy klikac OK bez
+    czytania — wiec ta liczba musi byc prawdziwa."""
+    transcript = "Resolved 3 packages in 12ms\nWould download 0 packages\n + six==1.17.0\n"
+    plan = resolve_download_plan(
+        uv=Path("uv.exe"),
+        python=Path("python.exe"),
+        packages=["six"],
+        run_dry=lambda *_a, **_k: transcript,
+        measure=lambda specs, **_k: 999,
+    )
+    assert plan.would_download == 0
+    assert plan.total_bytes == 0
+
+
+def test_resolution_failure_degrades_to_an_empty_plan():
+    def boom(*_args, **_kwargs):
+        raise OSError("uv nie wystartowal")
+
+    plan = resolve_download_plan(
+        uv=Path("uv.exe"), python=Path("python.exe"), packages=["scipy"], run_dry=boom
+    )
+    assert plan.specs == ()
+    assert plan.total_bytes == 0

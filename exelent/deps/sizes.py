@@ -17,8 +17,11 @@ import urllib.request
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 
 from exelent.constants import TARGET_PYTHON
+from exelent.runtime.env import run_uv
+from exelent.runtime.uvlog import PACKAGE, WOULD_DOWNLOAD, parse_line
 
 # Znacznik ABI koła, którego naprawdę użyje build: CPython w wersji docelowej,
 # 64-bitowy Windows. Koło dla innej wersji albo innego systemu opisuje plik,
@@ -137,3 +140,58 @@ def download_size(specs: Sequence[str], timeout: float = 5.0) -> int:
         return 0
     with ThreadPoolExecutor(max_workers=min(_MAX_PARALLEL, len(specs))) as pool:
         return sum(pool.map(one, specs))
+
+
+@dataclass(frozen=True)
+class DownloadPlan:
+    specs: tuple[str, ...] = ()
+    would_download: int = 0
+    total_bytes: int = 0
+
+
+def _default_run_dry(uv: Path, python: Path, packages: Sequence[str]) -> str:
+    result = run_uv(
+        uv,
+        ["pip", "install", "--python", str(python), "--dry-run", "--color", "never", *packages],
+    )
+    return result.stderr or ""
+
+
+def resolve_download_plan(
+    uv: Path,
+    python: Path,
+    packages: Sequence[str],
+    *,
+    run_dry=None,
+    measure=None,
+) -> DownloadPlan:
+    """Co naprawdę zostanie pobrane i ile to waży.
+
+    `--dry-run` daje pełne drzewo z PRZYPIĘTYMI wersjami oraz liczbę paczek,
+    których brakuje w cache. Bez tej drugiej liczby okno pytałoby o zgodę na
+    pobranie stu megabajtów, które już leżą na dysku.
+
+    Rozmiar liczymy tylko wtedy, gdy jest co pobierać. Każda porażka — brak
+    uv, brak sieci, nieznany kształt wyjścia — daje pusty plan, a warstwa
+    wyżej sięga po szacunek z tabeli.
+    """
+    runner = run_dry or _default_run_dry
+    measurer = measure or download_size
+    try:
+        text = runner(uv, python, packages)
+    except (OSError, ValueError):
+        return DownloadPlan()
+
+    specs: list[str] = []
+    would = 0
+    for line in text.splitlines():
+        event = parse_line(line)
+        if event is None:
+            continue
+        if event.kind == PACKAGE:
+            specs.append(event.name)
+        elif event.kind == WOULD_DOWNLOAD:
+            would = event.count
+
+    total = measurer(specs) if would else 0
+    return DownloadPlan(specs=tuple(specs), would_download=would, total_bytes=total)
