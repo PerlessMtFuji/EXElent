@@ -223,3 +223,16 @@ def test_single_file_analysis_does_not_walk_the_parent_directory(tmp_path, monke
     codes = {i.code for i in analysis.issues}
     assert "other_language" not in codes
     assert "no_python_found" in codes
+
+
+def test_broken_txt_does_not_also_claim_there_is_no_python(tmp_path):
+    """Two BLOCKERs that contradict each other are worse than one that helps.
+
+    `txt_syntax_error` already names the file and the line to fix, so adding
+    "I see no Python program here" denies it -- and for a single dropped file
+    it names the PARENT folder, which the user never pointed at.
+    """
+    root = _make(tmp_path, {"kod.txt": "def f(:\n    pass"})
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "txt_syntax_error" in codes
+    assert "no_python_found" not in codes

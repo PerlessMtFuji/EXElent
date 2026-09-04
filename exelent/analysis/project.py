@@ -98,7 +98,14 @@ def analyze_project(root: Path) -> ProjectAnalysis:
         other = _detect_other_language(scan)
         if other:
             issues.append(Issue("other_language", Severity.BLOCKER, {"suffix": other}))
-        else:
+        elif not conversion_failures:
+            # "Nie widze tu Pythona" tylko wtedy, gdy naprawde go nie widzimy.
+            # Gdy plik ZOSTAL rozpoznany jako kod i przewrocil sie dopiero na
+            # skladni, `txt_syntax_error` juz powiedzial, co i w ktorej linii
+            # poprawic. Doklejenie drugiego BLOCKERa zaprzecza pierwszemu, a
+            # przy pojedynczym upuszczonym pliku nazywa przy okazji katalog
+            # NADRZEDNY ("nie widze programu w folderze Pobrane"), ktorego
+            # uzytkownik nigdy nie wskazywal.
             issues.append(Issue("no_python_found", Severity.BLOCKER, {"dir": root.name}))
         return ProjectAnalysis(
             root=root,
