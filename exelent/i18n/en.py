@@ -128,6 +128,8 @@ CATALOG: dict[str, str] = {
     "package": "Packing into an EXE…",
     "collect": "Finishing…",
     "done": "Done!",
+    "progress_bytes": "{done} of {total}",
+    "progress_eta": "{eta} left",
     # screen 1 - picking the folder
     "drop_headline": "Drag a folder with your code here",
     "drop_browse": "Choose folder",

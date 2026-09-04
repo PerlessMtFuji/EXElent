@@ -136,6 +136,8 @@ CATALOG: dict[str, str] = {
     "package": "Pakuję do EXE…",
     "collect": "Kończę…",
     "done": "Gotowe!",
+    "progress_bytes": "{done} z {total}",
+    "progress_eta": "zostało {eta}",
     # ekran 1 — wskazanie folderu
     "drop_headline": "Przeciągnij tu folder z kodem",
     "drop_browse": "Wybierz folder",

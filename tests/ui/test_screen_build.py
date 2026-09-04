@@ -477,3 +477,32 @@ def test_back_button_is_hidden_while_running(qtbot, screen, tmp_path):
     screen.on_finished(BuildResult(ok=False, issues=(Issue("disk_full", Severity.BLOCKER),)))
     screen.start(_plan(tmp_path))
     assert screen.back_button.isHidden() is True
+
+
+def test_byte_line_appears_only_while_something_is_downloading(qtbot, screen):
+    """Pusty licznik megabajtow pod paskiem przy pakowaniu bylby gorszy niz
+    jego brak, wiec ekran pozna to po `total_bytes == 0`."""
+    screen.on_progress(Progress(phase="package", fraction=0.4))
+    assert screen.bytes_label.isHidden() is True
+
+    screen.on_progress(
+        Progress(
+            phase="install_packages",
+            fraction=0.6,
+            done_bytes=128 * 1024**2,
+            total_bytes=210 * 1024**2,
+            speed_bps=4.2 * 1024**2,
+            eta_s=20,
+        )
+    )
+    assert screen.bytes_label.isHidden() is False
+    text = screen.bytes_label.text()
+    assert "128.0 MB" in text and "210.0 MB" in text and "4.2 MB/s" in text and "20 s" in text
+
+
+def test_byte_line_omits_eta_when_speed_is_unknown(qtbot, screen):
+    screen.on_progress(
+        Progress(phase="install_packages", fraction=0.1, done_bytes=0, total_bytes=1024**2)
+    )
+    assert screen.bytes_label.isHidden() is False
+    assert "None" not in screen.bytes_label.text()

@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from exelent.diagnostics.report import github_issue_url, tail, write_report
 from exelent.i18n import describe, t
 from exelent.models import BuildPlan, BuildResult
+from exelent.ui.format import human_duration, human_size, human_speed
 
 # Ile ostatnich linii logu pokazujemy w oknie. Log PyInstallera bywa
 # wielomegabajtowy, a interesujący jest zawsze jego koniec.
@@ -53,6 +54,8 @@ class BuildScreen(QWidget):
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
         self.bar.setTextVisible(False)
+        self.bytes_label = QLabel("", objectName="Muted")
+        self.bytes_label.setVisible(False)
 
         self.summary_label = QLabel("")
         self.summary_label.setWordWrap(True)
@@ -97,6 +100,7 @@ class BuildScreen(QWidget):
         outer.setSpacing(16)
         outer.addWidget(self.phase_label)
         outer.addWidget(self.bar)
+        outer.addWidget(self.bytes_label)
         outer.addWidget(self.summary_label)
         outer.addWidget(self.antivirus_label)
         outer.addWidget(self.log_toggle, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -114,8 +118,13 @@ class BuildScreen(QWidget):
         Stan ma określać CAŁY ekran, a nie dokładać się do poprzedniego:
         bez tego przejście z porażki w przerwanie zostawiało na ekranie
         „Zgłoś na GitHubie" z tamtej porażki — zmierzone na renderze.
+
+        Licznik megabajtów gaśnie tu razem z przyciskami: build przerwany w
+        połowie pobierania zostawiłby pod zdaniem o awarii licznik, który
+        nadal odlicza.
         """
         self.antivirus_label.setVisible(False)
+        self.bytes_label.setVisible(False)
         for button in (
             self.cancel_button,
             self.open_folder_button,
@@ -152,6 +161,30 @@ class BuildScreen(QWidget):
     def on_progress(self, update) -> None:
         self.phase_label.setText(t(update.phase))
         self.bar.setValue(int(update.fraction * 100))
+        self._show_bytes(update)
+
+    def _show_bytes(self, update) -> None:
+        """Druga linijka tylko wtedy, gdy naprawdę coś się pobiera.
+
+        Pusty licznik megabajtów pod paskiem przy pakowaniu byłby gorszy niż
+        jego brak, więc ekran poznaje to po `total_bytes == 0`.
+        """
+        if not update.total_bytes:
+            self.bytes_label.setVisible(False)
+            return
+        parts = [
+            t(
+                "progress_bytes",
+                done=human_size(update.done_bytes),
+                total=human_size(update.total_bytes),
+            )
+        ]
+        if update.speed_bps > 0:
+            parts.append(human_speed(update.speed_bps))
+        if update.eta_s is not None:
+            parts.append(t("progress_eta", eta=human_duration(update.eta_s)))
+        self.bytes_label.setText(" · ".join(parts))
+        self.bytes_label.setVisible(True)
 
     def on_finished(self, result: BuildResult) -> None:
         self._result = result
@@ -174,7 +207,7 @@ class BuildScreen(QWidget):
             t(
                 "build_success",
                 name=result.artifact.name,
-                size=_human_size(result.size_bytes),
+                size=human_size(result.size_bytes),
             )
         )
         self.antivirus_label.setVisible(True)
@@ -301,10 +334,3 @@ class BuildScreen(QWidget):
 
     def _open_github(self) -> None:
         webbrowser.open(github_issue_url(self._log_text(), self._plan_summary()))
-
-
-def _human_size(size_bytes: int) -> str:
-    megabytes = size_bytes / 1024**2
-    if megabytes >= 1:
-        return f"{megabytes:.1f} MB"
-    return f"{size_bytes / 1024:.0f} KB"
