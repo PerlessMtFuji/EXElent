@@ -138,6 +138,7 @@ def test_the_users_corrections_reach_the_build(worker, qtbot, blocking_build, tm
         "dest_dir": plan.dest_dir,
         "app_kind": plan.app_kind,
         "output_mode": plan.output_mode,
+        "total_download_bytes": plan.total_download_bytes,
     }
 
 

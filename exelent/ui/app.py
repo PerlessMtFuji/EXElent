@@ -8,14 +8,18 @@ budujący: ekran 3 pokazuje postęp, ale nie jest właścicielem wątku.
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QStackedWidget
 
 from exelent.analysis.project import analyze_project
 from exelent.constants import APP_NAME
+from exelent.deps.sizes import estimate_exe_size
 from exelent.i18n import set_language, system_language
+from exelent.settings import load_settings, save_settings
+from exelent.ui.dialog_download import DownloadDialog, should_ask, should_ask_offline
 from exelent.ui.preflight import PreflightWorker
 from exelent.ui.screen_build import BuildScreen
 from exelent.ui.screen_drop import DropScreen
@@ -26,6 +30,12 @@ from exelent.ui.worker import BuildWorker
 SCREEN_DROP = 0
 SCREEN_REVIEW = 1
 SCREEN_BUILD = 2
+
+# Ile okno czeka na preflight po kliknięciu „Stwórz EXE". Spec §9.2: krótki
+# limit, po którym pokazujemy szacunek z tabeli. Kliknięcie nie ma prawa
+# zawiesić okna na zapytaniu sieciowym, a wolne łącze to dokładnie ten
+# przypadek, dla którego powstało zgłoszenie 4.
+PREFLIGHT_WAIT_MS = 1500
 
 
 class MainWindow(QMainWindow):
@@ -98,8 +108,37 @@ class MainWindow(QMainWindow):
         self.preflight.start([d.package for d in analysis.dependencies if not d.optional])
         self.go_to(SCREEN_REVIEW)
 
+    def _download_dialog(self, plan, download, settings) -> DownloadDialog | None:
+        """Okno zgody dla tego builda albo `None`, gdy nie ma o co pytać.
+
+        Dwie drogi, bo preflight ma trzy możliwe odpowiedzi: policzył i coś
+        brakuje (pytamy dokładną liczbą), policzył i nic nie brakuje (nie
+        pytamy), nie zdążył albo odpadł (pytamy szacunkiem z tabeli §7.2).
+        """
+        if should_ask(download, settings):
+            return DownloadDialog(download, self)
+        low, high, heaviest = estimate_exe_size(plan.packages)
+        if should_ask_offline(download, settings, high):
+            return DownloadDialog(download, self, estimate=(low, high), estimate_packages=heaviest)
+        return None
+
     def _on_build_requested(self, plan) -> None:
-        """Ekran 3 czyszczony PRZED pokazaniem, build startuje po przejściu."""
+        """Ekran 3 czyszczony PRZED pokazaniem, build startuje po przejściu.
+
+        Przed tym wszystkim pytanie o zgodę na pobieranie — z ograniczonym
+        czasowo oczekiwaniem na preflight, żeby kliknięcie nie zawisło na
+        sieci ani po cichu nie pominęło pytania.
+        """
+        download = self.preflight.plan(wait_ms=PREFLIGHT_WAIT_MS)
+        settings = load_settings()
+        dialog = self._download_dialog(plan, download, settings)
+        if dialog is not None:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return  # zostajemy na ekranie 2, nic nie ruszylo
+            if dialog.dont_ask_again():
+                save_settings(replace(settings, ask_before_download=False))
+
+        plan = replace(plan, total_download_bytes=download.total_bytes)
         self.screen_build.start(plan)
         self.go_to(SCREEN_BUILD)
         self.worker.start(plan)

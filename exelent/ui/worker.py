@@ -47,6 +47,7 @@ class _Job(QObject):
                 dest_dir=plan.dest_dir,
                 app_kind=plan.app_kind,
                 output_mode=plan.output_mode,
+                total_download_bytes=plan.total_download_bytes,
             )
         except Exception as exc:  # noqa: BLE001 - GUI nie moze umrzec przez build
             # `run_build` ma własną granicę wyjątków, więc tu trafia tylko to,
