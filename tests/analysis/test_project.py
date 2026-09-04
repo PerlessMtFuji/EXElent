@@ -236,3 +236,18 @@ def test_broken_txt_does_not_also_claim_there_is_no_python(tmp_path):
     codes = {i.code for i in analyze_project(root).issues}
     assert "txt_syntax_error" in codes
     assert "no_python_found" not in codes
+
+
+def test_removed_fence_label_is_reported_to_the_user(tmp_path):
+    """Silently editing someone's file is worse than not editing it: the note
+    is what lets the user connect a later surprise back to this step."""
+    root = _make(
+        tmp_path,
+        {"kod.txt": "python\nfrom __future__ import annotations\n\nprint(1)\n"},
+    )
+    result = analyze_project(root)
+    assert result.converted["kod.py"].startswith("from __future__")
+    notes = [i for i in result.issues if i.code == "fence_label_removed"]
+    assert len(notes) == 1
+    assert notes[0].severity is Severity.INFO
+    assert notes[0].data["file"] == "kod.txt"

@@ -78,6 +78,14 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             virtual = txt.with_suffix(".py")
             converted[virtual.name] = result.code
             sources[virtual] = result.code
+            if "fence_label" in result.steps:
+                # Cicha zmiana cudzego pliku jest gorsza niz brak zmiany.
+                # Pozostale kroki konwersji (ogrodzenia, numery linii, prompty)
+                # zdejmuja rzeczy, ktore NIE SA Pythonem i nikt ich nie broni.
+                # Ten zdejmuje linie, ktora jest skladniowo poprawnym kodem —
+                # wiec jesli kiedys trafi w cos, co uzytkownik naprawde napisal,
+                # ta notatka jest jedynym sladem, po ktorym da sie to odkryc.
+                issues.append(Issue("fence_label_removed", Severity.INFO, {"file": txt.name}))
         else:
             conversion_failures.append(
                 {

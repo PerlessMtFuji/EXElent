@@ -80,6 +80,10 @@ CATALOG: dict[str, str] = {
         "Gotowy plik {name} zniknął w trakcie budowania. Najczęściej robi to program "
         "antywirusowy — dodaj wyjątek i spróbuj ponownie."
     ),
+    "fence_label_removed": (
+        "W pliku {file} pierwsza linia to sama etykieta z okna czatu — usunalem ja, "
+        "zeby program dal sie zbudowac."
+    ),
     "module_dropped": (
         "W pliku {file} jest błąd, przez który nie dał się on wczytać, więc nie trafił "
         "do gotowego programu. Popraw ten plik i zbuduj jeszcze raz."
