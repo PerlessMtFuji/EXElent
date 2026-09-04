@@ -13,6 +13,7 @@ import pytest
 from exelent.i18n import CATALOGS, set_language
 from exelent.models import AppKind, BuildPlan, BuildResult, OutputMode
 from exelent.runtime import Progress
+from exelent.settings import Settings, save_settings
 from exelent.ui import worker as worker_module
 from exelent.ui.app import SCREEN_BUILD, SCREEN_DROP, SCREEN_REVIEW, MainWindow
 from exelent.ui.screen_build import BuildScreen
@@ -269,3 +270,25 @@ def test_going_back_is_blocked_while_a_build_runs(qtbot, tmp_path, monkeypatch):
 
     window.screen_build.back_to_review.emit()
     assert window.stack.currentIndex() == SCREEN_BUILD
+
+
+def test_language_switch_repaints_the_open_screens(qtbot):
+    """`language_changed` istnial, ale nikt go nie sluchal — przelacznik
+    dzialalby dopiero po restarcie programu."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_language("pl")
+    polish = window.screen_drop.headline.text()
+
+    window.set_language("en")
+    assert window.screen_drop.headline.text() != polish
+    assert window.screen_drop.headline.text() == CATALOGS["en"]["drop_headline"]
+
+
+def test_saved_language_wins_over_the_system_at_startup(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    save_settings(Settings(language="en"))
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.screen_drop.headline.text() == CATALOGS["en"]["drop_headline"]

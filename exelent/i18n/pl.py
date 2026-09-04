@@ -157,6 +157,10 @@ CATALOG: dict[str, str] = {
     "dialog_download_ok": "Pobierz i buduj",
     "dialog_download_cancel": "Anuluj",
     "dialog_download_dont_ask": "Nie pytaj ponownie",
+    "settings_title": "Ustawienia",
+    "settings_ask_download": "Pytaj przed pobieraniem dodatków",
+    "settings_language": "Język",
+    "settings_language_system": "Jak w systemie",
     # ekran 1 — wskazanie folderu
     "drop_headline": "Przeciągnij tu folder z kodem",
     "drop_browse": "Wybierz folder",

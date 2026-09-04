@@ -56,6 +56,16 @@ class FactRow(QWidget):
                 self._tracks_changes = True
                 break
 
+    def retranslate(self, caption: str) -> None:
+        """Przepisuje napisy wiersza po zmianie języka.
+
+        Link powrotu do rekomendacji też jest tekstem — zostawiony po polsku
+        w angielskim oknie byłby dokładnie tą niespodzianką, którą przełącznik
+        języka ma usuwać.
+        """
+        self._caption.setText(caption)
+        self._restore.setText(t("review_restore"))
+
     def set_certain(self, certain: bool) -> None:
         """Znacznik pewności. `?` nie jest ozdobą: analiza, która nie wie,
         mówi to wprost, a zdanie z tym samym rozpoznaniem stoi w ostrzeżeniach

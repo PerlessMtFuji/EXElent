@@ -49,6 +49,10 @@ class BuildScreen(QWidget):
         self._result: BuildResult | None = None
         self._plan: BuildPlan | None = None
         self._log_open = False
+        # Klucz zdania, ktore stoi w naglowku. Sam napis nie wystarczy: po
+        # zmianie jezyka trzeba go zlozyc od nowa, a `t()` nie umie czytac
+        # w druga strone.
+        self._phase_key = "build_start"
 
         self.phase_label = QLabel(t("build_start"), objectName="Title")
         self.bar = QProgressBar()
@@ -136,8 +140,36 @@ class BuildScreen(QWidget):
         ):
             button.setVisible(False)
 
+    def retranslate(self) -> None:
+        """Przepisuje napisy po zmianie języka.
+
+        Ekrany biorą teksty z `t()` w konstruktorze, więc bez tej metody
+        przełącznik języka działałby dopiero po restarcie programu.
+
+        Gdy build się już skończył, cały ekran składamy od nowa z wyniku:
+        zdania w podsumowaniu pochodzą z `describe()` i inaczej zostałyby w
+        poprzednim języku.
+        """
+        self.antivirus_label.setText(t("antivirus_note"))
+        self.cancel_button.setText(t("build_cancel"))
+        self.open_folder_button.setText(t("build_open_folder"))
+        self.run_button.setText(t("build_run"))
+        self.report_button.setText(t("build_save_report"))
+        self.github_button.setText(t("build_report_github"))
+        self.back_button.setText(t("build_back_to_review"))
+        self.again_button.setText(t("build_again"))
+        self._show_log(self._log_open)
+        if self._result is not None:
+            self.on_finished(self._result)
+            return
+        self.phase_label.setText(t(self._phase_key))
+
+    def _set_phase(self, key: str) -> None:
+        self._phase_key = key
+        self.phase_label.setText(t(key))
+
     def _show_running(self) -> None:
-        self.phase_label.setText(t("build_start"))
+        self._set_phase("build_start")
         self.bar.setValue(0)
         self.bar.setVisible(True)
         self.summary_label.setText("")
@@ -159,7 +191,7 @@ class BuildScreen(QWidget):
         self._show_running()
 
     def on_progress(self, update) -> None:
-        self.phase_label.setText(t(update.phase))
+        self._set_phase(update.phase)
         self.bar.setValue(int(update.fraction * 100))
         self._show_bytes(update)
 
@@ -202,7 +234,7 @@ class BuildScreen(QWidget):
 
     def _show_success(self, result: BuildResult) -> None:
         self.bar.setValue(100)
-        self.phase_label.setText(t("done"))
+        self._set_phase("done")
         self.summary_label.setText(
             t(
                 "build_success",
@@ -222,7 +254,7 @@ class BuildScreen(QWidget):
         na przykład ostrzeżenie, że po anulowaniu coś mogło zostać uruchomione.
         """
         self.bar.setVisible(False)
-        self.phase_label.setText(t(CANCELLED))
+        self._set_phase(CANCELLED)
         self.summary_label.setText(
             "\n".join(describe(i) for i in result.issues if i.code != CANCELLED)
         )
@@ -237,7 +269,7 @@ class BuildScreen(QWidget):
         przenosiło wiedzę diagnostyczną do warstwy prezentacji.
         """
         self.bar.setVisible(False)
-        self.phase_label.setText(t("build_failed_title"))
+        self._set_phase("build_failed_title")
         self.summary_label.setText(
             "\n".join(describe(i) for i in result.issues) or t("build_failed_unknown")
         )

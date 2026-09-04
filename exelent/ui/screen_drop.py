@@ -41,10 +41,15 @@ def _source_from(mime) -> Path | None:
 
 class DropScreen(QWidget):
     folder_chosen = Signal(Path)
+    settings_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self.setAcceptDrops(True)
+
+        self.settings_button = QPushButton("⚙", objectName="Link")
+        self.settings_button.setToolTip(t("settings_title"))
+        self.settings_button.clicked.connect(self.settings_requested)
 
         self.zone = QFrame(objectName="DropZone")
         self.zone.setProperty("active", False)
@@ -66,14 +71,30 @@ class DropScreen(QWidget):
         self.recent_row = QHBoxLayout()
         self.recent_label = QLabel(t("drop_recent"), objectName="Muted")
 
+        top_row = QHBoxLayout()
+        top_row.addStretch(1)
+        top_row.addWidget(self.settings_button)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(48, 48, 48, 32)
         outer.setSpacing(20)
+        outer.addLayout(top_row)
         outer.addWidget(self.zone, stretch=1)
         outer.addWidget(self.recent_label)
         outer.addLayout(self.recent_row)
 
         self.refresh_recent()
+
+    def retranslate(self) -> None:
+        """Przepisuje napisy po zmianie języka.
+
+        Ekrany biorą teksty z `t()` w konstruktorze, więc bez tej metody
+        przełącznik języka działałby dopiero po restarcie programu.
+        """
+        self.headline.setText(t("drop_headline"))
+        self.browse.setText(t("drop_browse"))
+        self.recent_label.setText(t("drop_recent"))
+        self.settings_button.setToolTip(t("settings_title"))
 
     def refresh_recent(self) -> None:
         while self.recent_row.count():
