@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from exelent.i18n import describe, t
 from exelent.models import AppKind, OutputMode, ProjectAnalysis, Severity
 from exelent.planning import make_plan
+from exelent.ui.format import human_size
 from exelent.ui.rows import FactRow
 
 
@@ -100,6 +101,8 @@ class ReviewScreen(QWidget):
         self.deps_label = QLabel("", objectName="Muted")
         self.deps_label.setWordWrap(True)
         deps_layout.addWidget(self.deps_label)
+        self.deps_size_label = QLabel("", objectName="Muted")
+        deps_layout.addWidget(self.deps_size_label)
         self.deps_box.setVisible(False)
 
         self.warnings_label = QLabel("", objectName="Muted")
@@ -181,6 +184,7 @@ class ReviewScreen(QWidget):
         packages = [d.package for d in analysis.dependencies if not d.optional]
         self.deps_label.setText(" · ".join(packages))
         self.deps_box.setVisible(bool(packages))
+        self.deps_size_label.setText(t("download_checking") if packages else "")
 
         mode_index = max(self.mode_combo.findData(analysis.output_mode), 0)
         _mark_recommended(self.mode_combo, mode_index)
@@ -196,6 +200,23 @@ class ReviewScreen(QWidget):
 
         blocked = any(i.severity is Severity.BLOCKER for i in analysis.issues)
         self.build_button.setEnabled(not blocked)
+
+    def show_download_plan(self, plan) -> None:
+        """Wynik preflightu. Pusty plan zostawia pole puste — brak liczby jest
+        lepszy niż liczba zmyślona."""
+        if plan.would_download == 0 and not plan.specs:
+            self.deps_size_label.setText("")
+            return
+        if plan.would_download == 0:
+            self.deps_size_label.setText(t("download_nothing"))
+            return
+        self.deps_size_label.setText(
+            t(
+                "download_size",
+                count=str(plan.would_download),
+                size=human_size(plan.total_bytes),
+            )
+        )
 
     def _pick_icon(self) -> None:
         chosen, _filter = QFileDialog.getOpenFileName(

@@ -141,6 +141,9 @@ CATALOG: dict[str, str] = {
     "done": "Gotowe!",
     "progress_bytes": "{done} z {total}",
     "progress_eta": "zostało {eta}",
+    "download_checking": "sprawdzam rozmiar…",
+    "download_size": "{count} paczek — około {size} do pobrania",
+    "download_nothing": "Wszystko już pobrane — budowanie ruszy od razu",
     # ekran 1 — wskazanie folderu
     "drop_headline": "Przeciągnij tu folder z kodem",
     "drop_browse": "Wybierz folder",

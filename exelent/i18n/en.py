@@ -131,6 +131,9 @@ CATALOG: dict[str, str] = {
     "done": "Done!",
     "progress_bytes": "{done} of {total}",
     "progress_eta": "{eta} left",
+    "download_checking": "checking size…",
+    "download_size": "{count} packages — about {size} to download",
+    "download_nothing": "Everything is already downloaded — the build starts right away",
     # screen 1 - picking the folder
     "drop_headline": "Drag a folder with your code here",
     "drop_browse": "Choose folder",
