@@ -35,6 +35,12 @@ _MAX_PARALLEL = 8
 # a staje się ostrzeżeniem (razem z uwagą o dłuższym budowaniu).
 LARGE_WARNING_MB = 300
 
+# Ile waży EXE z pustego skryptu `print('x')` — sam interpreter, biblioteka
+# standardowa i loader PyInstallera. ZMIERZONE 2026-09-04: 10,5 MB.
+# Wchodzi do szacunku, bo zdanie mówi „gotowy program zajmie", a nie „paczki
+# dołożą": bez tej stałej szacunek zaniżał wynik o stałe 10 MB.
+BASE_EXE_MB = 11
+
 # Powyżej tylu megabajtów górnego wkładu paczka jest „ciężka" — to zastępuje
 # dawny płaski `HEAVY_PACKAGES`.
 HEAVY_THRESHOLD_MB = 15
@@ -55,21 +61,32 @@ class Contribution:
     measured: str
 
 
-# WSZYSTKIE wpisy sa TYMCZASOWE do czasu wykonania zadania 15.
+# Wpisy z datą są ZMIERZONE dwoma prawdziwymi buildami każdy (patrz
+# `tests/test_exe_contribution_measurement.py`):
+#   - dolny koniec: skrypt, który paczkę tylko importuje i dotyka jednej
+#     rzeczy — PyInstaller wyrzuca wtedy większą część drzewa,
+#   - górny koniec: skrypt, który paczki naprawdę używa, plus 25% zapasu.
+# Zapas nie jest wzięty z sufitu: na jedynym zmierzonym POŁĄCZENIU paczek
+# (matplotlib + pandas + scipy, 172,4 MB) suma samych pomiarów schodziła
+# ~20% poniżej wyniku, bo złożenie wciąga więcej niż każda paczka osobno.
+#
+# `tymczasowe` znaczy: NIE ZMIERZONE, liczba orientacyjna. Zostały takie
+# `torch`, `tensorflow` i `transformers` — ich pomiar to kilka gigabajtów
+# pobierania i świadomie go nie wykonano.
 EXE_CONTRIBUTION: dict[str, Contribution] = {
     "torch": Contribution(300, 900, "tymczasowe"),
     "tensorflow": Contribution(250, 700, "tymczasowe"),
     "transformers": Contribution(60, 200, "tymczasowe"),
-    "scipy": Contribution(30, 70, "tymczasowe"),
-    "opencv-python": Contribution(35, 70, "tymczasowe"),
-    "matplotlib": Contribution(15, 40, "tymczasowe"),
-    "pandas": Contribution(20, 45, "tymczasowe"),
-    "numpy": Contribution(15, 30, "tymczasowe"),
-    "PySide6": Contribution(40, 120, "tymczasowe"),
-    "PyQt5": Contribution(40, 110, "tymczasowe"),
-    "PyQt6": Contribution(40, 110, "tymczasowe"),
-    "librosa": Contribution(20, 50, "tymczasowe"),
-    "moviepy": Contribution(15, 40, "tymczasowe"),
+    "scipy": Contribution(18, 51, "2026-09-04"),
+    "opencv-python": Contribution(53, 67, "2026-09-04"),
+    "matplotlib": Contribution(27, 93, "2026-09-04"),
+    "pandas": Contribution(20, 26, "2026-09-04"),
+    "numpy": Contribution(11, 15, "2026-09-04"),
+    "PySide6": Contribution(16, 21, "2026-09-04"),
+    "PyQt5": Contribution(10, 36, "2026-09-04"),
+    "PyQt6": Contribution(7, 18, "2026-09-04"),
+    "librosa": Contribution(94, 119, "2026-09-04"),
+    "moviepy": Contribution(49, 62, "2026-09-04"),
 }
 
 
@@ -79,16 +96,20 @@ def is_heavy(package: str) -> bool:
 
 
 def estimate_exe_size(packages: Iterable[str]) -> tuple[int, int, tuple[str, ...]]:
-    """Widełki rozmiaru EXE i najcięższe paczki, od największej.
+    """Widełki rozmiaru CAŁEGO EXE i najcięższe paczki, od największej.
 
     Paczka spoza tabeli nie dokłada NIC — nie zgadujemy jej wkładu. Zgadywanie
     jest dokładnie tym, co wywołało zgłoszenie 7.
+
+    Do sumy wkładów dochodzi `BASE_EXE_MB`, bo zdanie na ekranie mówi „gotowy
+    program zajmie", a gotowy program to także interpreter i biblioteka
+    standardowa.
     """
     known = [(name, EXE_CONTRIBUTION[name]) for name in packages if name in EXE_CONTRIBUTION]
     if not known:
         return 0, 0, ()
-    low = sum(c.low_mb for _name, c in known)
-    high = sum(c.high_mb for _name, c in known)
+    low = BASE_EXE_MB + sum(c.low_mb for _name, c in known)
+    high = BASE_EXE_MB + sum(c.high_mb for _name, c in known)
     heaviest = tuple(name for name, _c in sorted(known, key=lambda p: -p[1].high_mb))
     return low, high, heaviest
 
