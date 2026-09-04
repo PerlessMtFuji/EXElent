@@ -12,8 +12,21 @@ błąd. Dlatego każdy wpis niesie `measured` — datę pomiaru albo słowo
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import json
+import urllib.request
+from collections.abc import Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+
+from exelent.constants import TARGET_PYTHON
+
+# Znacznik ABI koła, którego naprawdę użyje build: CPython w wersji docelowej,
+# 64-bitowy Windows. Koło dla innej wersji albo innego systemu opisuje plik,
+# którego nigdy nie pobierzemy.
+_TAG = f"cp{TARGET_PYTHON.replace('.', '')}"
+_PLATFORM = "win_amd64"
+_PYPI = "https://pypi.org/pypi/{name}/{version}/json"
+_MAX_PARALLEL = 8
 
 # Powyżej tylu megabajtów górnych widełek rozmiar przestaje być informacją,
 # a staje się ostrzeżeniem (razem z uwagą o dłuższym budowaniu).
@@ -75,3 +88,52 @@ def estimate_exe_size(packages: Iterable[str]) -> tuple[int, int, tuple[str, ...
     high = sum(c.high_mb for _name, c in known)
     heaviest = tuple(name for name, _c in sorted(known, key=lambda p: -p[1].high_mb))
     return low, high, heaviest
+
+
+def wheel_size(payload: dict) -> int:
+    """Rozmiar pliku, który uv naprawdę pobierze dla tej wersji.
+
+    Kolejność prób: koło dla naszego ABI i systemu → koło uniwersalne
+    (`py3-none-any`) → archiwum źródłowe. Nierozpoznany kształt odpowiedzi
+    daje zero, a nie wyjątek: brak liczby jest do przeżycia, wyjątek w tle
+    ekranu 2 nie.
+    """
+    urls = payload.get("urls") or []
+    wheels = [u for u in urls if u.get("packagetype") == "bdist_wheel"]
+    for candidate in wheels:
+        name = candidate.get("filename", "")
+        if _TAG in name and _PLATFORM in name:
+            return int(candidate.get("size") or 0)
+    for candidate in wheels:
+        if "none-any" in candidate.get("filename", ""):
+            return int(candidate.get("size") or 0)
+    for candidate in urls:
+        if candidate.get("packagetype") == "sdist":
+            return int(candidate.get("size") or 0)
+    return 0
+
+
+def _fetch_release(spec: str, timeout: float) -> dict:
+    name, _, version = spec.partition("==")
+    with urllib.request.urlopen(_PYPI.format(name=name, version=version), timeout=timeout) as r:
+        return json.load(r)
+
+
+def download_size(specs: Sequence[str], timeout: float = 5.0) -> int:
+    """Łączny rozmiar pobierania dla przypiętych `nazwa==wersja`.
+
+    Zapytania idą równolegle, bo osiem kolejnych rundtripów do PyPI zajęłoby
+    tyle, że ekran 2 zdążyłby się znudzić. KAŻDA porażka jest cicha i daje
+    zero — wtedy warstwa wyżej sięga po szacunek z tabeli.
+    """
+
+    def one(spec: str) -> int:
+        try:
+            return wheel_size(_fetch_release(spec, timeout))
+        except (OSError, ValueError, KeyError):
+            return 0
+
+    if not specs:
+        return 0
+    with ThreadPoolExecutor(max_workers=min(_MAX_PARALLEL, len(specs))) as pool:
+        return sum(pool.map(one, specs))
