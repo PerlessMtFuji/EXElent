@@ -8,15 +8,20 @@ from exelent.runtime import Progress, env, noop_progress
 from exelent.runtime.env import BuildEnvError, create_build_env
 
 
-def _fake_stream_uv(returncode=0, calls=None, transcript=()):
-    """Atrapa `_stream_uv` — oddaje gotowy zapis, bez procesu i bez sieci."""
+def _fake_stream_uv(returncode=0, calls=None, transcript=(), fails=None, text=None):
+    """Atrapa `_stream_uv` — oddaje gotowy zapis, bez procesu i bez sieci.
+
+    `fails` wskazuje, ktore wywolania maja zwrocic niezero; bez niego kod jest
+    ten sam dla wszystkich.
+    """
 
     def fake(uv, args, on_line, *, cwd=None):
         if calls is not None:
             calls.append(list(args))
         for line in transcript:
             on_line(line)
-        return returncode, "\n".join(transcript)
+        code = 1 if fails is not None and fails(list(args)) else returncode
+        return code, "\n".join(transcript) if text is None else text
 
     return fake
 
@@ -77,7 +82,8 @@ def test_pyinstaller_is_always_installed(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "run_uv", fake_run)
     monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv(calls=installed))
     env.create_build_env(tmp_path / "src", [], noop_progress)
-    assert any(item.startswith("pyinstaller==") for item in installed[0])
+    pip_call = next(args for args in installed if args[:2] == ["pip", "install"])
+    assert any(item.startswith("pyinstaller==") for item in pip_call)
 
 
 def test_optional_packages_do_not_abort_on_failure(monkeypatch, tmp_path):
@@ -124,6 +130,7 @@ def test_failed_venv_raises_instead_of_returning_a_broken_env(monkeypatch, tmp_p
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
     monkeypatch.setattr(env, "run_uv", _uv_failing_on(lambda a: a[0] == "venv"))
+    monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv())
 
     with pytest.raises(env.BuildEnvError) as excinfo:
         env.create_build_env(tmp_path / "src", [], noop_progress)
@@ -137,7 +144,8 @@ def test_the_interpreter_download_is_blamed_when_it_is_the_root_cause(monkeypatc
     powstac. Wskazanie 'create_env' wyslaloby uzytkownika w zla strone."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
-    monkeypatch.setattr(env, "run_uv", _uv_failing_on(lambda a: a[0] in {"venv", "python"}))
+    monkeypatch.setattr(env, "run_uv", _uv_failing_on(lambda a: a[0] == "venv"))
+    monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv(fails=lambda a: a[0] == "python"))
 
     with pytest.raises(env.BuildEnvError) as excinfo:
         env.create_build_env(tmp_path / "src", [], noop_progress)
@@ -150,8 +158,10 @@ def test_failed_interpreter_download_alone_does_not_abort_the_build(monkeypatch,
     w systemie. Skoro venv powstal, nie ma czego przerywac."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
-    monkeypatch.setattr(env, "run_uv", _uv_failing_on(lambda a: a[:2] == ["python", "install"]))
-    monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv())
+    monkeypatch.setattr(env, "run_uv", _uv_failing_on(lambda a: False))
+    monkeypatch.setattr(
+        env, "_stream_uv", _fake_stream_uv(fails=lambda a: a[:2] == ["python", "install"])
+    )
 
     result = env.create_build_env(tmp_path / "src", [], noop_progress)
     assert result.python.name == "python.exe"
@@ -168,6 +178,7 @@ def test_uv_stderr_is_diagnosed_not_shown_raw(monkeypatch, tmp_path):
         "run_uv",
         _uv_failing_on(lambda a: a[0] == "venv", stderr="error: certificate verify failed"),
     )
+    monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv())
 
     with pytest.raises(env.BuildEnvError) as excinfo:
         env.create_build_env(tmp_path / "src", [], noop_progress)
@@ -252,6 +263,22 @@ def test_full_stderr_still_reaches_explain_log_on_failure(monkeypatch, tmp_path)
         create_build_env(tmp_path, [], noop_progress)
 
     assert any(i.code == "ssl_proxy" for i in caught.value.issues)
+
+
+def test_python_install_reports_bytes_through_the_same_parser(monkeypatch, tmp_path):
+    """ZMIERZONE: `uv python install` drukuje ten sam ksztalt linii, tylko
+    nazwa zawiera nawias — `cpython-... (download) (24.3MiB)`."""
+    transcript = [
+        "Downloading cpython-3.12.11-windows-x86_64-none (download) (24.3MiB)",
+        " Downloading cpython-3.12.11-windows-x86_64-none (download)",
+    ]
+    seen: list[Progress] = []
+    _run_fake_uv(monkeypatch, tmp_path, transcript)
+
+    create_build_env(tmp_path, [], seen.append)
+
+    python_phase = [u for u in seen if u.phase == "install_python"]
+    assert python_phase and python_phase[-1].total_bytes > 0
 
 
 def test_stream_uv_hands_over_lines_while_running_and_keeps_the_whole_text(tmp_path):
