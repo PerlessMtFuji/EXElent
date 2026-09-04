@@ -46,9 +46,10 @@ CATALOG: dict[str, str] = {
     "dynamic_import_unresolved": (
         "Your program loads libraries while it runs. One of them may not make it into the EXE."
     ),
-    "heavy_packages": (
-        "This program uses large libraries ({packages}). The EXE may be several hundred "
-        "megabytes, and building will take longer."
+    "size_estimate": "The finished program will take about {low}–{high} MB. Largest: {packages}.",
+    "size_estimate_large": (
+        "The finished program will take about {low}–{high} MB and will take longer than usual "
+        "to build. Largest: {packages}."
     ),
     # environment
     "no_network": (

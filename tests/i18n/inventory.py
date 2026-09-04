@@ -28,6 +28,8 @@ CORE = Path(__file__).resolve().parents[2] / "exelent"
 # `test_codes_with_non_literal_data_are_declared` pilnuje tej listy.
 DECLARED_DATA: dict[str, frozenset[str]] = {
     "txt_syntax_error": frozenset({"file", "line", "detail"}),
+    "size_estimate": frozenset({"low", "high", "packages"}),
+    "size_estimate_large": frozenset({"low", "high", "packages"}),
 }
 
 # Miejsca, w ktorych sam KOD Issue nie jest literalem. Jedyne takie miejsce to

@@ -101,12 +101,27 @@ def test_hidden_imports_populated_from_dynamic_import(tmp_path):
     assert "requests" in result.hidden_imports
 
 
-def test_heavy_package_produces_warning(tmp_path):
+def test_the_biggest_libraries_earn_a_warning_with_real_numbers(tmp_path):
+    """`torch` przekracza prog LARGE_WARNING_MB, wiec zostaje ostrzezeniem —
+    ale niesie policzone widelki, nie stale 'kilkaset megabajtow'."""
     root = _make(tmp_path, {"main.py": "import torch\nprint(torch)"})
     result = analyze_project(root)
-    heavy = [i for i in result.issues if i.code == "heavy_packages"]
-    assert len(heavy) == 1
-    assert "torch" in heavy[0].data["packages"]
+    estimate = [i for i in result.issues if i.code == "size_estimate_large"]
+    assert len(estimate) == 1
+    assert estimate[0].severity is Severity.WARNING
+    assert "torch" in estimate[0].data["packages"]
+    assert int(estimate[0].data["low"]) < int(estimate[0].data["high"])
+
+
+def test_moderate_libraries_are_an_information_not_a_warning(tmp_path):
+    """Zgloszenie 7: skrypt z matplotlib dostawal to samo ostrzezenie co
+    skrypt z torch, chociaz jego EXE mialo 26 MB."""
+    root = _make(tmp_path, {"main.py": "import matplotlib\nprint(matplotlib)"})
+    result = analyze_project(root)
+    estimate = [i for i in result.issues if i.code == "size_estimate"]
+    assert len(estimate) == 1
+    assert estimate[0].severity is Severity.INFO
+    assert int(estimate[0].data["high"]) < 300
 
 
 def test_broken_txt_alone_is_blocker(tmp_path):
