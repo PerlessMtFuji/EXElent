@@ -248,6 +248,7 @@ def make_plan(
     dest_dir: Path | None = None,
     output_mode: OutputMode | None = None,
     app_kind: AppKind | None = None,
+    total_download_bytes: int = 0,
 ) -> BuildPlan:
     chosen_entry = entry or analysis.entry
     if chosen_entry is None:
@@ -270,4 +271,5 @@ def make_plan(
         hidden_imports=analysis.hidden_imports,
         single_file=analysis.single_file,
         extra_sources=analysis.extra_sources,
+        total_download_bytes=total_download_bytes,
     )

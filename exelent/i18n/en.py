@@ -134,6 +134,19 @@ CATALOG: dict[str, str] = {
     "download_checking": "checking size…",
     "download_size": "{count} packages — about {size} to download",
     "download_nothing": "Everything is already downloaded — the build starts right away",
+    "dialog_download_title": "Required extras",
+    "dialog_download_body": (
+        "Building this program needs {count} packages — about {size}. "
+        "This happens once; later builds will be faster."
+    ),
+    "dialog_download_body_estimate": (
+        "Building this program needs extra packages. The exact size could not be "
+        "checked — the finished program will take about {low}–{high} MB. "
+        "This happens once; later builds will be faster."
+    ),
+    "dialog_download_ok": "Download and build",
+    "dialog_download_cancel": "Cancel",
+    "dialog_download_dont_ask": "Do not ask again",
     # screen 1 - picking the folder
     "drop_headline": "Drag a folder with your code here",
     "drop_browse": "Choose folder",

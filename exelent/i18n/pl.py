@@ -144,6 +144,19 @@ CATALOG: dict[str, str] = {
     "download_checking": "sprawdzam rozmiar…",
     "download_size": "{count} paczek — około {size} do pobrania",
     "download_nothing": "Wszystko już pobrane — budowanie ruszy od razu",
+    "dialog_download_title": "Potrzebne dodatki",
+    "dialog_download_body": (
+        "Do zbudowania programu trzeba pobrać {count} paczek — około {size}. "
+        "Pobieranie odbywa się raz; następne budowania będą szybsze."
+    ),
+    "dialog_download_body_estimate": (
+        "Do zbudowania programu trzeba pobrać dodatki. Nie udało się sprawdzić "
+        "dokładnego rozmiaru — gotowy program zajmie około {low}–{high} MB. "
+        "Pobieranie odbywa się raz; następne budowania będą szybsze."
+    ),
+    "dialog_download_ok": "Pobierz i buduj",
+    "dialog_download_cancel": "Anuluj",
+    "dialog_download_dont_ask": "Nie pytaj ponownie",
     # ekran 1 — wskazanie folderu
     "drop_headline": "Przeciągnij tu folder z kodem",
     "drop_browse": "Wybierz folder",

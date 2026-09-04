@@ -137,6 +137,7 @@ class BuildPlan:
     python_version: str = "3.12"
     single_file: Path | None = None
     extra_sources: tuple[Path, ...] = ()
+    total_download_bytes: int = 0
 
 
 @dataclass(frozen=True)
