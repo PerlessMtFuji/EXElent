@@ -40,18 +40,50 @@ def test_no_packages_means_no_estimate():
 
 
 def test_heaviest_packages_come_first():
-    _low, _high, heaviest = estimate_exe_size(["matplotlib", "scipy"])
-    assert heaviest == ("scipy", "matplotlib")
+    """Kolejnosc bierze sie z POMIARU, nie z intuicji: matplotlib pociaga za
+    soba wlasne backendy i wazy ponad trzy razy tyle co pandas (zmierzone
+    2026-09-04: 74,4 MB wobec 20,8 MB)."""
+    _low, _high, heaviest = estimate_exe_size(["pandas", "matplotlib"])
+    assert heaviest == ("matplotlib", "pandas")
 
 
-def test_every_entry_declares_where_its_number_came_from():
+# Wpisy, ktorych NIE zmierzono. Ich pomiar to kilka gigabajtow pobierania i
+# swiadomie go odlozono. Lista jest JAWNA po to, zeby liczba z sufitu nie
+# mogla wejsc po cichu: nowy wpis bez daty i bez miejsca tutaj wywala test.
+NIEZMIERZONE = frozenset({"torch", "tensorflow", "transformers"})
+
+
+def test_every_entry_is_either_measured_or_openly_listed_as_not():
     """Wpis bez zrodla to liczba wzieta z sufitu — dokladnie to, na co
     skarzy sie zgloszenie 7."""
     for package, contribution in EXE_CONTRIBUTION.items():
         assert contribution.measured, f"{package} nie mowi, skad ma swoje liczby"
-        assert contribution.measured == "tymczasowe" or re.fullmatch(
-            r"\d{4}-\d{2}-\d{2}", contribution.measured
-        ), f"{package}: `measured` ma byc data albo slowem 'tymczasowe'"
+        if package in NIEZMIERZONE:
+            assert contribution.measured == "tymczasowe", (
+                f"{package} ma juz date pomiaru — zdejmij go z NIEZMIERZONE"
+            )
+            continue
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", contribution.measured), (
+            f"{package}: liczba bez daty pomiaru. Zmierz ja albo dopisz do NIEZMIERZONE."
+        )
+
+
+def test_the_estimate_covers_the_whole_exe_not_just_the_packages():
+    """Zdanie na ekranie mowi "gotowy program zajmie", a gotowy program to
+    takze interpreter. ZMIERZONE 2026-09-04: pusty skrypt daje 10,5 MB."""
+    low, _high, _heaviest = estimate_exe_size(["numpy"])
+    assert low > EXE_CONTRIBUTION["numpy"].low_mb
+
+
+def test_the_script_from_the_report_falls_inside_its_own_estimate():
+    """KRYTERIUM SUKCESU specyfikacji: rozmiar gotowego programu ma sie miescic
+    w widelkach pokazanych przed buildem.
+
+    ZMIERZONE 2026-09-04 na prawdziwym buildzie skryptu ze zgloszenia 7
+    (pandas + scipy.stats + pyplot.savefig): 172,4 MB.
+    """
+    low, high, _heaviest = estimate_exe_size(["matplotlib", "pandas", "scipy"])
+    assert low <= 172.4 <= high, f"widelki {low}-{high} MB nie obejmuja zmierzonych 172,4 MB"
 
 
 def test_large_threshold_matches_the_spec():
