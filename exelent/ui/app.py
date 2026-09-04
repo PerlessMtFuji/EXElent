@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 from exelent.analysis.project import analyze_project
 from exelent.constants import APP_NAME
 from exelent.i18n import set_language, system_language
+from exelent.ui.preflight import PreflightWorker
 from exelent.ui.screen_build import BuildScreen
 from exelent.ui.screen_drop import DropScreen
 from exelent.ui.screen_review import ReviewScreen
@@ -60,6 +61,11 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self.screen_build.on_finished)
         self.screen_build.cancel_button.clicked.connect(self.worker.cancel)
 
+        # Rozmiar pobierania liczy sie w tle ekranu 2. Nigdy nie blokuje
+        # budowania: pusty wynik znaczy tylko tyle, ze liczba sie nie policzyla.
+        self.preflight = PreflightWorker()
+        self.preflight.finished.connect(self.screen_review.show_download_plan)
+
         self.stack = QStackedWidget()
         self.stack.addWidget(self.screen_drop)
         self.stack.addWidget(self.screen_review)
@@ -87,7 +93,9 @@ class MainWindow(QMainWindow):
         Katalog, którego nie da się przeczytać, nie jest awarią: analiza wraca
         wtedy z blokadą, którą ekran 2 pokazuje zdaniem.
         """
-        self.screen_review.load(analyze_project(folder))
+        analysis = analyze_project(folder)
+        self.screen_review.load(analysis)
+        self.preflight.start([d.package for d in analysis.dependencies if not d.optional])
         self.go_to(SCREEN_REVIEW)
 
     def _on_build_requested(self, plan) -> None:
@@ -105,6 +113,7 @@ class MainWindow(QMainWindow):
         """
         if self.worker.is_running():
             return
+        self.preflight.stop()
         self.screen_drop.refresh_recent()
         self.go_to(SCREEN_DROP)
 
@@ -140,6 +149,7 @@ class MainWindow(QMainWindow):
         otwarte — dokładnie to, przed czym broni się `_kill_tree`. Nazwa metody
         jest narzucona przez Qt (camelCase), to nadpisanie `QWidget`.
         """
+        self.preflight.stop()
         self.worker.shutdown()
         super().closeEvent(event)
 
