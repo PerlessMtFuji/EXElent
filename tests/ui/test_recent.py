@@ -7,6 +7,7 @@ na ekranie powitalnym.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -134,3 +135,47 @@ def test_the_file_holds_plain_paths(tmp_path):
     recent.remember(project)
     raw = json.loads((state_dir() / "recent.json").read_text(encoding="utf-8"))
     assert raw == [str(project)]
+
+
+# --- etykiety na kafelkach ---
+
+
+def test_distinct_names_stay_short():
+    labels = recent.display_labels([Path(r"C:\a\projekt"), Path(r"C:\b\inny")])
+    assert labels == ["projekt", "inny"]
+
+
+def test_colliding_names_grow_until_they_differ():
+    """`Downloads\test\test.txt` i `Downloads\test.txt` obie nazywaja sie
+    "test.txt", wiec na ekranie byly nie do odroznienia."""
+    labels = recent.display_labels(
+        [
+            Path(r"C:\Users\x\Downloads\test\test.txt"),
+            Path(r"C:\Users\x\Downloads\test.txt"),
+        ]
+    )
+    assert labels[0] != labels[1]
+    assert labels == [str(Path("test/test.txt")), str(Path("Downloads/test.txt"))]
+
+
+def test_only_the_colliding_entries_grow():
+    labels = recent.display_labels(
+        [
+            Path(r"C:\p\test\kod.py"),
+            Path(r"C:\p\inny\kod.py"),
+            Path(r"C:\p\solo.py"),
+        ]
+    )
+    assert labels[2] == "solo.py"
+    assert labels[0] != labels[1]
+
+
+def test_labels_survive_a_path_that_runs_out_of_parents():
+    """Nie zapetlamy sie, gdy sciezka nie ma juz czego dolozyc."""
+    labels = recent.display_labels([Path("kod.py"), Path(r"C:\a\kod.py")])
+    assert len(labels) == 2
+    assert labels[0] != labels[1]
+
+
+def test_empty_list_is_fine():
+    assert recent.display_labels([]) == []

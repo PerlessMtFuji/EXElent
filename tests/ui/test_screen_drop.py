@@ -5,13 +5,15 @@ tylko trzech rzeczy: co uznajemy za wskazanie folderu, czego NIE uznajemy, i
 czy wskazanie da sie powtorzyc jednym kliknieciem nastepnym razem.
 """
 
+from pathlib import Path
+
 import pytest
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PySide6.QtGui import QColor, QDragEnterEvent, QDragLeaveEvent, QDropEvent
-from PySide6.QtWidgets import QFileDialog, QPushButton
+from PySide6.QtWidgets import QDialog, QFileDialog, QPushButton
 
 from exelent.i18n import CATALOGS, current_language
-from exelent.ui import recent, theme
+from exelent.ui import recent, screen_drop, theme
 from exelent.ui.screen_drop import DropScreen
 
 
@@ -259,15 +261,102 @@ def test_refreshing_twice_does_not_double_the_row(screen, tmp_path):
 def test_browsing_chooses_the_folder_from_the_dialog(screen, qtbot, monkeypatch, tmp_path):
     project = tmp_path / "z-okienka"
     project.mkdir()
-    monkeypatch.setattr(
-        QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(project))
-    )
+    monkeypatch.setattr(screen_drop, "choose_source", lambda *a, **k: project)
     with qtbot.waitSignal(screen.folder_chosen, timeout=1000) as blocker:
         screen.browse.click()
     assert blocker.args == [project]
 
 
 def test_a_cancelled_dialog_chooses_nothing(screen, qtbot, monkeypatch):
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: ""))
+    monkeypatch.setattr(screen_drop, "choose_source", lambda *a, **k: None)
     with qtbot.assertNotEmitted(screen.folder_chosen):
         screen.browse.click()
+
+
+def test_colliding_recent_entries_are_told_apart(screen, tmp_path):
+    """Dwa rozne pliki o tej samej nazwie dawaly dwa identyczne kafelki."""
+    nested = tmp_path / "test"
+    nested.mkdir()
+    (nested / "test.txt").write_text("print(1)", encoding="utf-8")
+    (tmp_path / "test.txt").write_text("print(2)", encoding="utf-8")
+    recent.remember(nested / "test.txt")
+    recent.remember(tmp_path / "test.txt")
+    screen.refresh_recent()
+
+    labels = [b.text() for b in _recent_buttons(screen)]
+    assert len(labels) == 2
+    assert labels[0] != labels[1]
+
+
+def test_a_recent_entry_shows_its_full_path_on_hover(screen, tmp_path):
+    project = tmp_path / "wczesniejszy"
+    project.mkdir()
+    recent.remember(project)
+    screen.refresh_recent()
+    assert _recent_buttons(screen)[0].toolTip() == str(project)
+
+
+def test_a_grown_label_still_chooses_the_right_path(screen, qtbot, tmp_path):
+    """Etykieta rosnie, ale kafelek ma nadal wskazywac swoja wlasna sciezke —
+    nie da sie jej juz odtworzyc z samego napisu."""
+    nested = tmp_path / "test"
+    nested.mkdir()
+    (nested / "test.txt").write_text("print(1)", encoding="utf-8")
+    (tmp_path / "test.txt").write_text("print(2)", encoding="utf-8")
+    recent.remember(nested / "test.txt")
+    recent.remember(tmp_path / "test.txt")
+    screen.refresh_recent()
+
+    first = _recent_buttons(screen)[0]
+    with qtbot.waitSignal(screen.folder_chosen, timeout=1000) as blocker:
+        first.click()
+    assert blocker.args == [Path(first.toolTip())]
+
+
+# --- przycisk "wybierz" ---
+
+
+def test_browsing_can_choose_a_single_file(screen, qtbot, monkeypatch, tmp_path):
+    """Do tej pory okno wyboru bylo wylacznie na katalogi, wiec uzytkownik
+    proszacy o pojedynczy plik dostawal caly folder, w ktorym stal."""
+    source = tmp_path / "kod.py"
+    source.write_text("print(1)", encoding="utf-8")
+    monkeypatch.setattr(screen_drop, "choose_source", lambda *a, **k: source)
+    with qtbot.waitSignal(screen.folder_chosen, timeout=1000) as blocker:
+        screen.browse.click()
+    assert blocker.args == [source]
+
+
+def test_the_dialog_accepts_a_single_file(qtbot, tmp_path):
+    """Sedno naprawy: Qt nie ma trybu "plik albo katalog", wiec `accept()`
+    musi przepuscic plik sam. Test seamu wyzej tego nie sprawdza — mierzy
+    tylko, ze ekran wola `choose_source`."""
+    source = tmp_path / "kod.py"
+    source.write_text("print(1)", encoding="utf-8")
+    dialog = screen_drop.SourceDialog(None, "wybierz")
+    qtbot.addWidget(dialog)
+    dialog.selectFile(str(source))
+    dialog.accept()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert Path(dialog.selectedFiles()[0]) == source
+
+
+def test_the_dialog_still_accepts_a_folder(qtbot, tmp_path):
+    project = tmp_path / "projekt"
+    project.mkdir()
+    dialog = screen_drop.SourceDialog(None, "wybierz")
+    qtbot.addWidget(dialog)
+    dialog.selectFile(str(project))
+    dialog.accept()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert Path(dialog.selectedFiles()[0]) == project
+
+
+def test_the_dialog_shows_files_so_there_is_something_to_click(qtbot):
+    """Tryb katalogu domyslnie chowa pliki (`ShowDirsOnly`), a natywne okno
+    Windows chowa je zawsze — wtedy nie da sie wskazac pliku niezaleznie od
+    tego, co robi `accept()`."""
+    dialog = screen_drop.SourceDialog(None, "wybierz")
+    qtbot.addWidget(dialog)
+    assert dialog.testOption(QFileDialog.Option.ShowDirsOnly) is False
+    assert dialog.testOption(QFileDialog.Option.DontUseNativeDialog) is True
