@@ -1,7 +1,29 @@
+import io
+
 import pytest
 
 from exelent.models import Severity
-from exelent.runtime import bootstrap, noop_progress
+from exelent.runtime import Progress, bootstrap, noop_progress
+
+
+def _fake_urlopen(monkeypatch, payload: bytes):
+    """Atrapa `urlopen` oddajaca gotowe bajty. ZADNEJ sieci."""
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.headers = {"Content-Length": str(len(payload))}
+            self._stream = io.BytesIO(payload)
+
+        def read(self, size: int) -> bytes:
+            return self._stream.read(size)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(bootstrap.urllib.request, "urlopen", lambda url, timeout=60: FakeResponse())
 
 
 def test_low_disk_space_is_a_blocker(monkeypatch, tmp_path):
@@ -126,3 +148,17 @@ def test_ensure_uv_retries_download_after_prior_interruption(monkeypatch, tmp_pa
     assert result == target
     assert target.exists()
     assert calls["n"] == 2
+
+
+def test_uv_download_reports_real_bytes(monkeypatch, tmp_path):
+    """`_download` zna Content-Length i czyta porcjami — bajty sa dokladne,
+    nie zgadywane."""
+    payload = b"x" * (300 * 1024)
+    seen: list[Progress] = []
+    _fake_urlopen(monkeypatch, payload)
+
+    bootstrap._download(bootstrap.UV_URL, seen.append)
+
+    assert seen[-1].total_bytes == len(payload)
+    assert seen[-1].done_bytes == len(payload)
+    assert seen[-1].phase == "download_uv"

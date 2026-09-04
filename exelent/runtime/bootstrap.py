@@ -9,6 +9,7 @@ import os
 import shutil
 import socket
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -69,14 +70,33 @@ def check_preconditions(*, need_network: bool) -> tuple[Issue, ...]:
 
 
 def _download(url: str, progress: ProgressFn) -> bytes:
+    """Pobiera `url` w całości, meldując po każdej porcji.
+
+    Bajty są tu DOKŁADNE, nie zgadywane: `Content-Length` podaje sumę, a
+    czytanie porcjami daje licznik. To jedyne pobranie w programie, które
+    wie o sobie wszystko — instalacja paczek musi tę wiedzę składać z linii uv.
+    """
     buffer = io.BytesIO()
+    started = time.monotonic()
     with urllib.request.urlopen(url, timeout=60) as response:
         total = int(response.headers.get("Content-Length") or 0)
         read = 0
         while chunk := response.read(64 * 1024):
             buffer.write(chunk)
             read += len(chunk)
-            progress(Progress(phase="download_uv", fraction=read / total if total else 0.0))
+            elapsed = time.monotonic() - started
+            speed = read / elapsed if elapsed > 0 else 0.0
+            remaining = max(total - read, 0)
+            progress(
+                Progress(
+                    phase="download_uv",
+                    fraction=read / total if total else 0.0,
+                    done_bytes=read,
+                    total_bytes=total,
+                    speed_bps=speed,
+                    eta_s=remaining / speed if speed > 0 and total else None,
+                )
+            )
     return buffer.getvalue()
 
 

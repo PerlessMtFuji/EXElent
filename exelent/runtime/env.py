@@ -191,13 +191,40 @@ def create_build_env(
     venv = work / "venv"
     venv.parent.mkdir(parents=True, exist_ok=True)
 
+    python_tally = _DownloadTally(0)
+
+    def on_python_line(line: str) -> None:
+        event = parse_line(line)
+        if event is None:
+            return
+        if event.kind == DOWNLOAD_START:
+            # Interpreter jest jednym pobraniem i uv podaje jego rozmiar
+            # wprost — suma bierze się więc z tej linii, nie z PyPI.
+            python_tally.reset(event.size_bytes)
+            python_tally.start(event.name, event.size_bytes)
+        elif event.kind == DOWNLOAD_DONE:
+            python_tally.finish(event.name)
+        done, total, speed, eta = python_tally.snapshot()
+        progress(
+            Progress(
+                phase="install_python",
+                fraction=0.3 * (done / total) if total else 0.0,
+                done_bytes=done,
+                total_bytes=total,
+                speed_bps=speed,
+                eta_s=eta,
+            )
+        )
+
     progress(Progress(phase="install_python", fraction=0.0))
-    installed = run_uv(uv, ["python", "install", python_version])
+    installed_code, installed_text = _stream_uv(
+        uv, ["python", "install", python_version], on_python_line
+    )
 
     progress(Progress(phase="create_env", fraction=0.3))
     created = run_uv(uv, ["venv", str(venv), "--python", python_version])
     if created.returncode != 0:
-        raise _env_failure(installed, created)
+        raise _env_failure(installed_code, installed_text, created)
 
     python = venv / "Scripts" / "python.exe"
 
@@ -255,7 +282,8 @@ def create_build_env(
 
 
 def _env_failure(
-    installed: subprocess.CompletedProcess[str],
+    installed_code: int,
+    installed_text: str,
     created: subprocess.CompletedProcess[str],
 ) -> BuildEnvError:
     """Zamienia porazke uv w Issue — z winnym krokiem i rozpoznana przyczyna.
@@ -273,8 +301,8 @@ def _env_failure(
     zapelniony dysk) sa tam nazwane wprost. Sam tekst uv nigdy nie trafia do
     uzytkownika: jest po angielsku i w zargonie narzedzia.
     """
-    step = "install_python" if installed.returncode != 0 else "create_env"
-    stderr = (created.stderr or "") + "\n" + (installed.stderr or "")
+    step = "install_python" if installed_code != 0 else "create_env"
+    stderr = (created.stderr or "") + "\n" + (installed_text or "")
     cause = explain_log(stderr)
     return BuildEnvError(
         Issue("env_setup_failed", Severity.BLOCKER, {"step": step}),
