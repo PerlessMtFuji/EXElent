@@ -52,6 +52,10 @@ class ReviewScreen(QWidget):
         super().__init__()
         self._analysis: ProjectAnalysis | None = None
         self._icon: Path | None = None
+        # Ostatni wynik preflightu. Trzymany, bo `retranslate` przechodzi przez
+        # `load`, a ono zaczyna od „sprawdzam rozmiar…" — bez tego zmiana
+        # języka kasowałaby policzoną liczbę, której nikt już nie policzy.
+        self._download_plan = None
 
         self.headline = QLabel(t("review_headline"), objectName="Title")
 
@@ -97,7 +101,8 @@ class ReviewScreen(QWidget):
         self.deps_box = QFrame(objectName="Card")
         deps_layout = QVBoxLayout(self.deps_box)
         deps_layout.setContentsMargins(24, 18, 24, 18)
-        deps_layout.addWidget(QLabel(t("review_deps_title")))
+        self.deps_title_label = QLabel(t("review_deps_title"))
+        deps_layout.addWidget(self.deps_title_label)
         self.deps_label = QLabel("", objectName="Muted")
         self.deps_label.setWordWrap(True)
         deps_layout.addWidget(self.deps_label)
@@ -201,9 +206,45 @@ class ReviewScreen(QWidget):
         blocked = any(i.severity is Severity.BLOCKER for i in analysis.issues)
         self.build_button.setEnabled(not blocked)
 
+    def retranslate(self) -> None:
+        """Przepisuje napisy po zmianie języka.
+
+        Ekrany biorą teksty z `t()` w konstruktorze, więc bez tej metody
+        przełącznik języka działałby dopiero po restarcie programu.
+
+        Po podpisach idzie ponowne `load`: pozycje list, dopiski „(zalecane)"
+        i zdania z `describe()` też są tekstem, a jedynym miejscem, które umie
+        je złożyć, jest `load`.
+        """
+        self.headline.setText(t("review_headline"))
+        self.deps_title_label.setText(t("review_deps_title"))
+        self.back_button.setText(t("review_back"))
+        self.build_button.setText(t("review_build"))
+        for row, key in (
+            (self.row_entry, "review_entry"),
+            (self.row_kind, "review_kind"),
+            (self.row_name, "review_name"),
+            (self.row_icon, "review_icon"),
+            (self.row_mode, "review_mode"),
+        ):
+            row.retranslate(t(key))
+
+        if self._analysis is None:
+            self.kind_combo.setItemText(0, t("kind_windowed"))
+            self.kind_combo.setItemText(1, t("kind_console"))
+            self.mode_combo.setItemText(0, t("mode_onefile"))
+            self.mode_combo.setItemText(1, t("mode_onedir"))
+            self.icon_button.setText(t("review_pick_icon"))
+            return
+
+        self.load(self._analysis)
+        if self._download_plan is not None:
+            self.show_download_plan(self._download_plan)
+
     def show_download_plan(self, plan) -> None:
         """Wynik preflightu. Pusty plan zostawia pole puste — brak liczby jest
         lepszy niż liczba zmyślona."""
+        self._download_plan = plan
         if plan.would_download == 0 and not plan.specs:
             self.deps_size_label.setText("")
             return

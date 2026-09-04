@@ -20,6 +20,7 @@ from exelent.deps.sizes import estimate_exe_size
 from exelent.i18n import set_language, system_language
 from exelent.settings import load_settings, save_settings
 from exelent.ui.dialog_download import DownloadDialog, should_ask, should_ask_offline
+from exelent.ui.dialog_settings import SettingsDialog
 from exelent.ui.preflight import PreflightWorker
 from exelent.ui.screen_build import BuildScreen
 from exelent.ui.screen_drop import DropScreen
@@ -47,13 +48,17 @@ class MainWindow(QMainWindow):
         # konstruktorze, więc ustawiony po nich zostawiał angielskiemu
         # użytkownikowi polskie okno: sprawdzone — nagłówek ekranu 1 zostawał
         # polski przy `current_language() == "en"`.
-        set_language(system_language())
+        #
+        # Wybór zapisany bije język systemu; `None` znaczy „idź za systemem".
+        settings = load_settings()
+        set_language(settings.language or system_language())
         self.setWindowTitle(APP_NAME)
         self.resize(900, 620)
         self.setMinimumSize(760, 540)
 
         self.screen_drop = DropScreen()
         self.screen_drop.folder_chosen.connect(self._on_folder_chosen)
+        self.screen_drop.settings_requested.connect(self._on_settings)
         self.screen_review = ReviewScreen()
         self.screen_review.build_requested.connect(self._on_build_requested)
         self.screen_review.back_requested.connect(self._on_back_to_drop)
@@ -82,7 +87,24 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.screen_build)
         self.setCentralWidget(self.stack)
 
+        # `language_changed` istniał w kodzie od początku i NIKT go nie
+        # słuchał — jedyną drogą do angielskiej wersji była zmiana języka
+        # systemu. Ekrany dostają teraz swoje napisy z powrotem.
+        self.language_changed.connect(self._retranslate)
+
         self.setStyleSheet(build_stylesheet(is_system_dark()))
+
+    def _on_settings(self) -> None:
+        dialog = SettingsDialog(load_settings(), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.chosen()
+        save_settings(chosen)
+        self.set_language(chosen.language or system_language())
+
+    def _retranslate(self, _lang: str) -> None:
+        for screen in (self.screen_drop, self.screen_review, self.screen_build):
+            screen.retranslate()
 
     def go_to(self, index: int) -> None:
         """Zmienia ekran.

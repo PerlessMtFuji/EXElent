@@ -147,6 +147,10 @@ CATALOG: dict[str, str] = {
     "dialog_download_ok": "Download and build",
     "dialog_download_cancel": "Cancel",
     "dialog_download_dont_ask": "Do not ask again",
+    "settings_title": "Settings",
+    "settings_ask_download": "Ask before downloading extras",
+    "settings_language": "Language",
+    "settings_language_system": "Same as system",
     # screen 1 - picking the folder
     "drop_headline": "Drag a folder with your code here",
     "drop_browse": "Choose folder",

@@ -9,6 +9,7 @@ import pytest
 from exelent.deps.sizes import DownloadPlan
 from exelent.settings import Settings, load_settings, save_settings
 from exelent.ui.dialog_download import DownloadDialog, should_ask, should_ask_offline
+from exelent.ui.dialog_settings import SettingsDialog
 
 
 @pytest.fixture(autouse=True)
@@ -83,3 +84,20 @@ def test_offline_dialog_says_it_is_an_estimate_not_a_measurement(qtbot):
     assert "60" in dialog.summary_label.text()
     assert "115" in dialog.summary_label.text()
     assert "scipy" in dialog.packages_label.text()
+
+
+# --- okno ustawien: oba przelaczniki maja widoczny skutek ---
+
+
+def test_settings_dialog_reports_what_the_user_picked(qtbot):
+    dialog = SettingsDialog(Settings(ask_before_download=True, language=None))
+    qtbot.addWidget(dialog)
+    dialog.ask_checkbox.setChecked(False)
+    dialog.language_combo.setCurrentIndex(dialog.language_combo.findData("en"))
+    assert dialog.chosen() == Settings(ask_before_download=False, language="en")
+
+
+def test_settings_dialog_offers_following_the_system(qtbot):
+    dialog = SettingsDialog(Settings())
+    qtbot.addWidget(dialog)
+    assert dialog.language_combo.findData(None) >= 0
