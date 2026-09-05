@@ -18,9 +18,13 @@ from exelent.models import Issue, IssueError, Severity
 from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.bootstrap import ensure_uv
 from exelent.runtime.paths import work_dir_for
+from exelent.runtime.procs import CREATE_NO_WINDOW, kill_tree
 from exelent.runtime.uvlog import DOWNLOAD_DONE, DOWNLOAD_START, PREPARED, parse_line
 
-CREATE_NO_WINDOW = 0x08000000
+# Jak często sprawdzamy token przy anulowalnym wywołaniu uv. Wystarczająco
+# gęsto, żeby zamykane okno nie czekało zauważalnie, i wystarczająco rzadko,
+# żeby nie kręcić procesorem przez całą kilkuminutową instalację.
+_CANCEL_POLL_SECONDS = 0.1
 
 
 class BuildEnvError(IssueError):
@@ -41,18 +45,56 @@ class BuildEnv:
 
 
 def run_uv(
-    uv: Path, args: Sequence[str], *, cwd: Path | None = None
+    uv: Path, args: Sequence[str], *, cwd: Path | None = None, cancel=None
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    """Uruchamia uv i czeka na wynik.
+
+    `cancel` (cokolwiek z własnością `cancelled`) czyni to czekanie
+    przerywalnym. Bez tego preflight liczący rozmiar pobierania nie ma jak
+    zareagować na zamknięcie okna: `subprocess.run` wraca dopiero z uv, a Qt
+    po swoim limicie niszczy wtedy działający wątek — czyli `abort()`
+    i proces, który zostaje w systemie.
+    """
+    if cancel is None:
+        return subprocess.run(
+            [str(uv), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(cwd) if cwd else None,
+            creationflags=CREATE_NO_WINDOW,
+            check=False,
+        )
+    return _run_uv_cancellable(uv, args, cwd=cwd, cancel=cancel)
+
+
+def _run_uv_cancellable(
+    uv: Path, args: Sequence[str], *, cwd: Path | None, cancel
+) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(
         [str(uv), *args],
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
         cwd=str(cwd) if cwd else None,
         creationflags=CREATE_NO_WINDOW,
-        check=False,
     )
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=_CANCEL_POLL_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            if not cancel.cancelled:
+                continue
+            # uv sam uruchamia procesy potomne (pobieranie, rozpakowywanie),
+            # więc samo `kill()` na nim zostawiłoby je osierocone.
+            kill_tree(process.pid)
+            stdout, stderr = process.communicate()
+            break
+    return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
 
 
 def _stream_uv(

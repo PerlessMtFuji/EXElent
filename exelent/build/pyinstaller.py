@@ -21,6 +21,7 @@ from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, S
 from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.env import CREATE_NO_WINDOW, BuildEnv
 from exelent.runtime.paths import logs_dir, path_hash
+from exelent.runtime.procs import kill_tree
 
 PHASES: dict[str, str] = {
     r"Analyzing": "analyze",
@@ -349,16 +350,7 @@ def _tree_size(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
-def _kill_tree(pid: int) -> int:
-    """PyInstaller uruchamia procesy potomne — bez /T zostają sierotami.
-
-    Zwraca kod wyjścia taskkill, żeby wywołujący mógł wykryć nieudane
-    zabicie (proces może wciąż trzymać otwarte pliki w workspace).
-    """
-    result = subprocess.run(
-        ["taskkill", "/F", "/T", "/PID", str(pid)],
-        capture_output=True,
-        creationflags=CREATE_NO_WINDOW,
-        check=False,
-    )
-    return result.returncode
+# PyInstaller uruchamia procesy potomne — bez /T zostają sierotami. Sama
+# funkcja mieszka w `runtime.procs`, bo tego samego zabijania potrzebują
+# jeszcze anulowany preflight i awaryjne zamknięcie okna.
+_kill_tree = kill_tree

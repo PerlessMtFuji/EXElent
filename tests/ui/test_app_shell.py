@@ -292,3 +292,42 @@ def test_saved_language_wins_over_the_system_at_startup(qtbot, tmp_path, monkeyp
     window = MainWindow()
     qtbot.addWidget(window)
     assert window.screen_drop.headline.text() == CATALOGS["en"]["drop_headline"]
+
+
+def test_closing_forces_shutdown_when_the_build_thread_will_not_stop(window, monkeypatch):
+    """Watek, ktory nie wyszedl w limicie, zostaje zniszczony przez Qt przy
+    wychodzeniu — `abort()`, a w buildzie okienkowym proces zostaje w systemie
+    (WER) razem z bootloaderem czekajacym na dziecko. Zamkniecie okna ma wtedy
+    zakonczyc program TWARDO, zamiast oddac sterowanie Qt z zywym watkiem."""
+    forced = []
+    monkeypatch.setattr(window, "hard_exit", lambda: forced.append(1))
+    monkeypatch.setattr(window.preflight, "stop", lambda: True)
+    monkeypatch.setattr(window.worker, "shutdown", lambda: False)
+
+    window.close()
+
+    assert forced == [1]
+
+
+def test_closing_forces_shutdown_when_preflight_will_not_stop(window, monkeypatch):
+    forced = []
+    monkeypatch.setattr(window, "hard_exit", lambda: forced.append(1))
+    monkeypatch.setattr(window.preflight, "stop", lambda: False)
+    monkeypatch.setattr(window.worker, "shutdown", lambda: True)
+
+    window.close()
+
+    assert forced == [1]
+
+
+def test_closing_a_quiet_window_ends_the_program_normally(window, monkeypatch):
+    """Twarde wyjscie omija sprzatanie Qt, wiec siegamy po nie WYLACZNIE
+    wtedy, gdy zwykla droga zawiodla."""
+    forced = []
+    monkeypatch.setattr(window, "hard_exit", lambda: forced.append(1))
+    monkeypatch.setattr(window.preflight, "stop", lambda: True)
+    monkeypatch.setattr(window.worker, "shutdown", lambda: True)
+
+    window.close()
+
+    assert forced == []

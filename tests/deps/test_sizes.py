@@ -8,6 +8,7 @@ megabajtach". Widelki mowia prawde, ktorej jedna liczba nie umie powiedziec.
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 from exelent.deps.sizes import (
     EXE_CONTRIBUTION,
@@ -168,3 +169,23 @@ def test_resolution_failure_degrades_to_an_empty_plan():
     )
     assert plan.specs == ()
     assert plan.total_bytes == 0
+
+
+def test_dry_run_receives_the_cancel_token(monkeypatch):
+    """Token musi dojsc az do `uv` — inaczej anulowanie preflightu konczy sie
+    na granicy warstwy, a proces uv miele dalej."""
+    from exelent.build.backend import CancelToken
+    from exelent.deps import sizes as sizes_module
+
+    seen = {}
+
+    def fake_run_uv(uv, args, *, cwd=None, cancel=None):
+        seen["cancel"] = cancel
+        return SimpleNamespace(stderr="")
+
+    monkeypatch.setattr(sizes_module, "run_uv", fake_run_uv)
+    token = CancelToken()
+
+    resolve_download_plan(Path("uv.exe"), Path("python.exe"), ["six"], cancel=token)
+
+    assert seen["cancel"] is token
