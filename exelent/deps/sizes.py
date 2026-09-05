@@ -12,6 +12,7 @@ błąd. Dlatego każdy wpis niesie `measured` — datę pomiaru albo słowo
 
 from __future__ import annotations
 
+import functools
 import json
 import urllib.request
 from collections.abc import Iterable, Sequence
@@ -170,10 +171,11 @@ class DownloadPlan:
     total_bytes: int = 0
 
 
-def _default_run_dry(uv: Path, python: Path, packages: Sequence[str]) -> str:
+def _default_run_dry(uv: Path, python: Path, packages: Sequence[str], *, cancel=None) -> str:
     result = run_uv(
         uv,
         ["pip", "install", "--python", str(python), "--dry-run", "--color", "never", *packages],
+        cancel=cancel,
     )
     return result.stderr or ""
 
@@ -185,6 +187,7 @@ def resolve_download_plan(
     *,
     run_dry=None,
     measure=None,
+    cancel=None,
 ) -> DownloadPlan:
     """Co naprawdę zostanie pobrane i ile to waży.
 
@@ -196,11 +199,20 @@ def resolve_download_plan(
     uv, brak sieci, nieznany kształt wyjścia — daje pusty plan, a warstwa
     wyżej sięga po szacunek z tabeli.
     """
-    runner = run_dry or _default_run_dry
+    # Token dostaje wyłącznie domyślny runner: wstrzyknięty `run_dry` jest
+    # atrapą albo cudzą funkcją o własnym kształcie, a dokładanie jej
+    # argumentu z zewnątrz zmieniałoby kontrakt punktu wstrzyknięcia.
+    runner = run_dry or functools.partial(_default_run_dry, cancel=cancel)
     measurer = measure or download_size
     try:
         text = runner(uv, python, packages)
     except (OSError, ValueError):
+        return DownloadPlan()
+
+    # Po anulowaniu uv wraca z niczym albo z połową odpowiedzi. Liczby dla
+    # użytkownika i tak już nikt nie zobaczy, a każde zapytanie do PyPI
+    # przedłuża życie wątku, na który czeka zamykane okno.
+    if cancel is not None and cancel.cancelled:
         return DownloadPlan()
 
     specs: list[str] = []

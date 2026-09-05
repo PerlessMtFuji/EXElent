@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from exelent.runtime import Progress, env, noop_progress
-from exelent.runtime.env import BuildEnvError, create_build_env
+from exelent.runtime.env import BuildEnvError, create_build_env, run_uv
 
 
 def _fake_stream_uv(returncode=0, calls=None, transcript=(), fails=None, text=None):
@@ -300,3 +300,29 @@ def test_stream_uv_hands_over_lines_while_running_and_keeps_the_whole_text(tmp_p
     assert code == 7
     assert [line.strip() for line in seen] == ["linia 0", "linia 1", "linia 2"]
     assert text == "linia 0\nlinia 1\nlinia 2"
+
+
+def test_run_uv_gives_up_promptly_when_the_token_is_cancelled():
+    """Preflight musi umiec przerwac `uv`. Bez tego zamkniecie okna czeka na
+    zapytanie sieciowe, ktorego nikt juz nie potrzebuje — a po limicie Qt
+    niszczy dzialajacy watek i proces konczy sie przez abort()."""
+    import threading
+    import time
+
+    from exelent.build.backend import CancelToken
+
+    token = CancelToken()
+    threading.Timer(0.3, token.cancel).start()
+
+    started = time.monotonic()
+    result = run_uv(Path(sys.executable), ["-c", "import time; time.sleep(60)"], cancel=token)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 15, "anulowanie nie przerwalo procesu"
+    assert result.returncode != 0
+
+
+def test_run_uv_without_a_token_behaves_as_before():
+    result = run_uv(Path(sys.executable), ["-c", "print('cichy')"])
+    assert result.returncode == 0
+    assert "cichy" in result.stdout

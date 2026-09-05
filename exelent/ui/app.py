@@ -7,6 +7,7 @@ budujący: ekran 3 pokazuje postęp, ale nie jest właścicielem wątku.
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -18,6 +19,7 @@ from exelent.analysis.project import analyze_project
 from exelent.constants import APP_NAME
 from exelent.deps.sizes import estimate_exe_size
 from exelent.i18n import set_language, system_language
+from exelent.runtime.procs import kill_tree
 from exelent.settings import load_settings, save_settings
 from exelent.ui.dialog_download import DownloadDialog, should_ask, should_ask_offline
 from exelent.ui.dialog_settings import SettingsDialog
@@ -39,11 +41,26 @@ SCREEN_BUILD = 2
 PREFLIGHT_WAIT_MS = 1500
 
 
+def _force_shutdown() -> None:
+    """Kończy program razem z całym jego potomstwem, bez sprzątania Qt.
+
+    Ostatnia deska ratunku dla zamykanego okna, którego wątek roboczy nie
+    wyszedł w limicie. Najpierw drzewo procesów — inaczej `uv` albo
+    PyInstaller zostają w tle jako sieroty i trzymają pliki — a `os._exit`
+    jest tu tylko zabezpieczeniem: taskkill z `/T` zabija także nas.
+    """
+    kill_tree(os.getpid())
+    os._exit(1)
+
+
 class MainWindow(QMainWindow):
     language_changed = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
+        # Atrybut, a nie wywołanie wprost: test musi umieć podstawić coś, co
+        # nie zabije samego pytesta.
+        self.hard_exit = _force_shutdown
         # Język PIERWSZY, przed ekranami. Ekrany biorą swoje napisy z `t()` w
         # konstruktorze, więc ustawiony po nich zostawiał angielskiemu
         # użytkownikowi polskie okno: sprawdzone — nagłówek ekranu 1 zostawał
@@ -207,12 +224,20 @@ class MainWindow(QMainWindow):
 
         Bez tego Qt niszczy działający `QThread` przy wychodzeniu (abort), a
         proces PyInstallera zostaje w systemie jako sierota trzymająca pliki
-        otwarte — dokładnie to, przed czym broni się `_kill_tree`. Nazwa metody
+        otwarte — dokładnie to, przed czym broni się `kill_tree`. Nazwa metody
         jest narzucona przez Qt (camelCase), to nadpisanie `QWidget`.
+
+        Kiedy grzeczna droga zawiedzie — robota tkwi w wywołaniu, które nie
+        pyta o anulowanie — zostaje twarde zakończenie. Oddanie sterowania Qt
+        z żywym wątkiem kończy się `abort()`, a w programie okienkowym nie ma
+        gdzie tego pokazać: użytkownik zamyka okno i zostaje z procesem, który
+        dalej siedzi w tle.
         """
-        self.preflight.stop()
-        self.worker.shutdown()
+        stopped_preflight = self.preflight.stop()
+        stopped_build = self.worker.shutdown()
         super().closeEvent(event)
+        if not (stopped_preflight and stopped_build):
+            self.hard_exit()
 
     def set_language(self, lang: str) -> None:
         set_language(lang)

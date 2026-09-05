@@ -218,3 +218,20 @@ def test_a_second_build_is_refused_while_one_runs(worker, qtbot, blocking_build,
     with qtbot.waitSignal(worker.finished, timeout=5000):
         blocking_build.zwolnij.set()
     assert widziane["wywolania"] == 1
+
+
+def test_shutdown_reports_failure_when_the_build_ignores_cancel(
+    qtbot, worker, blocking_build, tmp_path
+):
+    """`closeEvent` opiera na tej odpowiedzi decyzje o twardym zakonczeniu
+    programu, wiec porazka musi byc widoczna, a watek — nieporzucony."""
+    blocking_build()
+    worker.start(_plan(tmp_path))
+    assert blocking_build.wystartowal.wait(timeout=5)
+
+    try:
+        assert worker.shutdown(timeout_ms=300) is False
+        assert worker.is_running() is True
+    finally:
+        blocking_build.zwolnij.set()
+        qtbot.waitUntil(lambda: not worker.is_running(), timeout=15000)
