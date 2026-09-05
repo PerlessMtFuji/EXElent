@@ -1,6 +1,8 @@
 import ast
+import ctypes
 import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -52,11 +54,6 @@ def test_onedir_chdir_to_executable_folder():
 def test_windowed_launcher_shows_dialog():
     code = render_launcher("main", AppKind.WINDOWED, OutputMode.ONEFILE)
     assert "_show_error_dialog" in code
-
-
-def test_console_launcher_waits_for_keypress():
-    code = render_launcher("main", AppKind.CONSOLE, OutputMode.ONEFILE)
-    assert "input(" in code
 
 
 def test_launcher_filename_is_ascii_and_unlikely_to_collide():
@@ -160,3 +157,148 @@ def test_a_rejected_dll_dir_does_not_stop_the_program(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "_MEIPASS", str(base), raising=False)
 
     _exec_launcher()["_register_vendored_dll_dirs"]()
+
+
+def _exec_launcher_kind(app_kind: AppKind) -> dict:
+    code = render_launcher("program", app_kind, OutputMode.ONEDIR)
+    ns: dict = {}
+    exec(compile(code, "<generated launcher>", "exec"), ns)  # noqa: S102
+    return ns
+
+
+class _FakeRunpy:
+    """Podmiana za `runpy` w przestrzeni nazw launchera.
+
+    Program uzytkownika nie moze naprawde wystartowac w tescie, a to wlasnie
+    sposob jego zakonczenia — normalny, `sys.exit` albo wyjatek — decyduje o
+    tym, czy launcher zdazy jeszcze zatrzymac okno.
+    """
+
+    def __init__(self, raises: BaseException | None = None) -> None:
+        self.raises = raises
+        self.modules: list[str] = []
+
+    def run_module(self, name, run_name=None, alter_sys=False):
+        self.modules.append(name)
+        if self.raises is not None:
+            raise self.raises
+
+
+def _arm_launcher(ns, monkeypatch, tmp_path, *, owns_console=True, raises=None) -> list[str]:
+    """Uzbraja `main()` do uruchomienia w tescie i oddaje liste zadanych pytan.
+
+    Kazde wywolanie `input()` dopisuje tu swoja zachete, wiec dlugosc listy
+    jest wprost liczba pauz, ktore zobaczy uzytkownik.
+    """
+    prompts: list[str] = []
+    ns["_register_vendored_dll_dirs"] = lambda: None
+    ns["_set_working_directory"] = lambda: None
+    ns["_owns_console"] = lambda: owns_console
+    ns["runpy"] = _FakeRunpy(raises)
+    ns["_error_path"] = lambda: str(tmp_path / "EXElent-blad.txt")
+    monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt))
+    return prompts
+
+
+def test_console_launcher_waits_after_a_successful_run(monkeypatch, tmp_path):
+    """Dwuklik z Eksploratora daje programowi wlasne okno konsoli, ktore Windows
+    zamyka razem z procesem. Bez pauzy uzytkownik widzi tylko mrugniecie."""
+    ns = _exec_launcher_kind(AppKind.CONSOLE)
+    prompts = _arm_launcher(ns, monkeypatch, tmp_path, owns_console=True)
+
+    ns["main"]()
+
+    assert len(prompts) == 1
+
+
+def test_console_launcher_does_not_wait_when_it_shares_the_console(monkeypatch, tmp_path):
+    """Uruchomienie z CMD, z potoku albo ze skryptu: okno nie znika po wyjsciu,
+    wiec pauza tylko zawieszalaby cudza automatyzacje."""
+    ns = _exec_launcher_kind(AppKind.CONSOLE)
+    prompts = _arm_launcher(ns, monkeypatch, tmp_path, owns_console=False)
+
+    ns["main"]()
+
+    assert prompts == []
+
+
+def test_console_launcher_waits_exactly_once_after_a_crash(monkeypatch, tmp_path):
+    """Awaria to jedyny moment, gdy tresc okna jest naprawde potrzebna — i
+    dokladnie jedno nacisniecie Entera ma je zamknac."""
+    ns = _exec_launcher_kind(AppKind.CONSOLE)
+    prompts = _arm_launcher(
+        ns, monkeypatch, tmp_path, owns_console=True, raises=RuntimeError("bum")
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        ns["main"]()
+
+    assert exit_info.value.code == 1
+    assert len(prompts) == 1
+
+
+def test_console_launcher_waits_after_the_program_calls_sys_exit(monkeypatch, tmp_path):
+    """`sys.exit(2)` w kodzie uzytkownika to normalne zakonczenie, nie awaria:
+    kod wyjscia musi przejsc na wierzch nietkniety, a okno ma zostac."""
+    ns = _exec_launcher_kind(AppKind.CONSOLE)
+    prompts = _arm_launcher(ns, monkeypatch, tmp_path, owns_console=True, raises=SystemExit(2))
+
+    with pytest.raises(SystemExit) as exit_info:
+        ns["main"]()
+
+    assert exit_info.value.code == 2
+    assert len(prompts) == 1
+
+
+def test_windowed_launcher_never_waits_for_a_keypress(monkeypatch, tmp_path):
+    """Program okienkowy nie ma konsoli, w ktorej moglby o cokolwiek zapytac —
+    `input()` rzucilby tam wyjatkiem zamiast na cokolwiek poczekac."""
+    ns = _exec_launcher_kind(AppKind.WINDOWED)
+    prompts = _arm_launcher(ns, monkeypatch, tmp_path, owns_console=True)
+
+    ns["main"]()
+
+    assert prompts == []
+
+
+def _fake_ctypes(count=None, error=None, windll=True):
+    module = types.ModuleType("ctypes")
+    module.c_uint = ctypes.c_uint
+
+    def get_console_process_list(buffer, size):
+        if error is not None:
+            raise error
+        return count
+
+    if windll:
+        module.windll = types.SimpleNamespace(
+            kernel32=types.SimpleNamespace(GetConsoleProcessList=get_console_process_list)
+        )
+    return module
+
+
+def test_owns_console_when_no_one_else_is_attached(monkeypatch):
+    monkeypatch.setitem(sys.modules, "ctypes", _fake_ctypes(count=1))
+
+    assert _exec_launcher_kind(AppKind.CONSOLE)["_owns_console"]() is True
+
+
+def test_does_not_own_console_shared_with_a_shell(monkeypatch):
+    """Powloka, ktora nas odpalila, liczy sie jako drugi proces przy konsoli."""
+    monkeypatch.setitem(sys.modules, "ctypes", _fake_ctypes(count=2))
+
+    assert _exec_launcher_kind(AppKind.CONSOLE)["_owns_console"]() is False
+
+
+def test_does_not_own_console_without_the_windows_api(monkeypatch):
+    """Poza Windowsem `ctypes.windll` nie istnieje. Brak odpowiedzi znaczy
+    'nie zatrzymuj', bo zawieszony program jest gorszy od zamknietego okna."""
+    monkeypatch.setitem(sys.modules, "ctypes", _fake_ctypes(windll=False))
+
+    assert _exec_launcher_kind(AppKind.CONSOLE)["_owns_console"]() is False
+
+
+def test_does_not_own_console_when_the_api_call_fails(monkeypatch):
+    monkeypatch.setitem(sys.modules, "ctypes", _fake_ctypes(error=OSError("brak konsoli")))
+
+    assert _exec_launcher_kind(AppKind.CONSOLE)["_owns_console"]() is False
