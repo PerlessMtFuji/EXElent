@@ -1,4 +1,7 @@
 import ast
+import os
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -93,3 +96,67 @@ def test_entry_module_name_is_escaped():
 def test_entry_module_round_trips_exactly(entry):
     ns = _render_and_exec(entry)
     assert ns["ENTRY_MODULE"] == entry
+
+
+def _exec_launcher(output_mode: OutputMode = OutputMode.ONEFILE) -> dict:
+    code = render_launcher("program", AppKind.CONSOLE, output_mode)
+    ns: dict = {}
+    exec(compile(code, "<generated launcher>", "exec"), ns)  # noqa: S102
+    return ns
+
+
+def test_launcher_registers_every_vendored_dll_dir(tmp_path, monkeypatch):
+    """Regresja: numpy + pandas w jednym programie dawaly EXE, ktore umieralo na
+    `DLL load failed while importing _multiarray_umath`.
+
+    delvewheel wektoruje `msvcp140-<hash>.dll` i do `numpy.libs`, i do
+    `pandas.libs` — pod ta sama nazwa pliku. PyInstaller rozwiazuje zaleznosci
+    binarne po samej nazwie i bierze PIERWSZE trafienie, wiec do paczki trafia
+    wylacznie kopia z `pandas.libs`; kopii numpy nie ma tam w ogole.
+
+    W czasie dzialania lata delvewheel w `numpy/__init__.py` dokłada do
+    wyszukiwania DLL tylko `numpy.libs`. `pandas.libs` nie dokłada nikt, bo
+    pandas jest importowany dopiero PO numpy — i biblioteka lezaca o jeden
+    katalog obok jest nieosiagalna.
+    """
+    base = tmp_path / "bundle"
+    (base / "numpy.libs").mkdir(parents=True)
+    (base / "pandas.libs").mkdir()
+    (base / "numpy").mkdir()  # zwykly pakiet — nie jest katalogiem DLL
+    (base / "cos.libs").write_text("nie katalog")
+
+    registered: list[str] = []
+    monkeypatch.setattr(os, "add_dll_directory", registered.append, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(base), raising=False)
+
+    _exec_launcher()["_register_vendored_dll_dirs"]()
+
+    assert sorted(Path(p).name for p in registered) == ["numpy.libs", "pandas.libs"]
+
+
+def test_dll_dirs_are_registered_before_the_program_runs():
+    """Kolejnosc jest cala rzecza: rejestracja po pierwszym `import numpy`
+    juz niczego nie ratuje."""
+    code = render_launcher("program", AppKind.CONSOLE, OutputMode.ONEFILE)
+    body = code[code.index("def main()") :]
+    assert body.index("_register_vendored_dll_dirs()") < body.index("run_module")
+
+
+def test_registering_dll_dirs_survives_a_bundle_without_them(monkeypatch):
+    """Brak `_MEIPASS` (uruchomienie ze zrodel) i katalog nie do przyjecia nie
+    moga wywrocic programu, ktory poza tym dziala."""
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    _exec_launcher()["_register_vendored_dll_dirs"]()
+
+
+def test_a_rejected_dll_dir_does_not_stop_the_program(tmp_path, monkeypatch):
+    base = tmp_path / "bundle"
+    (base / "numpy.libs").mkdir(parents=True)
+
+    def refuse(path):
+        raise OSError("odmowa")
+
+    monkeypatch.setattr(os, "add_dll_directory", refuse, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(base), raising=False)
+
+    _exec_launcher()["_register_vendored_dll_dirs"]()

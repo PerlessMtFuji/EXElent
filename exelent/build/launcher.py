@@ -1,8 +1,9 @@
 """Generator launchera — punktu wejścia każdego zbudowanego EXE.
 
-Robi dwie rzeczy, których PyInstaller sam nie robi:
-1. ustawia katalog roboczy tak, żeby względne ścieżki w kodzie działały,
-2. łapie każdy wyjątek i pokazuje go użytkownikowi zamiast cicho zniknąć.
+Robi trzy rzeczy, których PyInstaller sam nie robi:
+1. udostępnia wszystkie wektorowane katalogi `*.libs` przy ładowaniu DLL,
+2. ustawia katalog roboczy tak, żeby względne ścieżki w kodzie działały,
+3. łapie każdy wyjątek i pokazuje go użytkownikowi zamiast cicho zniknąć.
 """
 
 from __future__ import annotations
@@ -24,6 +25,49 @@ ENTRY_MODULE = {entry}
 
 def _set_working_directory():
 {chdir_body}
+
+
+# Katalogi `*.libs` obok pakietow to konwencja delvewheel — tam laduja
+# wektorowane biblioteki natywne (numpy.libs, pandas.libs, scipy.libs...).
+_DLL_DIRECTORIES = []
+
+
+def _register_vendored_dll_dirs():
+    """Doklada wszystkie katalogi `*.libs` z paczki do wyszukiwania DLL.
+
+    Bez tego numpy i pandas w jednym programie daja EXE, ktore umiera na
+    `DLL load failed while importing _multiarray_umath`. delvewheel wektoruje
+    `msvcp140-<hash>.dll` do OBU katalogow, pod ta sama nazwa pliku;
+    PyInstaller rozwiazuje zaleznosci binarne po samej nazwie i bierze
+    PIERWSZE trafienie, wiec do paczki wchodzi wylacznie kopia z
+    `pandas.libs`, a kopii numpy nie ma tam wcale. W czasie dzialania lata
+    delvewheel w `numpy/__init__.py` rejestruje tylko `numpy.libs` — pandas
+    jest importowany dopiero POZNIEJ, wiec jego katalogu nie rejestruje nikt
+    i biblioteka lezaca o jeden katalog obok jest nieosiagalna.
+
+    Rejestracja WSZYSTKICH takich katalogow z gory zdejmuje cala te klase
+    bledow, nie tylko pare numpy/pandas: tak samo zderzaja sie scipy,
+    matplotlib czy opencv, a kolejnosc importow w cudzym kodzie nie jest
+    czyms, co EXElent moze przewidziec.
+
+    Uchwyty zostaja w liscie modulu — ich zamkniecie cofa wpis, wiec musza
+    zyc tak dlugo jak program.
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    if not base or not hasattr(os, "add_dll_directory"):
+        return
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(base, name)
+        if not name.endswith(".libs") or not os.path.isdir(path):
+            continue
+        try:
+            _DLL_DIRECTORIES.append(os.add_dll_directory(path))
+        except OSError:
+            pass
 
 
 def _error_path():
@@ -77,6 +121,7 @@ def _report(exc):
 
 
 def main():
+    _register_vendored_dll_dirs()
     _set_working_directory()
     try:
         runpy.run_module(ENTRY_MODULE, run_name="__main__", alter_sys=True)

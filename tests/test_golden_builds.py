@@ -129,6 +129,41 @@ def test_program_with_third_party_dependency(tmp_path, shared_state):
     assert "PILLOW-OK" in run.stdout
 
 
+def test_two_packages_vendoring_the_same_dll_both_load(tmp_path, shared_state):
+    """Zgloszenie: numpy + pandas w jednym programie dawaly EXE, ktore umieralo
+    na `DLL load failed while importing _multiarray_umath`.
+
+    delvewheel wektoruje `msvcp140-<hash>.dll` i do `numpy.libs`, i do
+    `pandas.libs` — pod ta sama nazwa pliku. PyInstaller rozwiazuje zaleznosci
+    binarne po samej nazwie i bierze PIERWSZE trafienie, wiec do paczki wchodzi
+    wylacznie kopia z `pandas.libs`, a numpy przy imporcie widzi tylko
+    `numpy.libs`, bo jedynie ten katalog rejestruje jego lata delvewheel.
+
+    Kolejnosc importow jest czescia przypadku i ma zostac taka, jaka jest:
+    numpy idzie PIERWSZY, zanim cokolwiek pokaze Windowsowi `pandas.libs`.
+
+    Zaden test na napisach tego nie zlapie — biblioteka gubi sie miedzy
+    hookami PyInstallera a ladowaczem DLL Windowsa, wiec dowodem moze byc
+    tylko EXE, ktore naprawde wstalo.
+    """
+    root = _project(
+        tmp_path,
+        "liczby",
+        {
+            "main.py": (
+                "import numpy as np\n"
+                "import pandas as pd\n"
+                "print('LICZBY-OK', int(np.arange(4).sum()), len(pd.DataFrame({'a': [1, 2]})))\n"
+            ),
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([result.artifact], timeout=300)
+    assert "LICZBY-OK 6 2" in run.stdout
+
+
 def test_writing_program_gets_onedir_and_writes_next_to_exe(tmp_path, shared_state):
     root = _project(
         tmp_path,
