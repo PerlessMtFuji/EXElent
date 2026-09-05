@@ -3,7 +3,9 @@
 Robi trzy rzeczy, których PyInstaller sam nie robi:
 1. udostępnia wszystkie wektorowane katalogi `*.libs` przy ładowaniu DLL,
 2. ustawia katalog roboczy tak, żeby względne ścieżki w kodzie działały,
-3. łapie każdy wyjątek i pokazuje go użytkownikowi zamiast cicho zniknąć.
+3. łapie każdy wyjątek i pokazuje go użytkownikowi zamiast cicho zniknąć,
+4. zatrzymuje okno konsoli, które sam sobie otworzył, żeby wynik dało się
+   przeczytać po dwukliku z Eksploratora.
 """
 
 from __future__ import annotations
@@ -114,6 +116,42 @@ def _show_error_dialog(text, saved_to):
         ctypes.windll.user32.MessageBoxW(None, text, "Blad programu", 0x10)
 
 
+def _owns_console():
+    """Czy okno konsoli powstalo dla nas i zniknie razem z nami?
+
+    Program konsolowy odpalony dwuklikiem z Eksploratora dostaje wlasne okno,
+    ktore Windows zamyka w chwili zakonczenia procesu — uzytkownik widzi samo
+    mrugniecie, nawet jesli program wypisal cos wartosciowego. Ten sam plik
+    uruchomiony z CMD, PowerShella albo z potoku pisze do CUDZEGO okna, ktore
+    zostaje otwarte; zatrzymywanie sie tam na Enter tylko zawieszaloby czyjas
+    automatyzacje.
+
+    `GetConsoleProcessList` oddaje liczbe procesow podpietych do konsoli i
+    rozdziela te dwa przypadki: 1 = jestesmy sami, wiec okno jest nasze, 2 lub
+    wiecej = jest przy nim powloka, ktora nas uruchomila. Gdy odpowiedzi nie ma
+    (program okienkowy bez konsoli, inny system), wybieramy wyjscie
+    bezpieczniejsze: nie zatrzymywac, bo zawieszony program jest gorszy od
+    zamknietego okna.
+    """
+    try:
+        import ctypes
+
+        buffer = (ctypes.c_uint * 8)()
+        count = ctypes.windll.kernel32.GetConsoleProcessList(buffer, 8)
+    except Exception:  # noqa: BLE001 - kazda porazka znaczy "nie zatrzymuj"
+        return False
+    return count == 1
+
+
+def _wait_for_keypress():
+    if not _owns_console():
+        return
+    try:
+        input("Nacisnij Enter, aby zamknac...")
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
 def _report(exc):
     text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     saved_to = _save_report(text)
@@ -130,6 +168,8 @@ def main():
     except BaseException as exc:  # noqa: BLE001 - launcher musi zlapac wszystko
         _report(exc)
         sys.exit(1)
+    finally:
+{finish_body}
 
 
 if __name__ == "__main__":
@@ -154,9 +194,16 @@ _REPORT_CONSOLE = """\
     print(text, file=sys.stderr)
     if saved_to:
         print("Szczegoly zapisano w: " + saved_to, file=sys.stderr)
-    try:
-        input("Nacisnij Enter, aby zamknac...")
-    except EOFError:
+"""
+
+# Pauza konczaca `main()` obejmuje tak samo przebieg udany, jak i awarie —
+# gdyby raport o bledzie czekal na Enter po swojemu, po awarii trzeba by go
+# nacisnac dwa razy.
+_FINISH_CONSOLE = """\
+        _wait_for_keypress()
+"""
+
+_FINISH_WINDOWED = """\
         pass
 """
 
@@ -184,9 +231,12 @@ def _quote_module_name(value: str) -> str:
 
 def render_launcher(entry_module: str, app_kind: AppKind, output_mode: OutputMode) -> str:
     chdir_body = _CHDIR_BUNDLE if output_mode is OutputMode.ONEFILE else _CHDIR_EXECUTABLE
-    report_body = _REPORT_WINDOWED if app_kind is AppKind.WINDOWED else _REPORT_CONSOLE
+    windowed = app_kind is AppKind.WINDOWED
+    report_body = _REPORT_WINDOWED if windowed else _REPORT_CONSOLE
+    finish_body = _FINISH_WINDOWED if windowed else _FINISH_CONSOLE
     return _TEMPLATE.format(
         entry=_quote_module_name(entry_module),
         chdir_body=chdir_body,
         report_body=report_body,
+        finish_body=finish_body,
     )
