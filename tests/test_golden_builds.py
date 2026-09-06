@@ -12,6 +12,7 @@ import pytest
 from procutil import is_running_name, run_bounded
 
 from exelent.cli import run_build
+from exelent.models import OutputMode
 from exelent.runtime import noop_progress
 
 pytestmark = pytest.mark.slow
@@ -362,3 +363,37 @@ def test_src_layout_package_builds_and_runs(tmp_path, shared_state):
 
     run = run_bounded([result.artifact], timeout=180)
     assert "SRC-OK 7" in run.stdout
+
+
+# --- A04: zasoby w ONEDIR czytane z katalogu obok EXE, nie z _internal ---
+
+
+def test_onedir_reads_root_and_nested_resources_from_any_cwd(tmp_path, shared_state):
+    """Zgloszenie: open('config.json') i open('assets/nested.json') w ONEDIR
+    nie znajdowaly plikow — trafialy do `_internal`, a zasob zagniezdzony gubil
+    katalog `assets/`. EXE uruchamiamy z INNEGO katalogu, zeby dowiesc, ze
+    launcher ustawia cwd na katalog zasobow, a uklad wzgledny jest zachowany."""
+    root = _project(
+        tmp_path,
+        "zasoby",
+        {
+            "main.py": (
+                "import json\n"
+                "root = json.load(open('config.json', encoding='utf-8'))['a']\n"
+                "nested = json.load(open('assets/nested.json', encoding='utf-8'))['b']\n"
+                "print('ZASOBY', root, nested)\n"
+            ),
+            "config.json": '{"a": "KORZEN"}',
+            "assets/nested.json": '{"b": "ZAGNIEZDZONY"}',
+        },
+    )
+    result = run_build(
+        root, noop_progress, output_mode=OutputMode.ONEDIR, dest_dir=tmp_path / "out"
+    )
+    assert result.ok, [i.code for i in result.issues]
+
+    exe = _exe_of(result)
+    # Uruchomienie z katalogu tymczasowego, NIE z katalogu EXE: jesli launcher
+    # nie ustawi cwd, open() nie znajdzie nic.
+    run = run_bounded([exe], timeout=180, cwd=tmp_path)
+    assert "ZASOBY KORZEN ZAGNIEZDZONY" in run.stdout
