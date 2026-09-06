@@ -42,6 +42,53 @@ def test_broken_txt_produces_blocker(tmp_path):
     assert "txt_syntax_error" in codes
 
 
+def test_txt_in_subdir_keeps_its_relative_path(tmp_path):
+    """A06: `pkg/help.txt` ma zostac `pkg/help.py`, nie `help.py` w korzeniu."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "import pkg.help\nprint(pkg.help.X)\n",
+            "pkg/__init__.py": "",
+            "pkg/help.txt": "X = 1\n",
+        },
+    )
+    result = analyze_project(root)
+    assert "pkg/help.py" in result.converted
+    assert "help.py" not in result.converted
+
+
+def test_two_txt_of_the_same_name_stay_separate(tmp_path):
+    """A06: `a/help.txt` i `b/help.txt` to dwa osobne moduly, nie jeden."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('x')\n",
+            "a/help.txt": "A = 1\n",
+            "b/help.txt": "B = 2\n",
+        },
+    )
+    result = analyze_project(root)
+    assert "a/help.py" in result.converted
+    assert "b/help.py" in result.converted
+
+
+def test_txt_colliding_with_existing_py_is_a_blocker(tmp_path):
+    """A06: `main.txt` obok istniejacego `main.py` nie moze go po cichu
+    nadpisac — to widoczna kolizja."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('prawdziwy')\n",
+            "main.txt": "print('z czatu')\n",
+        },
+    )
+    result = analyze_project(root)
+    codes = {i.code for i in result.issues}
+    assert "txt_collision" in codes
+    # Prawdziwy plik nie zostal podmieniony w konwersjach.
+    assert "main.py" not in result.converted
+
+
 def test_empty_directory_produces_blocker(tmp_path):
     result = analyze_project(_make(tmp_path, {"notatki.txt": "zwykly tekst bez kodu"}))
     codes = {i.code for i in result.issues}

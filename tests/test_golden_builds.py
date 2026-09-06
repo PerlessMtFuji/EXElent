@@ -397,3 +397,31 @@ def test_onedir_reads_root_and_nested_resources_from_any_cwd(tmp_path, shared_st
     # nie ustawi cwd, open() nie znajdzie nic.
     run = run_bounded([exe], timeout=180, cwd=tmp_path)
     assert "ZASOBY KORZEN ZAGNIEZDZONY" in run.stdout
+
+
+# --- A06: konwersja TXT z podkatalogu zachowuje sciezke i importuje sie ---
+
+
+def test_nested_txt_module_is_converted_in_place_and_imported(tmp_path, shared_state):
+    """`pkg/pomoc.txt` ma zostac `pkg/pomoc.py` (nie `pomoc.py` w korzeniu),
+    zeby `from pkg.pomoc import ...` zadzialalo w gotowym EXE."""
+    root = _project(
+        tmp_path,
+        "txt-podkatalog",
+        {
+            "main.py": "from pkg.pomoc import WITAJ\nprint(WITAJ)\n",
+            "pkg/__init__.py": "",
+            "pkg/pomoc.txt": "WITAJ = 'TXT-Z-PAKIETU'\n",
+        },
+    )
+    result = run_build(
+        root, noop_progress, entry=root / "main.py", dest_dir=tmp_path / "out"
+    )
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([result.artifact], timeout=180)
+    assert "TXT-Z-PAKIETU" in run.stdout
+    # Katalog zrodlowy nietkniety: konwersja zyje w kopii roboczej.
+    _assert_source_untouched(
+        root, {"main.py", "pkg", "pkg/__init__.py", "pkg/pomoc.txt"}
+    )

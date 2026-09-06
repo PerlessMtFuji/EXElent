@@ -33,6 +33,10 @@ CATALOG: dict[str, str] = {
         "W pliku {file} nie ma żadnego kodu do uruchomienia — została sama otoczka z okna "
         "czatu albo pusty blok. Wklej program i spróbuj ponownie."
     ),
+    "txt_collision": (
+        "Plik {file} po zamianie na kod dałby {target}, ale taki plik już w projekcie jest. "
+        "Zostaw tylko jedną wersję i spróbuj ponownie."
+    ),
     "no_entry_point": (
         "Nie wiem, od którego pliku zaczyna się Twój program. "
         "Wskaż ten, który normalnie uruchamiasz."

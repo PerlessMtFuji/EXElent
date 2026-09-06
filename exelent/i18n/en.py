@@ -31,6 +31,10 @@ CATALOG: dict[str, str] = {
         "There is no code to run in {file} — only chat-window wrapping or an empty block was "
         "left. Paste the program and try again."
     ),
+    "txt_collision": (
+        "Turning {file} into code would produce {target}, but that file already exists in the "
+        "project. Keep only one version and try again."
+    ),
     "no_entry_point": (
         "I cannot tell which file starts your program. Point me at the one you normally run."
     ),

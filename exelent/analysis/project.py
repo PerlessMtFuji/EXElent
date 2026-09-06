@@ -29,6 +29,14 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _rel_key(root: Path, path: Path) -> str:
+    """Znormalizowany klucz sciezki wzgledem korzenia — do wykrywania kolizji.
+
+    Male litery, bo Windows nie rozroznia wielkosci liter: `Main.py` i `main.py`
+    to na dysku ten sam plik."""
+    return path.relative_to(root).as_posix().lower()
+
+
 def _detect_other_language(scan: ScanResult) -> str | None:
     """Sufiks jezyka, jesli to on wypelnia projekt zamiast Pythona.
 
@@ -72,11 +80,29 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     converted: dict[str, str] = {}
     conversion_failures: list[dict[str, str]] = []
 
+    # Kolizje: cel konwersji nie moze nadpisac istniejacego pliku .py ani
+    # innej konwersji. Klucz jest znormalizowany do malych liter, bo Windows
+    # nie rozroznia wielkosci liter w nazwach (A06).
+    taken: dict[str, Path] = {p: p for p in (_rel_key(root, s) for s in scan.py_files)}
+
     for txt in scan.text_candidates:
         result = convert_text_to_python(txt.read_bytes())
         if result.ok and result.code is not None:
             virtual = txt.with_suffix(".py")
-            converted[virtual.name] = result.code
+            rel = virtual.relative_to(root).as_posix()
+            key = _rel_key(root, virtual)
+            if key in taken:
+                # Nie nadpisujemy cudzego kodu po cichu. Blokada, dopoki
+                # uzytkownik nie rozstrzygnie, ktory plik jest wejsciem.
+                issues.append(
+                    Issue("txt_collision", Severity.BLOCKER, {"file": txt.name, "target": rel})
+                )
+                continue
+            taken[key] = virtual
+            # Klucz konwersji to SCIEZKA WZGLEDNA, nie sama nazwa: `pkg/help.txt`
+            # ma trafic do `pkg/help.py`, a `a/help.txt` i `b/help.txt` musza
+            # zostac dwoma osobnymi modulami (A06).
+            converted[rel] = result.code
             sources[virtual] = result.code
             if "fence_label" in result.steps:
                 # Cicha zmiana cudzego pliku jest gorsza niz brak zmiany.
