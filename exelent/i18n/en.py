@@ -99,6 +99,11 @@ CATALOG: dict[str, str] = {
         "These libraries could not be included: {packages}. The EXE will still be built, "
         "but it may not start on someone else's computer."
     ),
+    "required_package_failed": (
+        "A required library could not be installed: {packages}. The EXE was not built, because "
+        "it would crash on the person you give it to. Check the library name and your internet "
+        "connection, then try again."
+    ),
     "antivirus_blocked": (
         "Antivirus software blocked writing the file. "
         "Add the EXElent folder to its exceptions and try again."

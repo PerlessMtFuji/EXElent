@@ -40,6 +40,7 @@ class _FakeBackend:
     """Backend, ktory nie uruchamia PyInstallera."""
 
     result = BuildResult(ok=True, artifact=Path("x.exe"), size_bytes=1024)
+    seen = None
 
     def build(self, plan, env, progress, cancel):
         type(self).seen = (plan, env)
@@ -60,6 +61,7 @@ def stub_build(monkeypatch, tmp_path):
     )
     backend = _FakeBackend
     backend.result = BuildResult(ok=True, artifact=tmp_path / "x.exe", size_bytes=1024)
+    backend.seen = None
     monkeypatch.setattr(cli, "PyInstallerBackend", backend)
     return backend
 
@@ -92,7 +94,10 @@ def test_uv_download_failure_becomes_an_issue_not_a_traceback(tmp_path, monkeypa
 # --- carried finding 2: env.failed_packages must reach the user ---
 
 
-def test_failed_packages_are_reported_as_a_warning(tmp_path, monkeypatch, stub_build):
+def test_failed_required_package_stops_the_build(tmp_path, monkeypatch, stub_build):
+    """A08: wszystkie paczki w planie sa wymagane, wiec nieudana instalacja
+    ktorejkolwiek zatrzymuje build blokada — nie ostrzezeniem na ekranie
+    sukcesu. EXE bez wymaganej biblioteki padlby u odbiorcy."""
     root = _project(tmp_path, {"main.py": "import requests\nprint(1)"})
     monkeypatch.setattr(
         cli,
@@ -107,12 +112,14 @@ def test_failed_packages_are_reported_as_a_warning(tmp_path, monkeypatch, stub_b
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
-    assert result.ok is True, "brak jednej paczki nie przerywa builda"
-    failed = [i for i in result.issues if i.code == "packages_failed"]
+    assert result.ok is False, "brak wymaganej paczki nie moze dac sukcesu"
+    failed = [i for i in result.issues if i.code == "required_package_failed"]
     assert len(failed) == 1
-    assert failed[0].severity is Severity.WARNING
+    assert failed[0].severity is Severity.BLOCKER
     assert "requests" in failed[0].data["packages"]
     assert "nie-ma-takiej-paczki" in failed[0].data["packages"]
+    # PyInstaller nie zostal w ogole uruchomiony z niekompletnym srodowiskiem.
+    assert _FakeBackend.seen is None
 
 
 def test_no_failed_packages_means_no_warning(tmp_path, stub_build):
@@ -125,11 +132,9 @@ def test_no_failed_packages_means_no_warning(tmp_path, stub_build):
     assert [i.code for i in result.issues if i.code == "packages_failed"] == []
 
 
-def test_failed_packages_survive_a_failed_build(tmp_path, monkeypatch, stub_build):
-    """Ostrzezenie o paczkach nie moze zniknac tylko dlatego, ze build padl."""
-    log = tmp_path / "build.log"
-    log.write_text("PermissionError: [WinError 32] used by another process", encoding="utf-8")
-    stub_build.result = BuildResult(ok=False, log_path=log)
+def test_required_package_failure_carries_analysis_warnings(tmp_path, monkeypatch, stub_build):
+    """Zatrzymanie na wymaganej paczce nie moze zgubic ostrzezen z wczesniej
+    (np. sekret w kodzie): wynik niesie i blokade, i wczesniejsze ostrzezenia."""
     monkeypatch.setattr(
         cli,
         "create_build_env",
@@ -141,11 +146,15 @@ def test_failed_packages_survive_a_failed_build(tmp_path, monkeypatch, stub_buil
         ),
     )
 
-    result = cli.run_build(_project(tmp_path, {"main.py": "print(1)"}), noop_progress)
+    # `sk-...` wyglada na klucz API -> analiza dokłada ostrzezenie.
+    code = "import requests\nKEY = 'sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD'\n"
+    result = cli.run_build(_project(tmp_path, {"main.py": code}), noop_progress)
 
     codes = [i.code for i in result.issues]
-    assert "packages_failed" in codes
-    assert "file_in_use" in codes, "log nadal ma byc tlumaczony przez explain_log"
+    assert result.ok is False
+    assert "required_package_failed" in codes
+    # PyInstaller nie ruszyl z niekompletnym srodowiskiem.
+    assert _FakeBackend.seen is None
 
 
 # --- analysis warnings must not be dropped either ---
@@ -353,9 +362,9 @@ def test_an_unexpected_backend_failure_is_reported_not_raised(tmp_path, monkeypa
     assert [i.code for i in result.issues] == ["unexpected_error"]
 
 
-def test_failed_packages_survive_an_unexpected_crash(tmp_path, monkeypatch, stub_build):
-    """Ta sama zasada co przy porazce builda: czesciowa instalacja jest czesto
-    prawdziwa przyczyna tego, co padlo linijke pozniej."""
+def test_required_package_failure_stops_before_the_backend_runs(tmp_path, monkeypatch, stub_build):
+    """A08: niekompletne srodowisko zatrzymuje build ZANIM ruszy PyInstaller —
+    backend, ktory by tu wybuchl, nie jest w ogole wolany."""
     root = _project(tmp_path, {"main.py": "print(1)"})
     monkeypatch.setattr(
         cli,
@@ -376,7 +385,8 @@ def test_failed_packages_survive_an_unexpected_crash(tmp_path, monkeypatch, stub
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
-    assert "packages_failed" in [i.code for i in result.issues]
+    assert result.ok is False
+    assert "required_package_failed" in [i.code for i in result.issues]
 
 
 # --- Important I1: BLOCKER zawsze przed przeniesionym ostrzezeniem ---

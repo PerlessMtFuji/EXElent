@@ -107,6 +107,11 @@ CATALOG: dict[str, str] = {
         "Nie udało się dołączyć tych bibliotek: {packages}. Plik EXE powstanie, ale może "
         "się nie uruchomić u osoby, której go dasz."
     ),
+    "required_package_failed": (
+        "Nie udało się zainstalować wymaganej biblioteki: {packages}. Plik EXE NIE powstał, bo "
+        "wywaliłby się u osoby, której byś go dał. Sprawdź nazwę biblioteki i połączenie z "
+        "internetem, a potem spróbuj ponownie."
+    ),
     "antivirus_blocked": (
         "Program antywirusowy zablokował zapis pliku. "
         "Dodaj folder EXElent do wyjątków i spróbuj ponownie."

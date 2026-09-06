@@ -61,20 +61,6 @@ class _Progress:
         return report
 
 
-def _packages_failed_issue(failed: Sequence[str]) -> tuple[Issue, ...]:
-    """Częściowa instalacja zależności musi dotrzeć do użytkownika.
-
-    `create_build_env` próbuje instalować paczki pojedynczo, gdy instalacja
-    hurtowa padnie — jedna zła nazwa nie zabija wtedy całego builda. Cena jest
-    taka, że EXE potrafi się zbudować bez biblioteki, której kod używa, i
-    wywalić się dopiero u odbiorcy z `ModuleNotFoundError`. Ostrzeżenie z
-    nazwami paczek zamienia tamten zagadkowy błąd w informację podaną z góry.
-    """
-    if not failed:
-        return ()
-    return (Issue("packages_failed", Severity.WARNING, {"packages": ", ".join(failed)}),)
-
-
 def _unexpected_issues(exc: BaseException) -> tuple[Issue, ...]:
     """Ostatnia siatka bezpieczenstwa: cokolwiek to bylo, ma byc kodem.
 
@@ -254,7 +240,22 @@ def _build(
         single_file=plan.single_file,
         total_download_bytes=plan.total_download_bytes,
     )
-    carried.extend(_packages_failed_issue(env.failed_packages))
+    if env.failed_packages:
+        # Wszystkie paczki w planie sa WYMAGANE (opcjonalne odpadly w
+        # make_plan). Nieudana instalacja ktorejkolwiek znaczy niekompletne
+        # srodowisko — nie budujemy EXE, ktory u odbiorcy padnie na
+        # ModuleNotFoundError. Zatrzymujemy sie z blokada, a nie ostrzezeniem
+        # ginacym na ekranie sukcesu (A08).
+        return BuildResult(
+            ok=False,
+            issues=(
+                Issue(
+                    "required_package_failed",
+                    Severity.BLOCKER,
+                    {"packages": ", ".join(env.failed_packages)},
+                ),
+            ),
+        )
 
     result = PyInstallerBackend().build(plan, env, scale.stage(ENV_PROGRESS_SHARE, 1.0), cancel)
 
