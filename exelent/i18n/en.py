@@ -205,6 +205,7 @@ CATALOG: dict[str, str] = {
     "mode_onedir": "A folder with the program",
     # screen 3 - building and result
     "build_cancel": "Stop",
+    "build_cancelling": "Stopping…",
     "build_open_folder": "Show in folder",
     "build_run": "Run",
     "build_save_report": "Save report",

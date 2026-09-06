@@ -6,7 +6,9 @@ oficjalny embeddable Python nie ma), tworzy venv i instaluje paczki.
 
 from __future__ import annotations
 
+import queue
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -103,6 +105,7 @@ def _stream_uv(
     on_line: Callable[[str], None],
     *,
     cwd: Path | None = None,
+    cancel=None,
 ) -> tuple[int, str]:
     """Uruchamia uv i oddaje jego stderr linia po linii, na żywo.
 
@@ -112,6 +115,12 @@ def _stream_uv(
 
     Pełny tekst i tak zbieramy: `explain_log` potrzebuje go w całości, bo błąd
     potrafi paść wcześnie i tylko odbić się echem na końcu.
+
+    `cancel` (cokolwiek z własnością `cancelled`) czyni to czekanie
+    przerywalnym: stderr czytamy na osobnym wątku, a pętla główna odpytuje
+    token na krótkim timerze i — gdy anulowano — ubija całe drzewo procesów uv
+    (pobieranie/rozpakowywanie to jego procesy potomne). Bez tego kilkuminutowe
+    pobranie `torch` nie da się przerwać, a zamykane okno czeka aż do końca.
 
     `--color never` to tania polisa. Zmierzone wyjście na potoku nie zawierało
     sekwencji ANSI, ale regex, który się o nie przewróci, psuje pasek w sposób
@@ -132,9 +141,39 @@ def _stream_uv(
         creationflags=CREATE_NO_WINDOW,
     )
     assert process.stderr is not None
-    for line in process.stderr:
+
+    if cancel is None:
+        for line in process.stderr:
+            collected.append(line.rstrip("\n"))
+            on_line(line)
+        process.wait()
+        return process.returncode, "\n".join(collected)
+
+    output_queue: queue.Queue[str | None] = queue.Queue()
+
+    def _pump(stderr: object) -> None:
+        try:
+            for line in stderr:  # type: ignore[attr-defined]
+                output_queue.put(line)
+        finally:
+            output_queue.put(None)  # sentinel: stderr closed
+
+    reader = threading.Thread(target=_pump, args=(process.stderr,), daemon=True)
+    reader.start()
+
+    while True:
+        if cancel.cancelled:
+            kill_tree(process.pid)
+            break
+        try:
+            line = output_queue.get(timeout=_CANCEL_POLL_SECONDS)
+        except queue.Empty:
+            continue
+        if line is None:
+            break
         collected.append(line.rstrip("\n"))
         on_line(line)
+
     process.wait()
     return process.returncode, "\n".join(collected)
 
@@ -219,6 +258,15 @@ class _DownloadTally:
         return done, self._total, self._speed, eta
 
 
+def _raise_if_cancelled(cancel) -> None:
+    """Anulowanie na etapie srodowiska konczy build jako PRZERWANY, nie blad.
+
+    Rzucamy IssueError z `build_cancelled` — granica wyjatkow w `execute_build`
+    zamienia go na wynik anulowania, dokladnie jak przerwanie w PyInstallerze."""
+    if cancel is not None and cancel.cancelled:
+        raise IssueError(Issue("build_cancelled", Severity.INFO))
+
+
 def create_build_env(
     source: Path,
     packages: Sequence[str],
@@ -227,8 +275,10 @@ def create_build_env(
     python_version: str = TARGET_PYTHON,
     single_file: Path | None = None,
     total_download_bytes: int = 0,
+    cancel=None,
 ) -> BuildEnv:
     uv = ensure_uv(progress)
+    _raise_if_cancelled(cancel)
     work = work_dir_for(source, single_file)
     venv = work / "venv"
     venv.parent.mkdir(parents=True, exist_ok=True)
@@ -260,11 +310,13 @@ def create_build_env(
 
     progress(Progress(phase="install_python", fraction=0.0))
     installed_code, installed_text = _stream_uv(
-        uv, ["python", "install", python_version], on_python_line
+        uv, ["python", "install", python_version], on_python_line, cancel=cancel
     )
+    _raise_if_cancelled(cancel)
 
     progress(Progress(phase="create_env", fraction=0.3))
-    created = run_uv(uv, ["venv", str(venv), "--python", python_version])
+    created = run_uv(uv, ["venv", str(venv), "--python", python_version], cancel=cancel)
+    _raise_if_cancelled(cancel)
     if created.returncode != 0:
         raise _env_failure(installed_code, installed_text, created)
 
@@ -298,15 +350,17 @@ def create_build_env(
         )
 
     returncode, _text = _stream_uv(
-        uv, ["pip", "install", "--python", str(python), *wanted], on_line
+        uv, ["pip", "install", "--python", str(python), *wanted], on_line, cancel=cancel
     )
+    _raise_if_cancelled(cancel)
 
     failed: list[str] = []
     if returncode != 0:
         # Instalacja hurtowa padła — próbujemy pojedynczo, żeby jedna zła
         # nazwa paczki nie zabiła całego builda.
         for spec in wanted:
-            single = run_uv(uv, ["pip", "install", "--python", str(python), spec])
+            _raise_if_cancelled(cancel)
+            single = run_uv(uv, ["pip", "install", "--python", str(python), spec], cancel=cancel)
             if single.returncode != 0:
                 failed.append(spec)
 

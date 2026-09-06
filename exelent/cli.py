@@ -239,6 +239,7 @@ def _build(
         scale.stage(0.0, ENV_PROGRESS_SHARE),
         single_file=plan.single_file,
         total_download_bytes=plan.total_download_bytes,
+        cancel=cancel,
     )
     if env.failed_packages:
         # Wszystkie paczki w planie sa WYMAGANE (opcjonalne odpadly w
