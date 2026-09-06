@@ -140,7 +140,9 @@ def test_onefile_build_succeeds_and_writes_log(tmp_path, monkeypatch, fake_pyins
     assert result.log_path is not None and result.log_path.exists()
 
 
-def test_onefile_rebuild_replaces_clean_stale_destination(tmp_path, monkeypatch, fake_pyinstaller):
+def test_onefile_rebuild_keeps_previous_version(tmp_path, monkeypatch, fake_pyinstaller):
+    """A01: kolejny build NIE nadpisuje istniejacego EXE — laduje obok, pod
+    kolejnym numerem, a poprzednia wersja zostaje bajtowo nietknieta."""
     root, _ = _prepare_workspace(tmp_path, monkeypatch)
     dest = tmp_path / "out"
     dest.mkdir()
@@ -150,28 +152,37 @@ def test_onefile_rebuild_replaces_clean_stale_destination(tmp_path, monkeypatch,
     result = PyInstallerBackend().build(plan, _env(), noop_progress, CancelToken())
 
     assert result.ok is True
+    assert result.artifact == dest / "Program (2).exe"
     assert result.artifact.read_bytes() == b"fake-onefile"
+    assert (dest / "Program.exe").read_bytes() == b"old-build"  # poprzednia wersja nietknieta
 
 
-def test_onedir_rebuild_replaces_clean_stale_destination(tmp_path, monkeypatch, fake_pyinstaller):
+def test_onedir_rebuild_preserves_previous_user_data(tmp_path, monkeypatch, fake_pyinstaller):
+    """A01: przebudowa ONEDIR nie kasuje katalogu poprzedniej wersji — baza
+    danych zapisana obok starego EXE musi przezyc kolejny build."""
     root, _ = _prepare_workspace(tmp_path, monkeypatch)
     dest = tmp_path / "out"
     stale = dest / "Program"
     stale.mkdir(parents=True)
-    (stale / "old.txt").write_text("stale", encoding="utf-8")
+    db = stale / "user-database.db"
+    db.write_bytes(b"USER DATA")
 
     plan = _plan(root, dest, output_mode=OutputMode.ONEDIR)
     result = PyInstallerBackend().build(plan, _env(), noop_progress, CancelToken())
 
     assert result.ok is True
     target = result.artifact
-    assert target == dest / "Program"
+    assert target == dest / "Program (2)"
     assert (target / "Program.exe").read_bytes() == b"fake-onedir"
-    assert not (target / "old.txt").exists()
-    assert not (target / "Program").exists()  # replaced in place, not nested
+    assert db.read_bytes() == b"USER DATA"  # dane poprzedniej wersji przetrwaly
 
 
-def test_onedir_dest_cannot_be_cleared_reports_dest_in_use(tmp_path, monkeypatch, fake_pyinstaller):
+def test_onedir_locked_previous_version_does_not_block_new_build(
+    tmp_path, monkeypatch, fake_pyinstaller
+):
+    """A01: zablokowany plik w KATALOGU poprzedniej wersji nie ma prawa
+    zatrzymac nowego builda — nowy artefakt laduje pod inna nazwa, a stary
+    (uzywany) katalog zostaje nietkniety."""
     root, _ = _prepare_workspace(tmp_path, monkeypatch)
     dest = tmp_path / "out"
     stale = dest / "Program"
@@ -180,7 +191,7 @@ def test_onedir_dest_cannot_be_cleared_reports_dest_in_use(tmp_path, monkeypatch
     locked.write_bytes(b"locked")
 
     # Deliberately not a `with` block: the handle must stay open across the
-    # build() call below to simulate a locked file blocking cleanup.
+    # build() call below to simulate the previous version being in use.
     handle = open(locked, "rb")  # noqa: SIM115
     try:
         plan = _plan(root, dest, output_mode=OutputMode.ONEDIR)
@@ -188,10 +199,9 @@ def test_onedir_dest_cannot_be_cleared_reports_dest_in_use(tmp_path, monkeypatch
     finally:
         handle.close()
 
-    assert result.ok is False
-    assert any(i.code == "dest_in_use" for i in result.issues)
-    assert not (stale / "Program").exists()  # never silently nested
-    assert locked.exists()  # stale content untouched, not half-merged
+    assert result.ok is True
+    assert result.artifact == dest / "Program (2)"
+    assert locked.read_bytes() == b"locked"  # uzywana wersja nietknieta
 
 
 def test_cancel_during_silent_subprocess_returns_promptly(tmp_path, monkeypatch, fake_pyinstaller):

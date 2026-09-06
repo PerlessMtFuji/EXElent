@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 import queue
 import re
-import shutil
 import subprocess
 import threading
 import time
@@ -16,6 +15,7 @@ from pathlib import Path
 from exelent.build.backend import CancelToken
 from exelent.build.icon import ensure_ico
 from exelent.build.launcher import LAUNCHER_FILENAME, render_launcher
+from exelent.build.publish import publish_artifact
 from exelent.build.workspace import workspace_for
 from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, Severity
 from exelent.runtime import Progress, ProgressFn
@@ -287,13 +287,13 @@ class PyInstallerBackend:
                 issues=(Issue("module_dropped", Severity.BLOCKER, {"file": dropped[0]}),),
             )
 
-        produced, issue = self._collect_artifact(plan, workspace)
+        produced, issues = self._collect_artifact(plan, workspace)
         if produced is None:
             return BuildResult(
                 ok=False,
                 log_path=log_path,
                 duration_s=duration,
-                issues=(issue,) if issue is not None else (),
+                issues=issues,
             )
 
         progress(Progress(phase="done", fraction=1.0))
@@ -307,41 +307,19 @@ class PyInstallerBackend:
 
     def _collect_artifact(
         self, plan: BuildPlan, workspace: Path
-    ) -> tuple[Path | None, Issue | None]:
+    ) -> tuple[Path | None, tuple[Issue, ...]]:
+        """Odbiera artefakt z `dist` i publikuje go w katalogu docelowym.
+
+        Publikacja NIGDY nie nadpisuje istniejącej wersji ani danych, które
+        uruchomiona aplikacja zapisała obok siebie — patrz `build/publish.py`.
+        """
         dist = workspace / "dist"
         is_onedir = plan.output_mode is OutputMode.ONEDIR
         source = dist / plan.exe_name if is_onedir else dist / f"{plan.exe_name}.exe"
         if not source.exists():
-            return None, Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name})
+            return None, (Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name}),)
 
-        plan.dest_dir.mkdir(parents=True, exist_ok=True)
-        target = plan.dest_dir / source.name
-
-        if target.exists():
-            if target.is_dir():
-                shutil.rmtree(target, ignore_errors=True)
-            else:
-                try:
-                    target.unlink()
-                except OSError:
-                    pass
-            if target.exists():
-                # A build reports ok=True only when the artifact is exactly
-                # where BuildResult says it is. A locked leftover file (a
-                # prior EXE still running, antivirus scanning it, ...) must
-                # not let shutil.move silently nest the new build one level
-                # deeper inside the stale directory it could not clear.
-                return None, Issue("dest_in_use", Severity.BLOCKER, {"path": str(target)})
-
-        shutil.move(str(source), str(target))
-
-        if not target.exists():
-            return None, Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name})
-
-        if is_onedir and (target / source.name).exists():
-            return None, Issue("dest_in_use", Severity.BLOCKER, {"path": str(target)})
-
-        return target, None
+        return publish_artifact(source, plan.dest_dir, plan.exe_name, is_onedir=is_onedir)
 
 
 def _tree_size(path: Path) -> int:

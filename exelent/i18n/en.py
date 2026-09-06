@@ -106,6 +106,14 @@ CATALOG: dict[str, str] = {
         "I cannot save the result in {path} — an earlier version of the program is in use "
         "right now. Close it and try again."
     ),
+    "publish_incomplete": (
+        "The finished {name} could not be copied to the destination folder in full. Nothing "
+        "was overwritten — your previous version is untouched. Try building again."
+    ),
+    "publish_failed": (
+        "The finished program could not be saved to {path}. Nothing was overwritten — your "
+        "previous version is untouched. Check the folder and try again."
+    ),
     "access_denied": (
         "Windows denied access to a file. Check that you have permission to that folder."
     ),
