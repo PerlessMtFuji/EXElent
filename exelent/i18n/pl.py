@@ -116,6 +116,14 @@ CATALOG: dict[str, str] = {
         "Nie mogę zapisać wyniku w {path} — poprzednia wersja programu jest teraz używana. "
         "Zamknij ją i spróbuj ponownie."
     ),
+    "publish_incomplete": (
+        "Gotowy {name} nie skopiował się w całości do folderu docelowego. Nic nie zostało "
+        "nadpisane — poprzednia wersja jest nietknięta. Zbuduj jeszcze raz."
+    ),
+    "publish_failed": (
+        "Nie udało się zapisać gotowego programu w {path}. Nic nie zostało nadpisane — "
+        "poprzednia wersja jest nietknięta. Sprawdź folder i spróbuj ponownie."
+    ),
     "access_denied": (
         "Windows odmówił dostępu do pliku. Sprawdź, czy masz uprawnienia do tego folderu."
     ),
