@@ -121,3 +121,68 @@ def test_direct_reference_requirement_passes_through_unchanged():
 def test_plain_requirement_still_parses():
     deps = resolve_dependencies(_s(""), set(), "requests==2.31.0\n")
     assert _names(deps) == {"requests==2.31.0"}
+
+
+# --- A07: poprawne parsowanie manifestu ---
+
+
+def test_version_constraint_with_spaces_is_kept():
+    """`requests >= 2.0` (ze spacjami) gubilo wersje w prostym regexie."""
+    deps = resolve_dependencies(_s(""), set(), "requests >= 2.0\n")
+    assert _names(deps) == {"requests>=2.0"}
+
+
+def test_marker_for_other_platform_is_excluded():
+    """Marker macOS nie instaluje paczki na docelowym Windowsie (A07)."""
+    deps = resolve_dependencies(_s(""), set(), 'pyobjc; sys_platform == "darwin"\n')
+    assert deps == ()
+
+
+def test_marker_for_windows_is_kept():
+    deps = resolve_dependencies(_s(""), set(), 'pywin32; sys_platform == "win32"\n')
+    assert _names(deps) == {"pywin32"}
+
+
+def test_extras_are_preserved():
+    deps = resolve_dependencies(_s(""), set(), "uvicorn[standard]>=0.20\n")
+    assert _names(deps) == {"uvicorn[standard]>=0.20"}
+
+
+def test_recursive_requirements_are_followed(tmp_path):
+    (tmp_path / "base.txt").write_text("rich\n", encoding="utf-8")
+    main = tmp_path / "requirements.txt"
+    main.write_text("-r base.txt\nrequests\n", encoding="utf-8")
+    deps = resolve_dependencies(_s(""), set(), requirements_path=main)
+    assert _names(deps) == {"rich", "requests"}
+
+
+def test_recursive_requirements_cycle_does_not_hang(tmp_path):
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text("-r b.txt\nrich\n", encoding="utf-8")
+    b.write_text("-r a.txt\nrequests\n", encoding="utf-8")
+    deps = resolve_dependencies(_s(""), set(), requirements_path=a)
+    assert _names(deps) == {"rich", "requests"}
+
+
+def test_non_import_error_guard_is_not_optional():
+    """`try: import x except ValueError` NIE czyni importu opcjonalnym (A07)."""
+    code = "try:\n    import numpy\nexcept ValueError:\n    numpy = None\n"
+    deps = resolve_dependencies(_s(code), set())
+    assert [d.optional for d in deps] == [False]
+
+
+def test_import_fallback_keeps_the_primary_required():
+    """`try: import orjson / except ImportError: import simplejson` — przynajmniej
+    jedna galaz musi byc zainstalowana. orjson (podstawowy) zostaje wymagany,
+    simplejson jest opcjonalnym fallbackiem (A07)."""
+    code = (
+        "try:\n"
+        "    import orjson\n"
+        "except ImportError:\n"
+        "    import simplejson\n"
+    )
+    deps = resolve_dependencies(_s(code), set())
+    by_name = {d.package: d.optional for d in deps}
+    assert by_name["orjson"] is False
+    assert by_name["simplejson"] is True
