@@ -1,6 +1,6 @@
 import ast
 
-from exelent.analysis.textconv import convert_text_to_python, decode_bytes
+from exelent.analysis.textconv import NO_CODE, convert_text_to_python, decode_bytes
 
 
 def test_decodes_utf8_with_bom():
@@ -147,3 +147,54 @@ def test_keeps_a_first_line_that_is_real_code():
 def test_does_not_strip_the_label_when_nothing_would_be_left():
     result = convert_text_to_python(b"python\n\n\n")
     assert "fence_label" not in result.steps
+
+
+# --- A05: poprawny Python zostaje bez ruszania tresci ---
+
+
+def test_valid_code_keeps_typographic_characters_in_literals():
+    """`label = 'A—B…'` to poprawny Python. Globalna podmiana znakow zmieniala
+    wartosc literalu (myslnik, wielokropek) — teraz zostaje nietkniety."""
+    src = "label = 'A\u2014B\u2026'\nprint(label)\n"
+    result = convert_text_to_python(src.encode())
+    assert result.ok
+    assert result.code == "label = 'A\u2014B\u2026'\nprint(label)"
+    assert "normalize" not in result.steps
+
+
+def test_valid_code_keeps_a_tab_inside_a_string():
+    """`expandtabs` na calym tekscie rozwijalo tez taby w napisach. Tab w
+    literale ma zostac tabem; normalizujemy tylko wciecie."""
+    src = "sep = '\\t'\nprint('a' + sep + 'b')\n"
+    result = convert_text_to_python(src.encode())
+    assert result.ok
+    assert "\\t" in result.code
+
+
+def test_reconversion_of_valid_code_is_idempotent():
+    src = "x = 'a\u2014b'\nprint(x)"
+    once = convert_text_to_python(src.encode())
+    twice = convert_text_to_python(once.code.encode())
+    assert once.code == twice.code == src
+
+
+def test_line_numbers_preserve_indentation():
+    """`2     return 1` po zdjeciu numeru ma zachowac wciecie funkcji —
+    wczesniej `return` ladowalo w kolumnie 0 i dawalo IndentationError."""
+    raw = "1 def f():\n2     return 1\n3 print(f())\n"
+    result = convert_text_to_python(raw.encode())
+    assert result.ok, result.error_text
+    assert result.code == "def f():\n    return 1\nprint(f())"
+
+
+def test_empty_fence_is_rejected_as_no_code():
+    result = convert_text_to_python(b"Oto program:\n```python\n```\nGotowe!")
+    assert result.ok is False
+    assert result.error_text == NO_CODE
+    assert result.code is None
+
+
+def test_only_chat_wrapper_is_rejected_as_no_code():
+    result = convert_text_to_python(b"```python\n\n\n```")
+    assert result.ok is False
+    assert result.error_text == NO_CODE

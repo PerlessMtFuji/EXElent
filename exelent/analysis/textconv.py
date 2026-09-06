@@ -38,8 +38,17 @@ _FENCE = re.compile(
 # jako pierwszy. Wymagany znak nowej linii na koncu: bez niego w pliku nie
 # ma nic poza sama etykieta.
 _FENCE_LABEL = re.compile(r"^[ \t]*(?:python3?|py)[ \t]*\n", re.IGNORECASE)
-_LINE_NUMBER = re.compile(r"^[ \t]*\d+[ \t]*[:|.]?[ \t]{1,4}(?=\S)")
+# Numer linii: opcjonalne wciecie, cyfry, opcjonalny separator, a potem
+# odstep i kod. Grupa 1 to WLASNIE ten pelny odstep — z jego najmniejszej
+# szerokosci w calym pliku wyliczamy separator, zeby nie zjesc wciecia kodu
+# (A05). Bez chciwego `[ \t]*` przed separatorem, inaczej odstep uciekalby do
+# niego i grupa mierzylaby zawsze 1.
+_LINE_NUMBER = re.compile(r"^[ \t]*\d+[:|.]?([ \t]+)(?=\S)")
 _PROMPT = re.compile(r"^(?:>>>|\.\.\.) ?")
+
+# Marker zwracany, gdy po zdjeciu otoczki nie zostaje zaden kod. Osobny od
+# bledu skladni: to nie "popraw linie X", tylko "wklej program".
+NO_CODE = "__no_code__"
 
 
 def decode_bytes(raw: bytes) -> tuple[str, str]:
@@ -86,10 +95,18 @@ def _strip_line_numbers(text: str) -> tuple[str, bool]:
     meaningful = [ln for ln in lines if ln.strip()]
     if not meaningful:
         return text, False
-    hits = sum(1 for ln in meaningful if _LINE_NUMBER.match(ln))
-    if hits / len(meaningful) < 0.7:
+    matches = [_LINE_NUMBER.match(ln) for ln in meaningful]
+    hits = [m for m in matches if m is not None]
+    if len(hits) / len(meaningful) < 0.7:
         return text, False
-    return "\n".join(_LINE_NUMBER.sub("", ln) for ln in lines), True
+
+    # Separator = NAJMNIEJSZY odstep miedzy numerem a kodem w calym pliku.
+    # `1 def f():` (odstep 1) i `2     return 1` (odstep 5) daja separator 1,
+    # wiec z linii 2 zdejmujemy jeden znak, a cztery spacje wciecia zostaja.
+    # Wczesniej `[ \t]{1,4}` zjadalo wciecie i `return` ladowalo w kolumnie 0.
+    sep = min(len(m.group(1)) for m in hits)
+    prefix = re.compile(r"^([ \t]*)\d+[:|.]?[ \t]{" + str(sep) + "}")
+    return "\n".join(prefix.sub(r"\1", ln) if _LINE_NUMBER.match(ln) else ln for ln in lines), True
 
 
 def _strip_prompts(text: str) -> tuple[str, bool]:
@@ -125,6 +142,26 @@ def _mixes_tabs_and_spaces(text: str) -> bool:
     return has_tab and has_space
 
 
+def _apply_replacements(text: str) -> str:
+    for bad, good in _REPLACEMENTS.items():
+        text = text.replace(bad, good)
+    return text
+
+
+def _expand_indent_tabs(text: str) -> str:
+    """Zamienia taby na spacje WYLACZNIE we wcieciu (tabstop 8), nie w tresci.
+
+    `text.expandtabs()` rozwijalo tez taby WEWNATRZ napisow — literal `'a\\tb'`
+    zmienial znaczenie (A05). Tu ruszamy tylko biale znaki na poczatku linii,
+    czyli rzeczywiste wciecie; reszta linii, lacznie z napisami, zostaje."""
+    out: list[str] = []
+    for line in text.split("\n"):
+        body = line.lstrip(" \t")
+        indent = line[: len(line) - len(body)]
+        out.append(indent.expandtabs(8) + body)
+    return "\n".join(out)
+
+
 def _check_syntax(text: str) -> None:
     """Rzuca `SyntaxError`, jesli `text` nie jest poprawnym Pythonem.
 
@@ -145,18 +182,24 @@ def _check_syntax(text: str) -> None:
     compile(text, "<exelent>", "exec")
 
 
+def _fail(encoding: str, steps: list[str], exc: SyntaxError) -> ConversionResult:
+    return ConversionResult(
+        ok=False,
+        encoding=encoding,
+        steps=tuple(steps),
+        error_line=exc.lineno,
+        error_text=exc.msg,
+    )
+
+
 def convert_text_to_python(raw: bytes) -> ConversionResult:
     text, encoding = decode_bytes(raw)
     steps: list[str] = []
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    normalized = text
-    for bad, good in _REPLACEMENTS.items():
-        normalized = normalized.replace(bad, good)
-    if normalized != text:
-        steps.append("normalize")
-    text = normalized
 
+    # 1. Zdejmowanie OTOCZKI z okna czatu i numeracji. To zmiany strukturalne —
+    #    dotykaja rzeczy, ktore nie sa kodem — i nie ruszaja tresci programu.
     text, changed = _strip_fences(text)
     if changed:
         steps.append("fence")
@@ -172,33 +215,52 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
 
     text = text.strip("\n")
 
+    # 2. Pusto po zdjeciu otoczki to nie program — osobny komunikat od bledu
+    #    skladni ("wklej program", nie "popraw linie X").
+    if not text.strip():
+        return ConversionResult(
+            ok=False, encoding=encoding, steps=tuple(steps), error_text=NO_CODE
+        )
+
+    # 3. Normalizacja WCIEC: taby -> spacje tylko we wcieciu, gdy mieszaja sie
+    #    z spacjami. Nie dotyka tabow wewnatrz napisow.
     if _mixes_tabs_and_spaces(text):
-        text = text.expandtabs(8)
+        text = _expand_indent_tabs(text)
         steps.append("tabs")
 
+    # 4. Poprawny Python zostaje BEZ heurystycznych zmian tresci. Literal
+    #    `label = 'A—B…'` przechodzi nietkniety — wczesniej globalna podmiana
+    #    znakow zmieniala jego wartosc (A05).
     try:
         _check_syntax(text)
+        return ConversionResult(ok=True, code=text, encoding=encoding, steps=tuple(steps))
     except TabError:
-        fixed = text.expandtabs(8)
+        # CPython nie zawsze zglasza mieszanie tabow jako TabError przy kroku 3;
+        # gdy jednak zglosi, rozwin wciecia i sprobuj jeszcze raz.
+        fixed = _expand_indent_tabs(text)
         try:
             _check_syntax(fixed)
         except SyntaxError as exc:
-            return ConversionResult(
-                ok=False,
-                encoding=encoding,
-                steps=tuple(steps),
-                error_line=exc.lineno,
-                error_text=exc.msg,
-            )
-        steps.append("tabs")
-        text = fixed
+            return _fail(encoding, steps, exc)
+        if "tabs" not in steps:
+            steps.append("tabs")
+        return ConversionResult(ok=True, code=fixed, encoding=encoding, steps=tuple(steps))
     except SyntaxError as exc:
-        return ConversionResult(
-            ok=False,
-            encoding=encoding,
-            steps=tuple(steps),
-            error_line=exc.lineno,
-            error_text=exc.msg,
-        )
+        # `as exc` znika po bloku (Python kasuje cel except), wiec przenosimy
+        # blad do zwyklej zmiennej, zeby uzyc go, gdy naprawa nie pomoze.
+        first_error = exc
 
-    return ConversionResult(ok=True, code=text, encoding=encoding, steps=tuple(steps))
+    # 5. Kod sie nie kompiluje. TERAZ, jako NAPRAWA, probujemy podmiany znakow,
+    #    ktore czat lubi psuc (cudzyslowy typograficzne uzyte jako ogranicznik
+    #    napisu, twarda spacja, myslniki). Dla juz poprawnego kodu ten krok sie
+    #    nie wykonuje, wiec nie moze zepsuc jego literalow.
+    repaired = _apply_replacements(text)
+    if repaired != text:
+        try:
+            _check_syntax(repaired)
+        except SyntaxError as exc:
+            return _fail(encoding, steps, exc)
+        steps.append("normalize")
+        return ConversionResult(ok=True, code=repaired, encoding=encoding, steps=tuple(steps))
+
+    return _fail(encoding, steps, first_error)
