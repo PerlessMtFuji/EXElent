@@ -15,6 +15,7 @@ from exelent.deps.sizes import (
     LARGE_WARNING_MB,
     download_size,
     estimate_exe_size,
+    is_heavy,
     resolve_download_plan,
     wheel_size,
 )
@@ -34,6 +35,21 @@ def test_estimate_ignores_packages_we_have_not_measured():
     low_alone, high_alone, _ = estimate_exe_size(["pandas"])
     low_with, high_with, _ = estimate_exe_size(["pandas", "jakas-mala-paczka"])
     assert (low_alone, high_alone) == (low_with, high_with)
+
+
+def test_estimate_recognises_a_pinned_version():
+    """A11: `pandas==2.2.3` ma trafic w ten sam wpis co bare `pandas` —
+    klucz z wersja dawal wczesniej szacunek zero."""
+    bare = estimate_exe_size(["pandas"])
+    pinned = estimate_exe_size(["pandas==2.2.3"])
+    assert pinned == bare
+    assert pinned[0] > 0
+
+
+def test_estimate_recognises_extras_and_case_and_separators():
+    assert estimate_exe_size(["PySide6>=6.7"])[0] > 0
+    assert estimate_exe_size(["opencv_python==4.9"])[0] > 0
+    assert is_heavy("pandas==2.2.3") is True
 
 
 def test_no_packages_means_no_estimate():
