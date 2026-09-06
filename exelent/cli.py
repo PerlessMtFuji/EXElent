@@ -237,6 +237,9 @@ def _build(
         plan.root,
         plan.packages,
         scale.stage(0.0, ENV_PROGRESS_SHARE),
+        # Docelowa wersja Pythona bierze sie Z PLANU, nie z domyslnej stalej:
+        # plan jest jedynym zrodlem prawdy o tym, co budujemy (A13).
+        python_version=plan.python_version,
         single_file=plan.single_file,
         total_download_bytes=plan.total_download_bytes,
         cancel=cancel,

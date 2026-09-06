@@ -122,6 +122,21 @@ def test_failed_required_package_stops_the_build(tmp_path, monkeypatch, stub_bui
     assert _FakeBackend.seen is None
 
 
+def test_target_python_version_from_the_plan_reaches_the_env(tmp_path, monkeypatch, stub_build):
+    """A13: docelowa wersja Pythona idzie Z PLANU do create_build_env, nie z
+    domyslnej stalej — inaczej pole planu bylo martwe."""
+    seen: dict[str, str] = {}
+
+    def fake_env(source, packages, progress, **kwargs):
+        seen["python_version"] = kwargs.get("python_version")
+        return BuildEnv(uv=Path("uv.exe"), venv=Path("venv"), python=Path("python.exe"))
+
+    monkeypatch.setattr(cli, "create_build_env", fake_env)
+    root = _project(tmp_path, {"main.py": "print(1)"})
+    cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert seen["python_version"] == "3.12"
+
+
 def test_no_failed_packages_means_no_warning(tmp_path, stub_build):
     root = _project(tmp_path, {"main.py": "print(1)"})
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")

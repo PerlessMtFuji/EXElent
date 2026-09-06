@@ -9,6 +9,7 @@ from pathlib import Path
 
 from packaging.requirements import InvalidRequirement, Requirement
 
+from exelent.constants import TARGET_PYTHON
 from exelent.deps.aliases import ALIASES
 from exelent.deps.sizes import is_heavy
 from exelent.models import Dependency
@@ -24,10 +25,10 @@ _TARGET_MARKER_ENV = {
     "sys_platform": "win32",
     "platform_system": "Windows",
     "platform_machine": "AMD64",
-    "python_version": "3.12",
-    "python_full_version": "3.12.0",
+    "python_version": TARGET_PYTHON,
+    "python_full_version": f"{TARGET_PYTHON}.0",
     "implementation_name": "cpython",
-    "implementation_version": "3.12.0",
+    "implementation_version": f"{TARGET_PYTHON}.0",
     "platform_python_implementation": "CPython",
 }
 
