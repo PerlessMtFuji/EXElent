@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from exelent.build.backend import CancelToken
+from exelent.build.entrymodule import resolve_entry
 from exelent.build.icon import ensure_ico
 from exelent.build.launcher import LAUNCHER_FILENAME, render_launcher
 from exelent.build.publish import publish_artifact
@@ -81,9 +82,19 @@ _CANCEL_READER_JOIN_SECONDS = 1.0
 _COMPILE_DROPPED = re.compile(r"S(?:yntax|ytnax) error while compiling (.+?)\s*$")
 
 
+def entry_rel(plan: BuildPlan) -> Path:
+    """Sciezka pliku glownego wzgledem korzenia projektu (i workspace)."""
+    try:
+        return plan.entry.relative_to(plan.root)
+    except ValueError:
+        return Path(plan.entry.name)
+
+
 def build_arguments(
     plan: BuildPlan, workspace: Path, launcher: Path, icon: Path | None
 ) -> list[str]:
+    spec = resolve_entry(workspace, entry_rel(plan))
+
     args = [
         "--noconfirm",
         "--clean",
@@ -94,15 +105,25 @@ def build_arguments(
         str(workspace / "build"),
         "--specpath",
         str(workspace),
-        "--paths",
-        str(workspace),
-        "--name",
-        plan.exe_name,
     ]
+    # `--paths`: workspace jako baza plus korzenie importow pliku glownego.
+    # Dla ukladu `src/` bez tego PyInstaller nie znajdzie pakietu; dla folderu
+    # bez `__init__.py` to wlasnie ten katalog czyni `import main` mozliwym.
+    seen: set[str] = set()
+    for path in (workspace, *spec.roots):
+        text = str(path)
+        if text not in seen:
+            seen.add(text)
+            args += ["--paths", text]
+
+    args += ["--name", plan.exe_name]
     args.append("--onefile" if plan.output_mode is OutputMode.ONEFILE else "--onedir")
     args.append("--windowed" if plan.app_kind is AppKind.WINDOWED else "--console")
 
-    for module in (plan.entry.stem, *plan.hidden_imports):
+    # Kwalifikowana nazwa modulu (np. `pkg.main`), a nie sam `stem`: to ona
+    # decyduje, czy PyInstaller zbierze wlasciwy plik i czy launcher go
+    # uruchomi. Dla `python -m pkg` zbieramy `pkg.__main__`.
+    for module in (spec.collect_module, *plan.hidden_imports):
         args += ["--hidden-import", module]
 
     for data in plan.data_files:
@@ -169,9 +190,10 @@ class PyInstallerBackend:
         started = time.monotonic()
         workspace = workspace_for(plan.root, plan.single_file)
 
+        spec = resolve_entry(workspace, entry_rel(plan))
         launcher = workspace / LAUNCHER_FILENAME
         launcher.write_text(
-            render_launcher(plan.entry.stem, plan.app_kind, plan.output_mode),
+            render_launcher(spec.run_module, plan.app_kind, plan.output_mode),
             encoding="utf-8",
         )
 
