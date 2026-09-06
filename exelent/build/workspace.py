@@ -7,7 +7,6 @@ ma jak cofnąć zmian. Wszystko dzieje się na kopii w %LOCALAPPDATA%.
 from __future__ import annotations
 
 import shutil
-from collections.abc import Mapping
 from pathlib import Path
 
 from exelent.constants import EXCLUDED_DIRS
@@ -26,7 +25,11 @@ def workspace_for(root: Path, single_file: Path | None = None) -> Path:
     return work_dir_for(root, single_file) / "src"
 
 
-def materialize_workspace(plan: BuildPlan, converted: Mapping[str, str]) -> Path:
+def materialize_workspace(plan: BuildPlan) -> Path:
+    """Kopia robocza projektu z konwersjami TXT->PY zapisanymi z planu.
+
+    Konwersje bierzemy z `plan.converted` (a nie z osobnego argumentu), bo
+    build wykonuje dokładnie zaakceptowany plan — plan jest jego kontraktem."""
     workspace = workspace_for(plan.root, plan.single_file)
     if workspace.exists():
         shutil.rmtree(workspace, ignore_errors=True)
@@ -53,7 +56,7 @@ def materialize_workspace(plan: BuildPlan, converted: Mapping[str, str]) -> Path
             dirs_exist_ok=False,
         )
 
-    for name, code in converted.items():
+    for name, code in plan.converted:
         (workspace / name).write_text(code, encoding="utf-8")
 
     return workspace

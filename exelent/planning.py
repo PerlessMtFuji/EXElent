@@ -272,4 +272,7 @@ def make_plan(
         single_file=analysis.single_file,
         extra_sources=analysis.extra_sources,
         total_download_bytes=total_download_bytes,
+        # Konwersje wędrują W PLANIE, żeby build dało się wykonać z samego
+        # planu, bez ponownej analizy źródeł (A02).
+        converted=tuple(analysis.converted.items()),
     )

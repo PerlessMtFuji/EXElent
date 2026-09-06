@@ -9,10 +9,12 @@ zbudowany (`threading.Event` w środku).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from PySide6.QtCore import QObject, QThread, Signal
 
 from exelent.build.backend import CancelToken
-from exelent.cli import run_build
+from exelent.cli import execute_build
 from exelent.models import BuildPlan, BuildResult, Issue, Severity
 
 # Ile czekamy na zamknięcie wątku po zakończeniu budowania. Wątek w tym
@@ -27,27 +29,24 @@ class _Job(QObject):
     progress = Signal(object)
     finished = Signal(object)
 
-    def __init__(self, plan: BuildPlan, cancel: CancelToken) -> None:
+    def __init__(
+        self, plan: BuildPlan, cancel: CancelToken, carried: Sequence[Issue] = ()
+    ) -> None:
         super().__init__()
         self._plan = plan
         self._cancel = cancel
+        self._carried = tuple(carried)
 
     def run(self) -> None:
-        plan = self._plan
         try:
-            result = run_build(
-                plan.root,
-                self.progress.emit,
-                self._cancel,
-                # To, co użytkownik poprawił na ekranie 2. Bez tego cały tamten
-                # ekran byłby dekoracją: build zbudowałby to, co zgadła analiza.
-                entry=plan.entry,
-                exe_name=plan.exe_name,
-                icon=plan.icon,
-                dest_dir=plan.dest_dir,
-                app_kind=plan.app_kind,
-                output_mode=plan.output_mode,
-                total_download_bytes=plan.total_download_bytes,
+            # Build DOKŁADNIE tego planu, który zaakceptował użytkownik na
+            # ekranie 2 — bez ponownej analizy folderu. Wcześniej worker
+            # wołał `run_build(plan.root, ...)`, co analizowało katalog od nowa
+            # i gubiło wybór pojedynczego pliku: budowanie `Pobrane/x.py`
+            # pakowało całe Pobrane. `carried` niesie ostrzeżenia analizy z
+            # ekranu 2, żeby dotarły też na ekran wyniku.
+            result = execute_build(
+                self._plan, self.progress.emit, self._cancel, carried=self._carried
             )
         except Exception as exc:  # noqa: BLE001 - GUI nie moze umrzec przez build
             # `run_build` ma własną granicę wyjątków, więc tu trafia tylko to,
@@ -77,7 +76,7 @@ class BuildWorker(QObject):
     def is_running(self) -> bool:
         return self._thread is not None
 
-    def start(self, plan: BuildPlan) -> None:
+    def start(self, plan: BuildPlan, carried: Sequence[Issue] = ()) -> None:
         """Rusza build w osobnym wątku.
 
         Token powstaje TUTAJ, nie raz na życie workera: jeden token na zawsze
@@ -87,12 +86,15 @@ class BuildWorker(QObject):
 
         Drugi build w trakcie pierwszego jest odrzucany — spec §3 dopuszcza
         jeden naraz, bo oba korzystają z tego samego cache'u środowisk.
+
+        `carried` to ostrzeżenia analizy z ekranu 2 (np. sekret w kodzie,
+        ciężka paczka), które mają dotrzeć na ekran wyniku razem z buildem.
         """
         if self.is_running():
             return
         self._token = CancelToken()
         self._thread = QThread()
-        self._job = _Job(plan, self._token)
+        self._job = _Job(plan, self._token, carried)
         self._job.moveToThread(self._thread)
         self._job.progress.connect(self.progress)
         self._job.finished.connect(self._on_done)
