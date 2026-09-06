@@ -66,8 +66,13 @@ def looks_like_python(text: str) -> bool:
 
 
 def _read_head(path: Path, limit: int = 64_000) -> str:
+    """Czyta co najwyżej `limit` bajtów — do rozpoznania rodzaju pliku.
+
+    `read_bytes()[:limit]` wciągało do pamięci CAŁY plik (np. 2 GB .txt) i
+    dopiero potem obcinało. Otwieramy i czytamy tylko potrzebny prefiks (A10)."""
     try:
-        return path.read_bytes()[:limit].decode("utf-8", errors="replace")
+        with open(path, "rb") as handle:
+            return handle.read(limit).decode("utf-8", errors="replace")
     except OSError:
         return ""
 
