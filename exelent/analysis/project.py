@@ -17,7 +17,7 @@ from exelent.analysis.apptype import (
 )
 from exelent.analysis.entrypoint import entry_is_certain, local_module_names, rank_entry_candidates
 from exelent.analysis.scanner import scan_directory, scan_single_file
-from exelent.analysis.textconv import convert_text_to_python
+from exelent.analysis.textconv import NO_CODE, convert_text_to_python
 from exelent.deps.resolve import resolve_dependencies
 from exelent.deps.sizes import LARGE_WARNING_MB, estimate_exe_size
 from exelent.models import Issue, ProjectAnalysis, ScanResult, Severity
@@ -100,7 +100,12 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     # other sources and the user just needs to be told one file was skipped.
     txt_severity = Severity.WARNING if sources else Severity.BLOCKER
     for data in conversion_failures:
-        issues.append(Issue("txt_syntax_error", txt_severity, data))
+        # Pusty wynik (sama otoczka czatu, pusty blok) dostaje osobny, ludzki
+        # komunikat zamiast "blad w linii 0" (A05).
+        if data["detail"] == NO_CODE:
+            issues.append(Issue("txt_no_code", txt_severity, {"file": data["file"]}))
+        else:
+            issues.append(Issue("txt_syntax_error", txt_severity, data))
 
     if not sources:
         other = _detect_other_language(scan)

@@ -29,6 +29,10 @@ CATALOG: dict[str, str] = {
     "txt_syntax_error": (
         "W pliku {file} jest błąd w linii {line}: {detail}. Popraw go i spróbuj ponownie."
     ),
+    "txt_no_code": (
+        "W pliku {file} nie ma żadnego kodu do uruchomienia — została sama otoczka z okna "
+        "czatu albo pusty blok. Wklej program i spróbuj ponownie."
+    ),
     "no_entry_point": (
         "Nie wiem, od którego pliku zaczyna się Twój program. "
         "Wskaż ten, który normalnie uruchamiasz."
