@@ -15,7 +15,7 @@ def _fake_stream_uv(returncode=0, calls=None, transcript=(), fails=None, text=No
     ten sam dla wszystkich.
     """
 
-    def fake(uv, args, on_line, *, cwd=None):
+    def fake(uv, args, on_line, *, cwd=None, cancel=None):
         if calls is not None:
             calls.append(list(args))
         for line in transcript:
@@ -31,7 +31,7 @@ def _run_fake_uv(monkeypatch, tmp_path, transcript, returncode=0, fail_venv=Fals
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
 
-    def fake_run_uv(uv, args, *, cwd=None):
+    def fake_run_uv(uv, args, *, cwd=None, cancel=None):
         code = 1 if (fail_venv and args and args[0] == "venv") else 0
         return subprocess.CompletedProcess(list(args), code, "", "\n".join(transcript))
 
@@ -44,7 +44,7 @@ def test_builds_expected_uv_command_sequence(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
     calls: list[list[str]] = []
 
-    def fake_run(uv, args, *, cwd=None):
+    def fake_run(uv, args, *, cwd=None, cancel=None):
         calls.append(list(args))
 
         class Result:
@@ -71,7 +71,7 @@ def test_pyinstaller_is_always_installed(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
     installed: list[list[str]] = []
 
-    def fake_run(uv, args, *, cwd=None):
+    def fake_run(uv, args, *, cwd=None, cancel=None):
         class Result:
             returncode = 0
             stdout = ""
@@ -90,7 +90,7 @@ def test_optional_packages_do_not_abort_on_failure(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
 
-    def fake_run(uv, args, *, cwd=None):
+    def fake_run(uv, args, *, cwd=None, cancel=None):
         class Result:
             returncode = 1 if "nieistniejaca-paczka" in args else 0
             stdout = ""
@@ -111,7 +111,7 @@ def test_optional_packages_do_not_abort_on_failure(monkeypatch, tmp_path):
 def _uv_failing_on(match, stderr: str = "error: Failed to install"):
     """Podmiana `run_uv` wywracajaca dokladnie te wywolania, ktore wskaze `match`."""
 
-    def fake_run(uv, args, *, cwd=None):
+    def fake_run(uv, args, *, cwd=None, cancel=None):
         broken = match(list(args))
 
         class Result:
@@ -196,7 +196,7 @@ def test_two_files_in_one_folder_get_separate_environments(monkeypatch, tmp_path
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
 
-    def fake_run(uv, args, *, cwd=None):
+    def fake_run(uv, args, *, cwd=None, cancel=None):
         class Result:
             returncode = 0
             stdout = ""
@@ -210,6 +210,31 @@ def test_two_files_in_one_folder_get_separate_environments(monkeypatch, tmp_path
     a = env.create_build_env(downloads, [], noop_progress, single_file=downloads / "a.py")
     b = env.create_build_env(downloads, [], noop_progress, single_file=downloads / "b.py")
     assert a.venv != b.venv
+
+
+def test_cancel_token_aborts_env_setup_as_cancelled(monkeypatch, tmp_path):
+    """A09: token anulowania dociera do tworzenia srodowiska. Anulowanie na
+    etapie pobierania konczy sie build_cancelled, a nie bledem srodowiska."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
+
+    def fake_run(uv, args, *, cwd=None, cancel=None):
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(env, "run_uv", fake_run)
+    monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv())
+
+    class _Cancelled:
+        cancelled = True
+
+    with pytest.raises(env.IssueError) as excinfo:
+        env.create_build_env(tmp_path / "src", [], noop_progress, cancel=_Cancelled())
+    assert "build_cancelled" in [i.code for i in excinfo.value.issues]
 
 
 # --- Zadanie 11: instalacja paczek liczy bajty na zywo ---

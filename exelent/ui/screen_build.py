@@ -79,6 +79,10 @@ class BuildScreen(QWidget):
         self.back_button = QPushButton(t("build_back_to_review"))
         self.again_button = QPushButton(t("build_again"), objectName="Primary")
 
+        # Natychmiastowa reakcja na "Przerwij": samo anulowanie leci osobnym
+        # polaczeniem (w app.py), ale zanim watek zdazy zareagowac, przycisk ma
+        # od razu pokazac "Przerywanie…" i przestac przyjmowac kliki (A09).
+        self.cancel_button.clicked.connect(self._on_cancel_clicked)
         self.again_button.clicked.connect(self.restart_requested)
         self.back_button.clicked.connect(self.back_to_review)
         self.open_folder_button.clicked.connect(self._open_folder)
@@ -168,6 +172,15 @@ class BuildScreen(QWidget):
         self._phase_key = key
         self.phase_label.setText(t(key))
 
+    def _on_cancel_clicked(self) -> None:
+        """Ekran natychmiast potwierdza przerwanie — nie czeka na watek.
+
+        Anulowanie procesu potrafi zajac chwile (ubicie drzewa uv/PyInstallera).
+        Przez ten czas przycisk musi mowic 'Przerywanie…' i nie dac sie klikac
+        drugi raz, zeby uzytkownik nie mial wrazenia, ze klik nie zadzialal."""
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText(t("build_cancelling"))
+
     def _show_running(self) -> None:
         self._set_phase("build_start")
         self.bar.setValue(0)
@@ -177,6 +190,8 @@ class BuildScreen(QWidget):
         self._show_log(False)
         self.log_toggle.setVisible(False)
         self._hide_all_actions()
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setText(t("build_cancel"))
         self.cancel_button.setVisible(True)
 
     def start(self, plan: BuildPlan) -> None:
