@@ -314,3 +314,51 @@ def test_console_program_reading_input_builds_and_runs(tmp_path, shared_state):
     assert run.returncode == 0, run.stderr
     assert "CZESC-ALA" in run.stdout
     assert _pe_subsystem(exe) == SUBSYSTEM_CONSOLE, "program pytajacy stracil konsole"
+
+
+# --- A03: plik glowny w pakiecie i uklad src/ ---
+
+
+def test_package_entry_point_runs_and_imports_a_submodule(tmp_path, shared_state):
+    """Zgloszenie: `pkg/main.py` z blokiem `plan.entry.stem` dawalo launcher
+    `runpy.run_module("main")`, a EXE umieralo na `ImportError: No module named
+    main`. Nazwa modulu to `pkg.main`, i tak ma go uruchomic launcher. Dowodem
+    jest EXE, ktore uruchomi plik glowny ORAZ zaimportowany podmodul pakietu."""
+    root = _project(
+        tmp_path,
+        "pakiet",
+        {
+            "pkg/__init__.py": "",
+            "pkg/main.py": "from pkg.pomocnik import WITAJ\nprint(WITAJ)\n",
+            "pkg/pomocnik.py": "WITAJ = 'PAKIET-DZIALA'\n",
+        },
+    )
+    result = run_build(
+        root, noop_progress, entry=root / "pkg" / "main.py", dest_dir=tmp_path / "out"
+    )
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([result.artifact], timeout=180)
+    assert "PAKIET-DZIALA" in run.stdout
+    _assert_source_untouched(root, {"pkg", "pkg/__init__.py", "pkg/main.py", "pkg/pomocnik.py"})
+
+
+def test_src_layout_package_builds_and_runs(tmp_path, shared_state):
+    """Uklad `src/`: korzeniem importow jest `src/`, wiec modul to `pkg.main`,
+    a `src` musi trafic na `--paths`, inaczej PyInstaller nie znajdzie pakietu."""
+    root = _project(
+        tmp_path,
+        "src-uklad",
+        {
+            "src/pkg/__init__.py": "",
+            "src/pkg/main.py": "from pkg.dane import X\nprint('SRC-OK', X)\n",
+            "src/pkg/dane.py": "X = 7\n",
+        },
+    )
+    result = run_build(
+        root, noop_progress, entry=root / "src" / "pkg" / "main.py", dest_dir=tmp_path / "out"
+    )
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([result.artifact], timeout=180)
+    assert "SRC-OK 7" in run.stdout
