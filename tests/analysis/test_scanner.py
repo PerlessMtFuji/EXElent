@@ -1,6 +1,20 @@
 from pathlib import Path
 
-from exelent.analysis.scanner import local_import_closure, scan_directory, scan_single_file
+from exelent.analysis.scanner import (
+    _read_head,
+    local_import_closure,
+    scan_directory,
+    scan_single_file,
+)
+
+
+def test_read_head_reads_only_the_prefix_not_the_whole_file(tmp_path):
+    """A10: rozpoznanie pliku nie moze wciagac do pamieci calego pliku.
+    Czytamy tylko `limit` bajtow, nawet gdy plik jest znacznie wiekszy."""
+    big = tmp_path / "duzy.txt"
+    big.write_bytes(b"A" * 500_000)
+    head = _read_head(big, limit=1000)
+    assert head == "A" * 1000
 
 
 def _make(tmp_path: Path, files: dict[str, str]) -> Path:
