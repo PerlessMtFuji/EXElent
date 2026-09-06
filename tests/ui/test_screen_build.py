@@ -332,20 +332,45 @@ def test_run_button_launches_the_built_program(screen, monkeypatch, tmp_path):
         screen_build_module.subprocess, "Popen", lambda *a, **k: uruchomione.append(a)
     )
     artefakt = _artifact(tmp_path)
-    screen.on_finished(BuildResult(ok=True, artifact=artefakt, size_bytes=2048))
+    screen.on_finished(
+        BuildResult(ok=True, artifact=artefakt, executable_path=artefakt, size_bytes=2048)
+    )
     screen.run_button.click()
     assert uruchomione == [([str(artefakt)],)]
 
 
-def test_a_onedir_result_opens_the_folder_itself(screen, monkeypatch, tmp_path):
-    """Przy `OutputMode.ONEDIR` artefaktem jest KATALOG, nie plik."""
+def test_run_button_launches_the_exe_inside_a_onedir(screen, monkeypatch, tmp_path):
+    """A12: w ONEDIR artefaktem jest KATALOG — przycisk „Uruchom" ma odpalic
+    EXE lezacy w srodku, a nie milczec, bo katalog nie jest plikiem."""
+    uruchomione = []
+    monkeypatch.setattr(
+        screen_build_module.subprocess, "Popen", lambda *a, **k: uruchomione.append(a)
+    )
+    folder = tmp_path / "Program"
+    folder.mkdir()
+    exe = folder / "Program.exe"
+    exe.write_bytes(b"exe")
+    screen.on_finished(
+        BuildResult(ok=True, artifact=folder, executable_path=exe, size_bytes=2048)
+    )
+    screen.run_button.click()
+    assert uruchomione == [([str(exe)],)]
+
+
+def test_a_onedir_result_opens_the_folder_and_selects_the_exe(screen, monkeypatch, tmp_path):
+    """Przy `OutputMode.ONEDIR` artefaktem jest KATALOG; „Pokaz w folderze"
+    zaznacza w nim plik EXE."""
     wywolania = []
     monkeypatch.setattr(screen_build_module.subprocess, "run", lambda *a, **k: wywolania.append(a))
     folder = tmp_path / "Program"
     folder.mkdir()
-    screen.on_finished(BuildResult(ok=True, artifact=folder, size_bytes=2048))
+    exe = folder / "Program.exe"
+    exe.write_bytes(b"exe")
+    screen.on_finished(
+        BuildResult(ok=True, artifact=folder, executable_path=exe, size_bytes=2048)
+    )
     screen.open_folder_button.click()
-    assert str(folder) in " ".join(wywolania[0][0])
+    assert str(exe) in " ".join(wywolania[0][0])
 
 
 # --- powrot na start ---

@@ -149,6 +149,11 @@ class BuildPlan:
 class BuildResult:
     ok: bool
     artifact: Path | None = None
+    # Plik EXE do URUCHOMIENIA — osobno od `artifact` (A12). Dla ONEFILE to ten
+    # sam plik; dla ONEDIR `artifact` jest KATALOGIEM, a EXE leży w środku, więc
+    # przycisk „Uruchom" bez tej ścieżki nie miał czego odpalić (`is_file()`
+    # było fałszem dla katalogu).
+    executable_path: Path | None = None
     size_bytes: int = 0
     duration_s: float = 0.0
     log_path: Path | None = None
