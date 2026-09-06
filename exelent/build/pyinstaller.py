@@ -336,10 +336,18 @@ class PyInstallerBackend:
                 issues=issues,
             )
 
+        # ONEFILE: artefakt to sam plik EXE. ONEDIR: artefakt to KATALOG, a EXE
+        # leży w nim pod nazwą programu — to jego uruchamia przycisk „Uruchom".
+        if plan.output_mode is OutputMode.ONEDIR:
+            executable = produced / f"{plan.exe_name}.exe"
+        else:
+            executable = produced
+
         progress(Progress(phase="done", fraction=1.0))
         return BuildResult(
             ok=True,
             artifact=produced,
+            executable_path=executable,
             size_bytes=_tree_size(produced),
             duration_s=duration,
             log_path=log_path,

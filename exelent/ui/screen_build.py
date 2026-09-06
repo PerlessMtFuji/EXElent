@@ -328,27 +328,34 @@ class BuildScreen(QWidget):
     # --- akcje ---
 
     def _open_folder(self) -> None:
-        """„Pokaż w folderze" ma POKAZAĆ plik, nie tylko otworzyć katalog.
+        """„Pokaż w folderze" ma POKAZAĆ plik EXE, nie tylko otworzyć katalog.
 
         Katalog wynikowy potrafi mieć kilkaset pozycji (ONEDIR), więc samo
         otwarcie okna zostawia użytkownika ze szukaniem. `/select` otwiera
-        Eksploratora z zaznaczonym plikiem. Przy ONEDIR artefaktem jest sam
-        katalog i wtedy otwieramy go wprost.
+        Eksploratora z zaznaczonym plikiem EXE — także w ONEDIR, gdzie EXE leży
+        wśród bibliotek.
         """
-        artifact = self._result.artifact if self._result else None
-        if artifact is None:
+        result = self._result
+        if result is None or result.artifact is None:
             return
+        selectable = result.executable_path or result.artifact
         arguments = (
-            ["explorer", f"/select,{artifact}"]
-            if artifact.is_file()
-            else ["explorer", str(artifact)]
+            ["explorer", f"/select,{selectable}"]
+            if selectable.is_file()
+            else ["explorer", str(result.artifact)]
         )
         subprocess.run(arguments, check=False)
 
     def _run_artifact(self) -> None:
-        artifact = self._result.artifact if self._result else None
-        if artifact is not None and artifact.is_file():
-            subprocess.Popen([str(artifact)], cwd=str(artifact.parent))
+        """Uruchamia gotowy program. Działa w ONEFILE i ONEDIR (A12).
+
+        Wcześniej warunek `artifact.is_file()` był fałszem dla ONEDIR, którego
+        artefaktem jest katalog — przycisk „Uruchom" nic nie robił. Teraz
+        odpalamy `executable_path`, a `cwd` to katalog EXE, żeby program czytał
+        swoje zasoby leżące obok."""
+        exe = self._result.executable_path if self._result else None
+        if exe is not None and exe.is_file():
+            subprocess.Popen([str(exe)], cwd=str(exe.parent))
 
     def _plan_summary(self) -> str:
         """Kontekst zgłoszenia. Nazwa PROJEKTU, nie artefaktu.
