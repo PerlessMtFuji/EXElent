@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 
 from exelent.build.backend import CancelToken
+from exelent.constants import TARGET_PYTHON
 from exelent.deps.sizes import DownloadPlan, resolve_download_plan
 from exelent.runtime.bootstrap import uv_path
 
@@ -71,8 +72,13 @@ class PreflightWorker(QObject):
             # wlasny pasek postepu — sciaganie 15 MB w tle ekranu 2, bez slowa
             # do uzytkownika, byloby niespodzianka.
             return DownloadPlan()
-        python = uv.parent / "preflight-venv" / "Scripts" / "python.exe"
-        return resolve_download_plan(uv=uv, python=python, packages=packages, cancel=cancel)
+        # Wersja DOCELOWEGO Pythona, nie sciezka do `preflight-venv`, ktorego
+        # nikt nie tworzyl: --dry-run rozwiazuje wersje kol dla wlasciwego
+        # interpretera (te sama, ktorej uzyje build), gdy jest juz w cache uv;
+        # bez cache uv i tak degradujemy do pustego planu (A11).
+        return resolve_download_plan(
+            uv=uv, python=TARGET_PYTHON, packages=packages, cancel=cancel
+        )
 
     def is_running(self) -> bool:
         return self._thread is not None

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 import urllib.request
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -91,8 +92,33 @@ EXE_CONTRIBUTION: dict[str, Contribution] = {
 }
 
 
+def _canonical(name: str) -> str:
+    """Kanoniczna forma nazwy dystrybucji (PEP 503): małe litery, `-_.` scalone."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _base_name(spec: str) -> str:
+    """Sama nazwa paczki z całej specyfikacji.
+
+    `pandas==2.2.3` -> `pandas`, `uvicorn[standard]>=0.20` -> `uvicorn`. Bez
+    tego tabela wkładów, kluczowana nazwą, nie rozpoznawała przypiętej wersji
+    i szacunek dla `pandas==2.2.3` wynosił zero (A11)."""
+    return re.split(r"[<>=!~;\[ @]", spec.strip(), maxsplit=1)[0].strip()
+
+
+# Tabela wkładów wg formy kanonicznej, żeby `PySide6>=6.7`, `opencv_python`
+# czy `pandas==2.2.3` trafiały w ten sam wpis co bare `PySide6`/`opencv-python`.
+_CONTRIBUTION_BY_CANONICAL: dict[str, Contribution] = {
+    _canonical(name): contribution for name, contribution in EXE_CONTRIBUTION.items()
+}
+
+
+def _contribution_for(spec: str) -> Contribution | None:
+    return _CONTRIBUTION_BY_CANONICAL.get(_canonical(_base_name(spec)))
+
+
 def is_heavy(package: str) -> bool:
-    entry = EXE_CONTRIBUTION.get(package)
+    entry = _contribution_for(package)
     return entry is not None and entry.high_mb >= HEAVY_THRESHOLD_MB
 
 
@@ -106,7 +132,11 @@ def estimate_exe_size(packages: Iterable[str]) -> tuple[int, int, tuple[str, ...
     program zajmie", a gotowy program to także interpreter i biblioteka
     standardowa.
     """
-    known = [(name, EXE_CONTRIBUTION[name]) for name in packages if name in EXE_CONTRIBUTION]
+    known: list[tuple[str, Contribution]] = []
+    for spec in packages:
+        contribution = _contribution_for(spec)
+        if contribution is not None:
+            known.append((_base_name(spec), contribution))
     if not known:
         return 0, 0, ()
     low = BASE_EXE_MB + sum(c.low_mb for _name, c in known)
@@ -171,7 +201,7 @@ class DownloadPlan:
     total_bytes: int = 0
 
 
-def _default_run_dry(uv: Path, python: Path, packages: Sequence[str], *, cancel=None) -> str:
+def _default_run_dry(uv: Path, python: str | Path, packages: Sequence[str], *, cancel=None) -> str:
     result = run_uv(
         uv,
         ["pip", "install", "--python", str(python), "--dry-run", "--color", "never", *packages],
@@ -182,7 +212,7 @@ def _default_run_dry(uv: Path, python: Path, packages: Sequence[str], *, cancel=
 
 def resolve_download_plan(
     uv: Path,
-    python: Path,
+    python: str | Path,
     packages: Sequence[str],
     *,
     run_dry=None,
