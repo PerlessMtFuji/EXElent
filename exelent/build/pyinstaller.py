@@ -20,7 +20,7 @@ from exelent.build.workspace import workspace_for
 from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, Severity
 from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.env import CREATE_NO_WINDOW, BuildEnv
-from exelent.runtime.paths import logs_dir, path_hash
+from exelent.runtime.paths import logs_dir, path_hash, session_id
 from exelent.runtime.procs import kill_tree
 
 PHASES: dict[str, str] = {
@@ -151,8 +151,11 @@ def log_path_for(plan: BuildPlan) -> Path:
     projekty czesto nazywaja sie tak samo ("program", "main"), a od rundy 2
     stary log jest KASOWANY przed buildem — bez tego skrotu build jednego
     projektu niszczylby log drugiego, zanim cokolwiek zapisze.
+
+    Jest tez identyfikator sesji: dwie instancje budujace ten sam projekt
+    pisza do osobnych logow, wiec jedna nie kasuje logu drugiej (A13).
     """
-    return logs_dir() / f"{plan.exe_name}-{path_hash(plan.root)}.log"
+    return logs_dir() / f"{plan.exe_name}-{path_hash(plan.root)}-{session_id()}.log"
 
 
 class PyInstallerBackend:

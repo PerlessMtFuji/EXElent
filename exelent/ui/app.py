@@ -20,6 +20,7 @@ from exelent.constants import APP_NAME
 from exelent.deps.sizes import estimate_exe_size
 from exelent.i18n import set_language, system_language
 from exelent.models import Issue, Severity
+from exelent.runtime.paths import clean_current_session
 from exelent.runtime.procs import kill_tree
 from exelent.settings import load_settings, save_settings
 from exelent.ui.dialog_download import DownloadDialog, should_ask, should_ask_offline
@@ -246,6 +247,12 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
         if not (stopped_preflight and stopped_build):
             self.hard_exit()
+            return
+        # Grzeczne zamkniecie: watki wyszly, wiec zaden proces nie trzyma juz
+        # plikow tej sesji. Kasujemy katalog roboczy TEJ sesji (kopia kodu,
+        # venv, scratch PyInstallera) — sesja innej instancji zostaje nietknieta
+        # (A13). Best-effort: sprzatanie nie moze wstrzymac zamkniecia okna.
+        clean_current_session()
 
     def set_language(self, lang: str) -> None:
         set_language(lang)
