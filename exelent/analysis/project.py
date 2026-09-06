@@ -171,9 +171,10 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     output_mode = detect_output_mode(sources)
     issues.extend(collect_code_issues(sources))
 
-    requirements_text = _read(scan.requirements) if scan.requirements else None
+    # Ścieżka, a nie sam tekst: resolver rozwija `-r`/`-c` względem katalogu
+    # manifestu (A07).
     dependencies = resolve_dependencies(
-        sources, local_module_names(root, sources), requirements_text
+        sources, local_module_names(root, sources), requirements_path=scan.requirements
     )
     hidden_imports = collect_hidden_imports(sources)
 
