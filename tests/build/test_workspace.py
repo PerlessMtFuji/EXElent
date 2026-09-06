@@ -11,6 +11,7 @@ def _plan(
     entry: Path | None = None,
     single_file: Path | None = None,
     extra: tuple[Path, ...] = (),
+    converted: tuple[tuple[str, str], ...] = (),
 ) -> BuildPlan:
     return BuildPlan(
         root=root,
@@ -21,6 +22,7 @@ def _plan(
         dest_dir=dest or root.parent / "out",
         single_file=single_file,
         extra_sources=extra,
+        converted=converted,
     )
 
 
@@ -31,7 +33,7 @@ def test_source_directory_is_never_modified(tmp_path, monkeypatch):
     (root / "main.py").write_text("print(1)", encoding="utf-8")
     before = {p.name for p in root.iterdir()}
 
-    materialize_workspace(_plan(root, tmp_path / "out"), {})
+    materialize_workspace(_plan(root, tmp_path / "out"))
 
     assert {p.name for p in root.iterdir()} == before
 
@@ -43,7 +45,7 @@ def test_excluded_directories_are_not_copied(tmp_path, monkeypatch):
     (root / ".venv" / "lib" / "big.py").write_text("x", encoding="utf-8")
     (root / "main.py").write_text("print(1)", encoding="utf-8")
 
-    workspace = materialize_workspace(_plan(root, tmp_path / "out"), {})
+    workspace = materialize_workspace(_plan(root, tmp_path / "out"))
 
     assert (workspace / "main.py").exists()
     assert not (workspace / ".venv").exists()
@@ -59,7 +61,7 @@ def test_dot_directories_are_not_copied(tmp_path, monkeypatch):
     (root / ".hidden" / "sub" / "secret.py").write_text("x", encoding="utf-8")
     (root / "main.py").write_text("print(1)", encoding="utf-8")
 
-    workspace = materialize_workspace(_plan(root, tmp_path / "out"), {})
+    workspace = materialize_workspace(_plan(root, tmp_path / "out"))
 
     assert (workspace / "main.py").exists()
     assert not (workspace / ".hidden").exists()
@@ -71,7 +73,8 @@ def test_converted_text_files_are_written_to_workspace(tmp_path, monkeypatch):
     root.mkdir()
     (root / "kod.txt").write_text("cokolwiek", encoding="utf-8")
 
-    workspace = materialize_workspace(_plan(root, tmp_path / "out"), {"kod.py": "print('ok')"})
+    plan = _plan(root, tmp_path / "out", converted=(("kod.py", "print('ok')"),))
+    workspace = materialize_workspace(plan)
 
     assert (workspace / "kod.py").read_text(encoding="utf-8") == "print('ok')"
     assert not (root / "kod.py").exists()
@@ -83,9 +86,9 @@ def test_workspace_is_cleaned_between_builds(tmp_path, monkeypatch):
     root.mkdir()
     (root / "main.py").write_text("print(1)", encoding="utf-8")
 
-    first = materialize_workspace(_plan(root, tmp_path / "out"), {})
+    first = materialize_workspace(_plan(root, tmp_path / "out"))
     (first / "smiec.py").write_text("stare", encoding="utf-8")
-    second = materialize_workspace(_plan(root, tmp_path / "out"), {})
+    second = materialize_workspace(_plan(root, tmp_path / "out"))
 
     assert not (second / "smiec.py").exists()
 
@@ -96,7 +99,7 @@ def test_workspace_path_is_ascii(tmp_path, monkeypatch):
     root.mkdir()
     (root / "main.py").write_text("print(1)", encoding="utf-8")
 
-    workspace = materialize_workspace(_plan(root, tmp_path / "out"), {})
+    workspace = materialize_workspace(_plan(root, tmp_path / "out"))
 
     assert str(workspace.relative_to(tmp_path / "state")).isascii()
 
@@ -117,7 +120,7 @@ def test_single_file_workspace_copies_only_the_relevant_files(tmp_path, monkeypa
         single_file=downloads / "test.py",
         extra=(downloads / "helper.py",),
     )
-    workspace = materialize_workspace(plan, {})
+    workspace = materialize_workspace(plan)
 
     assert (workspace / "test.py").exists()
     assert (workspace / "helper.py").exists()
@@ -155,7 +158,7 @@ def test_backend_works_in_the_workspace_that_was_materialized(tmp_path, monkeypa
     (root / "main.py").write_text("print(1)", encoding="utf-8")
     plan = _plan(root, tmp_path / "out")
 
-    workspace = materialize_workspace(plan, {})
+    workspace = materialize_workspace(plan)
 
     env = BuildEnv(
         uv=tmp_path / "uv.exe",

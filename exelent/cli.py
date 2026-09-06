@@ -127,64 +127,93 @@ def run_build(
     cancel: CancelToken | None = None,
     **overrides,
 ) -> BuildResult:
+    """Pełna droga z KATALOGU do EXE: analiza, plan, build.
+
+    Adapter dla konsoli i dla każdego, kto ma tylko ścieżkę. Właściwe budowanie
+    (to samo, którego używa GUI z gotowym planem) mieszka w `execute_build`.
+    """
     cancel = cancel or CancelToken()
 
     # Ostrzezenia analizy (sekrety w kodzie, ciezkie paczki, niepewny plik
     # glowny) sa jedyna droga, ktora CLI moze o nich powiedziec — GUI pokazuje
-    # je na ekranie 2, konsola nie ma takiego ekranu. Lista jest mutowalna, bo
-    # rosnie po drodze: to, co juz wiadomo, ma przetrwac kazda pozniejsza
-    # awarie, lacznie z ta na sciezce BLOCKERa analizy.
+    # je na ekranie 2, konsola nie ma takiego ekranu.
     carried: list[Issue] = []
-    plan: BuildPlan | None = None
-    # Plan, ktorego log NALEZY do tego przebiegu. Osobno od `plan`, bo miedzy
-    # policzeniem planu a skasowaniem starego logu jest okno (warunki wstepne),
-    # w ktorym pod ta sciezka lezy jeszcze log poprzedniego przebiegu.
-    log_owner: BuildPlan | None = None
 
-    def _fail(issues: Sequence[Issue]) -> BuildResult:
-        return BuildResult(
-            ok=False,
-            issues=sort_issues((*carried, *issues)),
-            log_path=_existing_log(log_owner),
-        )
-
-    # JEDNA granica wyjatkow na CALA droge, nie tylko na sam build. Runda 1
-    # domknela build, ale `analyze_project` stoi przed nim i czyta kazdy plik
-    # uzytkownika bez straznika — jeden plik z odmowa ACL albo dostepny tylko
-    # w chmurze konczyl sie surowym tracebackiem. Tak samo `make_plan` (sonda
-    # zapisywalnosci, wywolanie Win32, `TypeError` na literowce w nazwie opcji
-    # podanej przez GUI) i `check_preconditions` (`shutil.disk_usage`).
+    # Granica wyjatkow na etap analizy i planu. `analyze_project` czyta kazdy
+    # plik uzytkownika (jeden z odmowa ACL albo dostepny tylko w chmurze konczyl
+    # sie surowym tracebackiem), a `make_plan` robi sonde zapisywalnosci i
+    # wywolanie Win32. Sam build ma wlasna granice w `execute_build`.
     try:
         analysis = analyze_project(Path(root))
         carried.extend(i for i in analysis.issues if i.severity is not Severity.BLOCKER)
 
         blockers = tuple(i for i in analysis.issues if i.severity is Severity.BLOCKER)
         if blockers:
-            return _fail(blockers)
+            return BuildResult(ok=False, issues=sort_issues((*carried, *blockers)))
 
         # Brak pliku glownego sprawdzamy TUTAJ, a nie lapiac `ValueError` z
-        # `make_plan`. Diagnoza po typie wyjatku byla mina: `make_plan` robi
-        # dzis sonde zapisywalnosci na wielu kandydatach i wywolanie Win32,
-        # wiec kazdy przyszly `ValueError` z tego I/O nazwalby sie
-        # "nie znaleziono pliku glownego". Teraz taki blad idzie do ogolnego
-        # ramienia i dostaje uczciwe `unexpected_error`.
+        # `make_plan`: `make_plan` robi dzis I/O (sonda zapisywalnosci, Win32),
+        # wiec kazdy przyszly `ValueError` z niego nazwalby sie mylnie
+        # "nie znaleziono pliku glownego". Teraz taki blad dostaje uczciwe
+        # `unexpected_error` z ogolnego ramienia.
         if (overrides.get("entry") or analysis.entry) is None:
-            return _fail((Issue("no_entry_point", Severity.BLOCKER),))
+            return BuildResult(
+                ok=False,
+                issues=sort_issues((*carried, Issue("no_entry_point", Severity.BLOCKER))),
+            )
 
         plan = make_plan(analysis, **overrides)
+    except IssueError as exc:
+        return BuildResult(ok=False, issues=sort_issues((*carried, *exc.issues)))
+    except Exception as exc:  # noqa: BLE001 - to JEST granica, tu sie konczy stos
+        return BuildResult(ok=False, issues=sort_issues((*carried, *_unexpected_issues(exc))))
 
+    return execute_build(plan, progress, cancel, carried=carried)
+
+
+def execute_build(
+    plan: BuildPlan,
+    progress: ProgressFn = _print_progress,
+    cancel: CancelToken | None = None,
+    *,
+    carried: Sequence[Issue] = (),
+) -> BuildResult:
+    """Buduje DOKŁADNIE podany plan. Wspólna usługa rdzenia dla GUI i CLI.
+
+    GUI przekazuje gotowy plan z ekranu 2; CLI składa plan z analizy i woła to
+    samo. Kluczowe: tu NIE MA ponownej analizy źródeł — wybór pojedynczego
+    pliku, poprawiona lista zależności i konwersje TXT są brane wprost z planu,
+    więc build nie rozszerza po cichu zakresu do całego folderu (A02).
+
+    `carried` to ostrzeżenia z wcześniejszych etapów (analiza), które mają
+    dotrzeć do wyniku niezależnie od tego, jak skończy się build (A08).
+    """
+    cancel = cancel or CancelToken()
+    carried_issues: list[Issue] = list(carried)
+
+    # Plan, ktorego log NALEZY do tego przebiegu — ustawiany dopiero po
+    # skasowaniu starego logu. Przed tym pod ta sciezka lezy jeszcze log
+    # poprzedniego przebiegu.
+    log_owner: BuildPlan | None = None
+
+    def _fail(issues: Sequence[Issue]) -> BuildResult:
+        return BuildResult(
+            ok=False,
+            issues=sort_issues((*carried_issues, *issues)),
+            log_path=_existing_log(log_owner),
+        )
+
+    try:
         preconditions = check_preconditions(need_network=True)
         if preconditions:
             return _fail(preconditions)
 
         # Kasowanie starego logu dopiero TUTAJ: od tego miejsca naprawde
         # budujemy, wiec "log istnieje" znaczy "ten przebieg go zapisal".
-        # Wczesniej robil to kazdy przebieg, takze taki, ktory odpadal na
-        # braku internetu i nie mial czym tamtego logu zastapic.
         _clear_stale_log(plan)
         log_owner = plan
 
-        result = _build(plan, analysis, carried, progress, cancel)
+        result = _build(plan, carried_issues, progress, cancel)
     except IssueError as exc:
         return _fail(exc.issues)
     except Exception as exc:  # noqa: BLE001 - to JEST granica, tu sie konczy stos
@@ -194,16 +223,14 @@ def run_build(
         # Sprzecznosc, nie sukces: w gore poszedlby `BuildResult`, ktory mowi
         # "udalo sie", a nie ma czego pokazac. Zdejmujemy ja tutaj, zeby
         # warstwa prezentacji nie musiala wymyslac, co z takim czyms zrobic.
-        # Reszta wyniku ZOSTAJE: backend zna czas trwania, sciezke logu i
-        # czasem wlasne Issue mowiace, dlaczego artefaktu nie ma.
         vanished = Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name})
         return replace(
             result,
             ok=False,
-            issues=sort_issues((*carried, *result.issues, vanished)),
+            issues=sort_issues((*carried_issues, *result.issues, vanished)),
         )
 
-    return replace(result, issues=sort_issues((*carried, *result.issues)))
+    return replace(result, issues=sort_issues((*carried_issues, *result.issues)))
 
 
 def _was_cancelled(result: BuildResult) -> bool:
@@ -212,13 +239,12 @@ def _was_cancelled(result: BuildResult) -> bool:
 
 def _build(
     plan,
-    analysis,
     carried: list[Issue],
     progress: ProgressFn,
     cancel: CancelToken,
 ) -> BuildResult:
-    """Wlasciwy build. Wolane wylacznie spod granicy wyjatkow w `run_build`."""
-    materialize_workspace(plan, analysis.converted)
+    """Wlasciwy build. Wolane wylacznie spod granicy wyjatkow w `execute_build`."""
+    materialize_workspace(plan)
 
     scale = _Progress(progress)
     env = create_build_env(

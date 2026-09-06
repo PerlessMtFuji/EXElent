@@ -138,6 +138,11 @@ class BuildPlan:
     single_file: Path | None = None
     extra_sources: tuple[Path, ...] = ()
     total_download_bytes: int = 0
+    # Konwersje TXT -> PY jako niemutowalne pary (nazwa_pliku, kod). Częścią
+    # planu, nie osobnym argumentem: build wykonuje DOKŁADNIE zaakceptowany
+    # plan (A02), a plan jest jego jedynym kontraktem. Krotka par zamiast dict,
+    # bo `frozen=True` nie chroni modyfikowalnego słownika w środku (A13).
+    converted: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

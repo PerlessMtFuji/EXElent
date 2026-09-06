@@ -19,6 +19,7 @@ from exelent.analysis.project import analyze_project
 from exelent.constants import APP_NAME
 from exelent.deps.sizes import estimate_exe_size
 from exelent.i18n import set_language, system_language
+from exelent.models import Issue, Severity
 from exelent.runtime.procs import kill_tree
 from exelent.settings import load_settings, save_settings
 from exelent.ui.dialog_download import DownloadDialog, should_ask, should_ask_offline
@@ -93,6 +94,12 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self.screen_build.on_finished)
         self.screen_build.cancel_button.clicked.connect(self.worker.cancel)
 
+        # Ostrzeżenia analizy z ekranu 2 (sekret w kodzie, ciężka paczka).
+        # Zapamiętane tu, bo build wykonuje gotowy plan przez `execute_build`
+        # i sam już nie analizuje folderu — bez tego ostrzeżenia zniknęłyby z
+        # ekranu wyniku.
+        self._carried: tuple[Issue, ...] = ()
+
         # Rozmiar pobierania liczy sie w tle ekranu 2. Nigdy nie blokuje
         # budowania: pusty wynik znaczy tylko tyle, ze liczba sie nie policzyla.
         self.preflight = PreflightWorker()
@@ -143,6 +150,7 @@ class MainWindow(QMainWindow):
         wtedy z blokadą, którą ekran 2 pokazuje zdaniem.
         """
         analysis = analyze_project(folder)
+        self._carried = tuple(i for i in analysis.issues if i.severity is not Severity.BLOCKER)
         self.screen_review.load(analysis)
         self.preflight.start([d.package for d in analysis.dependencies if not d.optional])
         self.go_to(SCREEN_REVIEW)
@@ -180,7 +188,7 @@ class MainWindow(QMainWindow):
         plan = replace(plan, total_download_bytes=download.total_bytes)
         self.screen_build.start(plan)
         self.go_to(SCREEN_BUILD)
-        self.worker.start(plan)
+        self.worker.start(plan, self._carried)
 
     def _on_back_to_drop(self) -> None:
         """Powrót na start bez budowania.

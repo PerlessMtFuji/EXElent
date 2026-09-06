@@ -140,12 +140,12 @@ def _plan(tmp_path):
 
 @pytest.fixture
 def fake_build(monkeypatch):
-    """Udawany `run_build`, ktory stoi az do zwolnienia."""
+    """Udawany `execute_build`, ktory stoi az do zwolnienia."""
     zwolnij = threading.Event()
     wystartowal = threading.Event()
     stan = {"anulowany": False}
 
-    def fake(root, progress, cancel, **kwargs):
+    def fake(plan, progress, cancel, **kwargs):
         wystartowal.set()
         progress(Progress(phase="analyze", fraction=0.35))
         for _ in range(1000):
@@ -155,7 +155,7 @@ def fake_build(monkeypatch):
         stan["anulowany"] = cancel.cancelled
         return BuildResult(ok=False)
 
-    monkeypatch.setattr(worker_module, "run_build", fake)
+    monkeypatch.setattr(worker_module, "execute_build", fake)
     stan["zwolnij"] = zwolnij
     stan["wystartowal"] = wystartowal
     return stan
