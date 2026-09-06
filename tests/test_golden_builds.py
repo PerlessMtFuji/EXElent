@@ -181,6 +181,27 @@ def test_writing_program_gets_onedir_and_writes_next_to_exe(tmp_path, shared_sta
     assert (exe.parent / "wynik.txt").read_text(encoding="utf-8") == "ZAPISANE"
 
 
+def test_rebuild_keeps_the_previous_version_and_its_data(tmp_path, shared_state):
+    """A01 + A14 od konca: kolejny build nie nadpisuje poprzedniego EXE ani
+    danych zapisanych obok niego — laduje pod kolejnym numerem."""
+    root = _project(tmp_path, "ponownie", {"main.py": "print('WERSJA')\n"})
+    out = tmp_path / "out"
+
+    first = run_build(root, noop_progress, dest_dir=out)
+    assert first.ok, [i.code for i in first.issues]
+    # Uzytkownik zapisuje dane obok pierwszego EXE.
+    (out / "moje-dane.txt").write_bytes(b"WAZNE DANE")
+
+    second = run_build(root, noop_progress, dest_dir=out)
+    assert second.ok, [i.code for i in second.issues]
+
+    assert first.artifact.exists(), "pierwsza wersja zniknela"
+    assert first.artifact != second.artifact, "druga wersja nadpisala pierwsza"
+    assert (out / "moje-dane.txt").read_bytes() == b"WAZNE DANE", "dane uzytkownika zniknely"
+    run = run_bounded([second.artifact], timeout=120)
+    assert "WERSJA" in run.stdout
+
+
 def test_crashing_console_program_reports_instead_of_vanishing(tmp_path, shared_state):
     root = _project(
         tmp_path,
