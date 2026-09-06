@@ -33,6 +33,19 @@ def test_onedir_flag():
     assert "--onedir" in args and "--onefile" not in args
 
 
+def test_onedir_places_contents_next_to_exe():
+    """A04: `--contents-directory .` kladzie zasoby obok EXE, nie w `_internal`,
+    zeby open('config.json') je znalazl przy cwd = katalog EXE."""
+    plan = _plan(output_mode=OutputMode.ONEDIR)
+    args = build_arguments(plan, Path("C:/w"), Path("C:/w/l.py"), None)
+    assert args[args.index("--contents-directory") + 1] == "."
+
+
+def test_onefile_has_no_contents_directory():
+    args = build_arguments(_plan(), Path("C:/w"), Path("C:/w/l.py"), None)
+    assert "--contents-directory" not in args
+
+
 def test_windowed_app_hides_console():
     plan = _plan(app_kind=AppKind.WINDOWED)
     args = build_arguments(plan, Path("C:/w"), Path("C:/w/l.py"), None)
@@ -78,13 +91,22 @@ def test_data_files_point_to_workspace_copy_not_user_folder():
     need to read from the user's folder while running."""
     plan = _plan(data_files=(Path("C:/src/assets/img.png"),))
     args = build_arguments(plan, Path("C:/w"), Path("C:/w/l.py"), None)
-    expected = f"{Path('C:/w/assets/img.png')};."
+    # Cel zachowuje katalog `assets` (A04), nie splaszcza do korzenia.
+    expected = f"{Path('C:/w/assets/img.png')};assets"
     assert args[args.index("--add-data") + 1] == expected
     assert "C:\\src" not in args[args.index("--add-data") + 1]
+
+
+def test_root_level_data_file_maps_to_bundle_root():
+    plan = _plan(data_files=(Path("C:/src/config.json"),))
+    args = build_arguments(plan, Path("C:/w"), Path("C:/w/l.py"), None)
+    expected = f"{Path('C:/w/config.json')};."
+    assert args[args.index("--add-data") + 1] == expected
 
 
 def test_nested_data_file_preserves_relative_layout():
     plan = _plan(data_files=(Path("C:/src/pkg/data/config.json"),))
     args = build_arguments(plan, Path("C:/w"), Path("C:/w/l.py"), None)
-    expected = f"{Path('C:/w/pkg/data/config.json')};."
+    # `assets/nested.json -> assets/nested.json`: cel to katalog `pkg/data`.
+    expected = f"{Path('C:/w/pkg/data/config.json')};pkg/data"
     assert args[args.index("--add-data") + 1] == expected

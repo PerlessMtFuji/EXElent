@@ -117,7 +117,15 @@ def build_arguments(
             args += ["--paths", text]
 
     args += ["--name", plan.exe_name]
-    args.append("--onefile" if plan.output_mode is OutputMode.ONEFILE else "--onedir")
+    if plan.output_mode is OutputMode.ONEFILE:
+        args.append("--onefile")
+    else:
+        # `--contents-directory .` kladzie zasoby i biblioteki OBOK EXE, a nie w
+        # podkatalogu `_internal`. Launcher w ONEDIR robi `chdir` do katalogu
+        # EXE, wiec `open('config.json')` znajduje spakowany zasob, a trwale
+        # zapisy programu ladują tam, gdzie uzytkownik ich szuka — obok EXE
+        # (A04). Bez tego zasoby wpadaly do `_internal` i byly nieosiagalne.
+        args += ["--onedir", "--contents-directory", "."]
     args.append("--windowed" if plan.app_kind is AppKind.WINDOWED else "--console")
 
     # Kwalifikowana nazwa modulu (np. `pkg.main`), a nie sam `stem`: to ona
@@ -130,8 +138,15 @@ def build_arguments(
         # Data files must point at the workspace copy, not the user's
         # original folder: the whole point of the workspace is that the
         # build never reads from (or writes into) the user's directory.
-        workspace_data = workspace / data.relative_to(plan.root)
-        args += ["--add-data", f"{workspace_data}{_ADD_DATA_SEPARATOR}."]
+        rel = data.relative_to(plan.root)
+        workspace_data = workspace / rel
+        # Cel w paczce zachowuje uklad wzgledny: `assets/nested.json` ma trafic
+        # do `assets/`, nie do korzenia. Wczesniej kazdy zasob dostawal cel `.`,
+        # wiec `open('assets/nested.json')` w EXE nie znajdowal pliku
+        # splaszczonego do `nested.json` (A04).
+        dest = rel.parent.as_posix()
+        dest = "." if dest == "." or dest == "" else dest
+        args += ["--add-data", f"{workspace_data}{_ADD_DATA_SEPARATOR}{dest}"]
 
     if icon is not None:
         args += ["--icon", str(icon)]
