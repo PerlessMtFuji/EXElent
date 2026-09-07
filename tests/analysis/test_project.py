@@ -155,6 +155,26 @@ def test_requirements_file_wins_over_imports(tmp_path):
     assert [d.package for d in analyze_project(root).dependencies] == ["rich==13.7.0"]
 
 
+def test_pyproject_dependencies_feed_the_plan(tmp_path):
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "import requests\nprint(requests)",
+            "pyproject.toml": '[project]\nname = "x"\ndependencies = ["requests>=2.0"]\n',
+        },
+    )
+    assert [d.package for d in analyze_project(root).dependencies] == ["requests>=2.0"]
+
+
+def test_missing_referenced_manifest_surfaces_an_issue(tmp_path):
+    root = _make(
+        tmp_path,
+        {"main.py": "print(1)", "requirements.txt": "-r nie-ma.txt\nrich\n"},
+    )
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "requirements_missing" in codes
+
+
 def test_hidden_imports_populated_from_dynamic_import(tmp_path):
     root = _make(
         tmp_path,

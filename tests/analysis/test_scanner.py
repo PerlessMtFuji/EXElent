@@ -44,6 +44,13 @@ def test_requirements_is_not_a_text_candidate(tmp_path):
     assert result.text_candidates == ()
 
 
+def test_pyproject_is_discovered(tmp_path):
+    root = _make(tmp_path, {"main.py": "", "pyproject.toml": '[project]\nname = "x"\n'})
+    result = scan_directory(root)
+    assert result.pyproject is not None
+    assert result.pyproject.name == "pyproject.toml"
+
+
 def test_prose_txt_is_not_a_candidate(tmp_path):
     root = _make(tmp_path, {"README.txt": "To jest opis programu dla uzytkownika."})
     result = scan_directory(root)

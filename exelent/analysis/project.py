@@ -190,10 +190,17 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     issues.extend(collect_code_issues(sources))
 
     # Ścieżka, a nie sam tekst: resolver rozwija `-r`/`-c` względem katalogu
-    # manifestu (A07).
+    # manifestu (A07). `dep_issues` niesie diagnostykę manifestu (cykl, brak
+    # pliku, nieczytelny pyproject), która inaczej ginęłaby po cichu.
+    dep_issues: list[Issue] = []
     dependencies = resolve_dependencies(
-        sources, local_module_names(root, sources), requirements_path=scan.requirements
+        sources,
+        local_module_names(root, sources),
+        requirements_path=scan.requirements,
+        pyproject_path=scan.pyproject,
+        issues=dep_issues,
     )
+    issues.extend(dep_issues)
     hidden_imports = collect_hidden_imports(sources)
 
     heavy_packages = [dep.package for dep in dependencies if dep.heavy]

@@ -147,6 +147,7 @@ def scan_directory(
     data: list[Path] = []
     icons: list[Path] = []
     requirements: Path | None = None
+    pyproject: Path | None = None
     count = 0
     total = 0
     truncated = False
@@ -169,6 +170,10 @@ def scan_directory(
                 py.append(path)
             elif name.lower() == "requirements.txt":
                 requirements = path
+            elif name.lower() == "pyproject.toml" and pyproject is None:
+                # Pierwszy trafiony wygrywa; walk() idzie od korzenia, więc
+                # pyproject projektu bije ten z podkatalogu (A07).
+                pyproject = path
             elif suffix == ".txt":
                 if looks_like_python(_read_head(path)):
                     texts.append(path)
@@ -191,6 +196,7 @@ def scan_directory(
         data_files=tuple(data),
         icon_files=tuple(icons),
         requirements=requirements,
+        pyproject=pyproject,
         file_count=count,
         total_bytes=total,
         truncated=truncated,

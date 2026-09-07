@@ -69,6 +69,22 @@ CATALOG: dict[str, str] = {
         "Gotowy program zajmie około {low}–{high} MB, a budowanie potrwa dłużej niż zwykle. "
         "Najwięcej miejsca zajmą: {packages}."
     ),
+    # manifesty zależności (A07)
+    "requirements_missing": (
+        "Lista wymagań wskazuje na plik {file}, którego nie ma — lista dodatkowych "
+        "bibliotek może być niepełna."
+    ),
+    "requirements_cycle": (
+        "Pliki wymagań wskazują na siebie w kółko (przez {file}); powtórzenie zostało "
+        "pominięte."
+    ),
+    "pyproject_unreadable": (
+        "Nie udało się odczytać {file}, więc zadeklarowane w nim biblioteki zostały "
+        "pominięte — rozpoznam je z kodu."
+    ),
+    "pyproject_dynamic_deps": (
+        "{file} deklaruje biblioteki dynamicznie, więc rozpoznałem je z kodu."
+    ),
     # środowisko
     "no_network": (
         "Brak połączenia z internetem. Pierwsze budowanie wymaga pobrania narzędzi "
