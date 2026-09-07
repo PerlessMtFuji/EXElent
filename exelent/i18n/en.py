@@ -84,6 +84,10 @@ CATALOG: dict[str, str] = {
     "pyproject_dynamic_deps": (
         "{file} declares its packages dynamically, so they were detected from the code instead."
     ),
+    "dependency_not_declared": (
+        "Your code uses the {package} library, which is missing from the requirements list — "
+        "it was included so the program works."
+    ),
     "module_name_collision": (
         "Two files share the module name \"{module}\" in different folders ({files}). "
         "One would hide the other at runtime — rename one or keep only the one you need."

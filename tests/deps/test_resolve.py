@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from exelent.deps.resolve import resolve_dependencies
+from exelent.models import Severity
 
 
 def _s(code: str) -> dict[Path, str]:
@@ -199,13 +200,16 @@ def test_pyproject_marker_for_other_platform_is_excluded(tmp_path):
     assert deps == ()
 
 
-def test_pyproject_with_empty_dependencies_is_authoritative(tmp_path):
-    # Jawne `dependencies = []` znaczy "brak zaleznosci" — nie wolno wtedy
-    # zgadywac z importow, bo autor zadeklarowal pusta liste.
+def test_import_not_in_empty_pyproject_deps_is_supplemented(tmp_path):
+    # `dependencies = []` bywa scaffoldingiem (kod dla laika generuje AI), nie
+    # deklaracja "zero zaleznosci". Import spoza niego dopisujemy ze sladem, bo
+    # inaczej EXE wita "No module named requests" (A07).
     pp = tmp_path / "pyproject.toml"
     pp.write_text('[project]\nname = "x"\ndependencies = []\n', encoding="utf-8")
-    deps = resolve_dependencies(_s("import requests"), set(), pyproject_path=pp)
-    assert deps == ()
+    issues: list = []
+    deps = resolve_dependencies(_s("import requests"), set(), pyproject_path=pp, issues=issues)
+    assert _names(deps) == {"requests"}
+    assert "dependency_not_declared" in {i.code for i in issues}
 
 
 def test_pyproject_dynamic_dependencies_fall_back_to_imports(tmp_path):
@@ -242,6 +246,58 @@ def test_unreadable_pyproject_is_reported_and_falls_back(tmp_path):
     deps = resolve_dependencies(_s("import rich"), set(), pyproject_path=pp, issues=issues)
     assert _names(deps) == {"rich"}
     assert "pyproject_unreadable" in {i.code for i in issues}
+
+
+def test_import_not_in_requirements_is_supplemented_with_trace():
+    """Kod importuje pakiet spoza requirements.txt: dopisujemy go i zostawiamy
+    slad (A07). Manifest wygenerowany przez AI dla laika bywa niekompletny, a
+    cichy brak konczy sie EXE bez modulu."""
+    issues: list = []
+    deps = resolve_dependencies(_s("import requests"), set(), "rich\n", issues=issues)
+    assert _names(deps) == {"rich", "requests"}
+    traces = [i for i in issues if i.code == "dependency_not_declared"]
+    assert [i.data["package"] for i in traces] == ["requests"]
+    assert traces[0].severity is Severity.WARNING
+
+
+def test_import_covered_by_alias_is_not_flagged():
+    """Kod importuje PIL, manifest deklaruje Pillow — to ten sam pakiet po
+    normalizacji nazwy dystrybucji, wiec nic nie dopisujemy i nie ostrzegamy."""
+    issues: list = []
+    deps = resolve_dependencies(_s("from PIL import Image"), set(), "Pillow\n", issues=issues)
+    assert _names(deps) == {"Pillow"}
+    assert "dependency_not_declared" not in {i.code for i in issues}
+
+
+def test_import_not_in_pyproject_is_supplemented_with_trace(tmp_path):
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text('[project]\nname = "x"\ndependencies = ["rich"]\n', encoding="utf-8")
+    issues: list = []
+    deps = resolve_dependencies(_s("import requests"), set(), pyproject_path=pp, issues=issues)
+    assert _names(deps) == {"rich", "requests"}
+    assert "dependency_not_declared" in {i.code for i in issues}
+
+
+def test_undeclared_optional_import_is_supplemented_as_optional():
+    """Import w try/except spoza manifestu: dopisany, ale opcjonalny (kod radzi
+    sobie z jego brakiem), wiec slad jest INFO, nie ostrzezeniem."""
+    code = "try:\n    import numpy\nexcept ImportError:\n    numpy = None\n"
+    issues: list = []
+    deps = resolve_dependencies(_s(code), set(), "rich\n", issues=issues)
+    added = [d for d in deps if d.package == "numpy"]
+    assert added and added[0].optional is True
+    trace = next(i for i in issues if i.code == "dependency_not_declared")
+    assert trace.severity is Severity.INFO
+
+
+def test_declared_but_unused_dependency_is_not_flagged():
+    """Kierunek odwrotny wylaczony: pakiet w manifescie, ktorego kod nie
+    importuje, zostaje na liscie i NIE jest zglaszany (za duzo false-positives:
+    importy dynamiczne, pakiety-dane, wtyczki)."""
+    issues: list = []
+    deps = resolve_dependencies(_s("import os"), set(), "rich\n", issues=issues)
+    assert _names(deps) == {"rich"}
+    assert "dependency_not_declared" not in {i.code for i in issues}
 
 
 # --- A07: cykl i brakujacy plik manifestu jako Issue ---

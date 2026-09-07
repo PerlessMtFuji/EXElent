@@ -182,9 +182,16 @@ def test_writing_program_gets_onedir(tmp_path):
     assert analyze_project(root).output_mode is OutputMode.ONEDIR
 
 
-def test_requirements_file_wins_over_imports(tmp_path):
-    root = _make(tmp_path, {"main.py": "import requests", "requirements.txt": "rich==13.7.0\n"})
-    assert [d.package for d in analyze_project(root).dependencies] == ["rich==13.7.0"]
+def test_requirements_pins_win_and_undeclared_imports_are_supplemented(tmp_path):
+    # rich jest importowany I przypięty w manifescie → używamy wersji z manifestu
+    # (`rich==13.7.0`), nie gołej nazwy ze skanu. requests jest importowany, ale
+    # nieobecny w requirements → dopisany, a ślad trafia do analizy (A07).
+    root = _make(
+        tmp_path, {"main.py": "import requests\nimport rich", "requirements.txt": "rich==13.7.0\n"}
+    )
+    analysis = analyze_project(root)
+    assert [d.package for d in analysis.dependencies] == ["requests", "rich==13.7.0"]
+    assert "dependency_not_declared" in {i.code for i in analysis.issues}
 
 
 def test_pyproject_dependencies_feed_the_plan(tmp_path):

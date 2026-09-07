@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 from exelent.constants import TARGET_PYTHON
 from exelent.deps.aliases import ALIASES
@@ -223,38 +224,16 @@ def _optional_import_lines(tree: ast.AST) -> set[int]:
     return optional
 
 
-def resolve_dependencies(
-    sources: Mapping[Path, str],
-    local_modules: set[str],
-    requirements_text: str | None = None,
-    *,
-    requirements_path: Path | None = None,
-    pyproject_path: Path | None = None,
-    issues: list[Issue] | None = None,
+def _deps_from_imports(
+    sources: Mapping[Path, str], local_modules: set[str]
 ) -> tuple[Dependency, ...]:
-    # `issues` to opcjonalny kanał diagnostyki (cykl/brak pliku manifestu,
-    # nieczytelny pyproject). Domyślnie throwaway, żeby dawni wołający — i cały
-    # zestaw testów resolvera — działali bez zmian.
-    sink = issues if issues is not None else []
-    # Manifest bije zgadywanie z importów. Pierwszeństwo jest deterministyczne,
-    # nie zależy od kolejności skanowania (A07): requirements.txt (konkretna
-    # lista instalacyjna) przed pyproject.toml (deklaracja abstrakcyjna).
-    if requirements_path is not None:
-        lines = _manifest_lines(requirements_path, set(), [], 0, sink)
-        return _deps_from_manifest(lines)
-    if requirements_text is not None:
-        return _deps_from_manifest(_text_lines(requirements_text))
-    if pyproject_path is not None:
-        declared = _deps_from_pyproject(pyproject_path, sink)
-        if declared is not None:
-            return declared
-        # pyproject nieautorytatywny (dynamic/Poetry/nieczytelny) → skan importów.
+    """Zależności wykryte ze skanu `import ...` w źródłach.
 
+    Klucz to nazwa PAKIETU po aliasowaniu, nie nazwa importu — alias table
+    jest celowo many-to-one (np. win32com/win32api/win32gui/pythoncom ->
+    pywin32, matplotlib/mpl_toolkits -> matplotlib), więc deduplikacja i
+    `optional` muszą liczyć się po stronie rozwiązanego pakietu."""
     stdlib = sys.stdlib_module_names
-    # Klucz to nazwa PAKIETU po aliasowaniu, nie nazwa importu — alias table
-    # jest celowo many-to-one (np. win32com/win32api/win32gui/pythoncom ->
-    # pywin32, matplotlib/mpl_toolkits -> matplotlib), więc deduplikacja i
-    # `optional` muszą liczyć się po stronie rozwiązanego pakietu.
     package_optional: dict[str, bool] = {}
     package_import_names: dict[str, set[str]] = {}
 
@@ -293,3 +272,67 @@ def resolve_dependencies(
     ]
     deps.sort(key=lambda d: d.package.lower())
     return tuple(deps)
+
+
+def _supplement_with_detected(
+    manifest_deps: tuple[Dependency, ...],
+    scanned: tuple[Dependency, ...],
+    issues: list[Issue],
+) -> tuple[Dependency, ...]:
+    """Manifest jest autorytatywny co do WERSJI, ale wykryte importy spoza
+    niego dopisujemy z widocznym śladem (A07).
+
+    Kod dla laika generuje AI, które potrafi pominąć pakiet w `requirements`
+    albo zostawić puste `dependencies = []` z samego scaffoldingu — cichy brak
+    kończy się EXE witającym „No module named …". Porównujemy po znormalizowanej
+    nazwie dystrybucji (PEP 503), więc `import PIL` przy zadeklarowanym `Pillow`
+    to ten sam pakiet, a nie rozbieżność. Kierunku odwrotnego (zadeklarowane,
+    lecz nieimportowane) NIE zgłaszamy: import dynamiczny, pakiet-dane czy
+    wtyczka dałyby fałszywy alarm. `import_name` deklaracji z manifestu niesie
+    `Requirement.name` (referencje bezpośrednie: cały URL — nie dopasuje się do
+    gołej nazwy importu, co jest tu w porządku)."""
+    declared = {canonicalize_name(d.import_name) for d in manifest_deps}
+    result = list(manifest_deps)
+    for dep in scanned:
+        if canonicalize_name(dep.package) in declared:
+            continue
+        result.append(dep)
+        # Brak wymaganego importu łamie EXE → ostrzeżenie. Import opcjonalny
+        # (try/except) kod obsługuje sam, więc dopisanie go tylko włącza funkcję
+        # → informacja, nie alarm.
+        severity = Severity.INFO if dep.optional else Severity.WARNING
+        issues.append(Issue("dependency_not_declared", severity, {"package": dep.package}))
+    result.sort(key=lambda d: d.package.lower())
+    return tuple(result)
+
+
+def resolve_dependencies(
+    sources: Mapping[Path, str],
+    local_modules: set[str],
+    requirements_text: str | None = None,
+    *,
+    requirements_path: Path | None = None,
+    pyproject_path: Path | None = None,
+    issues: list[Issue] | None = None,
+) -> tuple[Dependency, ...]:
+    # `issues` to opcjonalny kanał diagnostyki (cykl/brak pliku manifestu,
+    # nieczytelny pyproject, import spoza manifestu). Domyślnie throwaway, żeby
+    # dawni wołający działali bez zmian.
+    sink = issues if issues is not None else []
+    # Manifest bije zgadywanie WERSJI z importów. Pierwszeństwo jest
+    # deterministyczne, nie zależy od kolejności skanowania (A07):
+    # requirements.txt (konkretna lista instalacyjna) przed pyproject.toml
+    # (deklaracja abstrakcyjna). `None` = brak autorytatywnego manifestu.
+    manifest_deps: tuple[Dependency, ...] | None = None
+    if requirements_path is not None:
+        manifest_deps = _deps_from_manifest(_manifest_lines(requirements_path, set(), [], 0, sink))
+    elif requirements_text is not None:
+        manifest_deps = _deps_from_manifest(_text_lines(requirements_text))
+    elif pyproject_path is not None:
+        # `None` stąd = pyproject nieautorytatywny (dynamic/Poetry/nieczytelny).
+        manifest_deps = _deps_from_pyproject(pyproject_path, sink)
+
+    scanned = _deps_from_imports(sources, local_modules)
+    if manifest_deps is None:
+        return scanned
+    return _supplement_with_detected(manifest_deps, scanned, sink)
