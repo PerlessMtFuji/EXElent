@@ -13,9 +13,13 @@ zielonych. Poniżej co domknięte i co świadomie zostało jako zakres częścio
   zmiana nazwy; poprzednia wersja i dane nietknięte. Golden na ponowny build.
 - **A02 — zakres builda (P1): zrobione.** `execute_build(plan,…)` buduje dokładnie
   plan, bez ponownej analizy; konwersje w planie (`BuildPlan.converted`).
-- **A03 — entrypoint/importy (P1): rdzeń.** `build/entrymodule.py` — kwalifikowana
-  nazwa modułu i korzenie importów; golden dla `pkg/main.py` i `src/`.
-  *Zostaje:* domknięcie importów trybu jednoplikowego, diagnostyka kolizji nazw.
+- **A03 — entrypoint/importy (P1): zrobione.** `build/entrymodule.py` —
+  kwalifikowana nazwa modułu i korzenie importów; golden dla `pkg/main.py` i
+  `src/`. Domknięcie trybu jednoplikowego wciąga podmoduły (`pkg.child`),
+  importy względne i `__init__.py`, bez wychodzenia ponad korzeń; golden na
+  realnym EXE. Kolizja identycznych nazw modułów w różnych folderach bez pakietu
+  → `module_name_collision` (WARNING). *Zostaje:* namespace packages, kolizje
+  wielkości liter w obrębie jednego korzenia importów.
 - **A04 — zasoby (P1): rdzeń.** `--add-data` zachowuje układ; ONEDIR z
   `--contents-directory .`; golden ONEDIR z innego cwd. Zapis przez
   `Path(...).open(mode)` czyta tryb z pozycji 0 (nie 1) → wymusza ONEDIR, więc
