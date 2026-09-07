@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from exelent.build.pyinstaller import build_arguments
+from exelent.build.entrymodule import resolve_entry
+from exelent.build.pyinstaller import build_arguments, materialize_entry_alias
 from exelent.models import AppKind, BuildPlan, OutputMode
 
 
@@ -66,6 +67,28 @@ def test_entry_module_is_a_hidden_import():
     args = build_arguments(_plan(), Path("C:/w"), Path("C:/w/l.py"), None)
     assert "--hidden-import" in args
     assert "main" in args
+
+
+def test_root_dunder_main_collects_a_safe_alias_not_dunder_main():
+    """Root `__main__.py`: zbierana i uruchamiana nazwa to bezpieczny alias,
+    bo `__main__` zderza sie z launcherem w zamrozonym EXE (B03)."""
+    plan = _plan(root=Path("C:/src"), entry=Path("C:/src/__main__.py"))
+    args = build_arguments(plan, Path("C:/w"), Path("C:/w/l.py"), None)
+    assert "_exelent_main" in args
+    assert "__main__" not in args
+
+
+def test_materialize_entry_alias_copies_dunder_main_to_a_safe_name(tmp_path):
+    """Backend kopiuje `__main__.py` pod nazwe aliasu z kontraktu, zachowujac
+    bajty (a wiec kodowanie). Zwykly skrypt: brak aliasu = brak kopii (B03)."""
+    (tmp_path / "__main__.py").write_bytes(b"print('cze\xc5\x9b\xc4\x87')\n")
+    spec = resolve_entry(tmp_path, Path("__main__.py"))
+    materialize_entry_alias(spec)
+    assert (tmp_path / "_exelent_main.py").read_bytes() == b"print('cze\xc5\x9b\xc4\x87')\n"
+
+    (tmp_path / "main.py").write_text("print(1)", encoding="utf-8")
+    materialize_entry_alias(resolve_entry(tmp_path, Path("main.py")))
+    assert not (tmp_path / "_main.py").exists()
 
 
 def test_extra_hidden_imports_are_included():

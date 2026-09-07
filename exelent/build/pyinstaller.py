@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from exelent.build.backend import CancelToken
-from exelent.build.entrymodule import resolve_entry
+from exelent.build.entrymodule import EntrySpec, resolve_entry
 from exelent.build.icon import ensure_ico
 from exelent.build.launcher import LAUNCHER_FILENAME, render_launcher
 from exelent.build.publish import publish_artifact
@@ -80,6 +80,19 @@ _CANCEL_READER_JOIN_SECONDS = 1.0
 # przyjmuje obie pisownie, zeby ten straznik nie umarl po cichu w dniu, w
 # ktorym literowka zostanie poprawiona.
 _COMPILE_DROPPED = re.compile(r"S(?:yntax|ytnax) error while compiling (.+?)\s*$")
+
+
+def materialize_entry_alias(spec: EntrySpec) -> None:
+    """Kopiuje plik wejściowy pod bezpieczną nazwę, gdy kontrakt tego wymaga.
+
+    Dotyczy samotnego `__main__.py` w korzeniu: nie da się go zebrać ani
+    uruchomić jako modułu `__main__`, bo tę nazwę w zamrożonym EXE zajmuje
+    launcher (patrz `resolve_entry`). Kopiujemy bajtami, żeby zachować kodowanie
+    źródła. Zwykły skrypt lub pakiet nie ma aliasu i niczego nie kopiuje."""
+    if spec.alias is None:
+        return
+    src, dest = spec.alias
+    dest.write_bytes(src.read_bytes())
 
 
 def entry_rel(plan: BuildPlan) -> Path:
@@ -206,6 +219,10 @@ class PyInstallerBackend:
         workspace = workspace_for(plan.root, plan.single_file)
 
         spec = resolve_entry(workspace, entry_rel(plan))
+        # Samotny `__main__.py` musi trafic do paczki pod bezpieczna nazwa,
+        # zanim PyInstaller ruszy — inaczej zbieralby modul `__main__`
+        # zderzajacy sie z launcherem (B03).
+        materialize_entry_alias(spec)
         launcher = workspace / LAUNCHER_FILENAME
         launcher.write_text(
             render_launcher(spec.run_module, plan.app_kind, plan.output_mode),

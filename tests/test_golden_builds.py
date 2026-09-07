@@ -498,6 +498,35 @@ def test_src_layout_package_builds_and_runs(tmp_path, shared_state):
     assert "SRC-OK 7" in run.stdout
 
 
+def test_root_dunder_main_runs_as_main_and_exits_cleanly(tmp_path, shared_state):
+    """Zgloszenie: root `__main__.py` dawal build "sukces", ale EXE konczyl kodem
+    1 na `ValueError: __main__.__spec__ is None` — bo w zamrozonym EXE modul
+    `__main__` to launcher. Alias (B03) uruchamia program pod bezpieczna nazwa z
+    run_name="__main__". Dowod: `__name__` to `__main__`, marker na stdout i
+    ZAMIERZONY kod wyjscia 7 (nie 1 z awarii runpy)."""
+    root = _project(
+        tmp_path,
+        "dunder",
+        {
+            "__main__.py": (
+                "import sys\n"
+                "assert __name__ == '__main__', __name__\n"
+                "print('DUNDER-MAIN-DZIALA')\n"
+                "sys.exit(7)\n"
+            ),
+        },
+    )
+    result = run_build(
+        root, noop_progress, entry=root / "__main__.py", dest_dir=tmp_path / "out"
+    )
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([_exe_of(result)], timeout=180)
+    assert "DUNDER-MAIN-DZIALA" in run.stdout
+    assert run.returncode == 7, run.stderr
+    _assert_source_untouched(root, {"__main__.py"})
+
+
 # --- A04: zasoby w ONEDIR czytane z katalogu obok EXE, nie z _internal ---
 
 
