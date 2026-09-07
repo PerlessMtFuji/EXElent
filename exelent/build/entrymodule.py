@@ -25,6 +25,12 @@ class EntrySpec:
     uruchamianego przez `__main__.py` to `pkg.__main__`, nie `pkg`."""
     roots: tuple[Path, ...]
     """Katalogi do dołożenia na `--paths`, żeby moduł dał się rozwiązać."""
+    alias: tuple[Path, Path] | None = None
+    """(źródło, cel) do skopiowania w workspace PRZED buildem, gdy nazwa modułu
+    wejściowego zderza się z launcherem. Dziś dotyczy tylko samotnego
+    `__main__.py` w korzeniu — patrz `resolve_entry`. `None`, gdy nic nie trzeba
+    kopiować. Kopiowanie wykonuje backend; kontrakt (co i pod jaką nazwą)
+    powstaje wyłącznie tutaj."""
 
 
 def resolve_entry(workspace: Path, entry_rel: Path) -> EntrySpec:
@@ -41,11 +47,29 @@ def resolve_entry(workspace: Path, entry_rel: Path) -> EntrySpec:
         import_root = import_root.parent
 
     parts = list(entry_abs.relative_to(import_root).with_suffix("").parts)
-    collect_module = ".".join(parts)
 
-    # `pkg/__main__.py` uruchamia się jako `python -m pkg`: runpy dostaje `pkg`,
-    # ale do paczki musi wejść `pkg.__main__`. Lone `__main__.py` w korzeniu
-    # (parts == ["__main__"]) zostaje sobą — nie ma pakietu do uruchomienia.
+    # Samotny `__main__.py` w korzeniu (parts == ["__main__"]) NIE moze zostac
+    # sobą: w zamrozonym EXE modul `__main__` to LAUNCHER, a jego `__spec__`
+    # jest None. runpy.run_module("__main__") wola find_spec("__main__"), trafia
+    # na launcher i rzuca `ValueError: __main__.__spec__ is None` — build konczy
+    # sie kodem 0, a EXE umiera z kodem 1 (pozorny sukces). Kierujemy wiec
+    # zbieranie i uruchomienie na bezpieczny alias, a plik `__main__.py`
+    # kopiujemy pod te nazwe (kopiuje backend). Uruchomiony z run_name="__main__"
+    # alias zachowuje `__name__ == "__main__"`, ktorego skrypt oczekuje.
+    #
+    # To NIE dotyczy `pkg/__main__.py` (parts == ["pkg","__main__"]): tam
+    # uruchamiamy `python -m pkg`, wiec runpy dostaje `pkg`, a do paczki wchodzi
+    # `pkg.__main__` — zaden z nich nie zderza sie z launcherem.
+    if parts == ["__main__"]:
+        alias_name = "_exelent_main"
+        return EntrySpec(
+            run_module=alias_name,
+            collect_module=alias_name,
+            roots=(import_root,),
+            alias=(entry_abs, import_root / f"{alias_name}.py"),
+        )
+
+    collect_module = ".".join(parts)
     if len(parts) > 1 and parts[-1] == "__main__":
         run_module = ".".join(parts[:-1])
     else:
