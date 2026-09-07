@@ -74,10 +74,17 @@ WRITE_METHODS = frozenset(
     }
 )
 
-# Konstruktory, których zapisowość zależy od trybu otwarcia — sprawdzane
-# przez _resolved_mode zamiast trafiać od razu do WRITE_METHODS.
-MODE_CHECKED_NAMES = frozenset({"open", "ZipFile"})
+# Konstruktory, których zapisowość zależy od trybu otwarcia (`open`, `ZipFile`) —
+# sprawdzane przez _resolved_mode w detect_output_mode zamiast trafiać od razu do
+# WRITE_METHODS.
 WRITE_MODE_CHARS = "wax+"
+
+# Odbiorniki, których `.open(name, mode=...)` ma sygnaturę jak wbudowane open —
+# tryb na pozycji 1. Dla pozostałych wywołań metody `.open(...)` (przede
+# wszystkim `Path(...).open(mode)`) ścieżka jest odbiornikiem (`self`), więc tryb
+# ląduje na pozycji 0. Pomylenie tych dwóch przypadków to właśnie powód, dla
+# którego zapis pathlibem trafiał wcześniej do ONEFILE i ginął w katalogu tymczasowym.
+MODULE_OPEN_RECEIVERS = frozenset({"io", "gzip", "bz2", "lzma", "codecs", "tarfile"})
 
 _SECRET = re.compile(r"['\"](?:sk-|ghp_|AIza|xox[bap]-)[A-Za-z0-9_\-]{16,}['\"]")
 
@@ -164,7 +171,19 @@ def detect_output_mode(sources: Mapping[Path, str]) -> OutputMode:
             if not isinstance(node, ast.Call):
                 continue
             name = _call_name(node.func)
-            if name in MODE_CHECKED_NAMES:
+            if name == "open":
+                func = node.func
+                # `Path(...).open(mode)` trzyma tryb na pozycji 0; wbudowane
+                # `open(file, mode)` oraz `modul.open(name, mode)` na pozycji 1.
+                mode_pos = 1
+                if isinstance(func, ast.Attribute) and not (
+                    isinstance(func.value, ast.Name)
+                    and func.value.id in MODULE_OPEN_RECEIVERS
+                ):
+                    mode_pos = 0
+                if _is_write_mode(_resolved_mode(node, mode_pos, "mode")):
+                    return OutputMode.ONEDIR
+            elif name == "ZipFile":
                 if _is_write_mode(_resolved_mode(node, 1, "mode")):
                     return OutputMode.ONEDIR
             elif name == "basicConfig":

@@ -208,6 +208,25 @@ def test_open_with_variable_mode_kwarg_counts_as_writing():
     assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
 
 
+def test_pathlib_open_write_counts_as_writing():
+    # `Path(...).open(mode)` trzyma tryb na pozycji 0, nie 1 jak wbudowane
+    # `open`. Wczesniej detektor patrzyl na pozycje 1, wiec zapis pathlibem
+    # przechodzil jako ONEFILE i ginal w katalogu tymczasowym.
+    code = "from pathlib import Path\nPath('out.txt').open('w')"
+    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+
+
+def test_pathlib_open_write_mode_kwarg_counts_as_writing():
+    code = "from pathlib import Path\nPath('out.txt').open(mode='w')"
+    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+
+
+def test_pathlib_open_read_stays_onefile():
+    # Tryb odczytu na pozycji 0 nie moze falszywie wymuszac ONEDIR.
+    code = "from pathlib import Path\nPath('dane.json').open('r')"
+    assert detect_output_mode(_s(code)) is OutputMode.ONEFILE
+
+
 def test_read_only_program_still_gets_onefile():
     code = (
         "import json\n"
