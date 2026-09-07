@@ -512,3 +512,36 @@ def test_import_missing_from_requirements_is_supplemented_and_runs(tmp_path, sha
     traces = [i for i in result.issues if i.code == "dependency_not_declared"]
     assert [i.data["package"] for i in traces] == ["idna"]
     _assert_source_untouched(root, {"main.py", "requirements.txt"})
+
+
+def test_poetry_dependency_installs_and_runs(tmp_path, shared_state):
+    """Projekt Poetry: zaleznosc w `[tool.poetry.dependencies]` ze skladnia `^`
+    ma sie zainstalowac i trafic do EXE (A07).
+
+    Testy jednostkowe dowodza tlumaczenia `^1.16` -> `six<2.0.0,>=1.16`, ale
+    tylko prawdziwy build sprawdza, ze uv taki specyfikator PRZYJMUJE i ze pakiet
+    naprawde wchodzi do paczki — string poprawny dla `packaging`, lecz odrzucony
+    przez uv, przewrocilby sie dopiero tutaj. `six` jest pure-python i
+    bezzaleznosciowy, wiec jego obecnosc w EXE moze pochodzic tylko z odczytania
+    manifestu Poetry."""
+    root = _project(
+        tmp_path,
+        "projekt-poetry",
+        {
+            "pyproject.toml": (
+                "[tool.poetry]\n"
+                'name = "projekt-poetry"\n'
+                'version = "0.1.0"\n'
+                "[tool.poetry.dependencies]\n"
+                'python = "^3.12"\n'
+                'six = "^1.16"\n'
+            ),
+            "main.py": "import six\nprint('POETRY-OK', six.__name__)\n",
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([result.artifact], timeout=180)
+    assert "POETRY-OK six" in run.stdout
+    _assert_source_untouched(root, {"main.py", "pyproject.toml"})

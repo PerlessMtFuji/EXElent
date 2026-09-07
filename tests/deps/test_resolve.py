@@ -230,6 +230,160 @@ def test_pyproject_without_project_table_falls_back_to_imports(tmp_path):
     assert _names(deps) == {"rich"}
 
 
+# --- A07: pyproject.toml (Poetry [tool.poetry.dependencies]) ---
+
+
+def _poetry(tmp_path: Path, body: str) -> Path:
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text("[tool.poetry.dependencies]\n" + body, encoding="utf-8")
+    return pp
+
+
+def test_poetry_caret_becomes_pep440_range(tmp_path):
+    pp = _poetry(tmp_path, 'python = "^3.12"\nrequests = "^2.28"\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    # `python` to wersja interpretera, nie pakiet — nie instalujemy jej.
+    assert _names(deps) == {"requests<3.0.0,>=2.28"}
+
+
+def test_poetry_tilde_becomes_pep440_range(tmp_path):
+    pp = _poetry(tmp_path, 'pandas = "~1.5"\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"pandas<1.6.0,>=1.5"}
+
+
+def test_poetry_bare_version_is_exact(tmp_path):
+    # Poetry: goła wersja bez operatora znaczy DOKŁADNIE tę wersję (`==`).
+    pp = _poetry(tmp_path, 'click = "8.1.0"\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"click==8.1.0"}
+
+
+def test_poetry_wildcard_is_any_version(tmp_path):
+    pp = _poetry(tmp_path, 'rich = "*"\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"rich"}
+
+
+def test_poetry_explicit_range_passes_through(tmp_path):
+    pp = _poetry(tmp_path, 'numpy = ">=1.24,<2.0"\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"numpy<2.0,>=1.24"}
+
+
+def test_poetry_table_with_extras(tmp_path):
+    pp = _poetry(tmp_path, 'uvicorn = {version = "^0.20", extras = ["standard"]}\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"uvicorn[standard]<0.21.0,>=0.20"}
+
+
+def test_poetry_optional_dependency_is_not_installed(tmp_path):
+    # Zależność opcjonalna w Poetry żyje za `extras` i nie wchodzi do domyślnej
+    # instalacji — pomijamy ją. Jeśli kod naprawdę ją importuje, złapie ją skan
+    # importów (i dopisze ze śladem).
+    pp = _poetry(tmp_path, 'numpy = {version = "^1.24", optional = true}\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert deps == ()
+
+
+def test_poetry_marker_for_windows_is_kept(tmp_path):
+    pp = _poetry(tmp_path, 'pywin32 = {version = "^3", markers = "sys_platform == \'win32\'"}\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"pywin32<4.0.0,>=3"}
+
+
+def test_poetry_marker_for_other_platform_is_excluded(tmp_path):
+    pp = _poetry(tmp_path, 'pyobjc = {version = "*", markers = "sys_platform == \'darwin\'"}\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert deps == ()
+
+
+def test_poetry_python_constraint_excludes_for_target(tmp_path):
+    # `python = "<3.8"` na zależności = instaluj tylko dla starego Pythona.
+    # Docelowy build to 3.12, więc ta zależność odpada.
+    pp = _poetry(tmp_path, 'legacy = {version = "^1.0", python = "<3.8"}\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert deps == ()
+
+
+def test_poetry_python_constraint_kept_when_target_matches(tmp_path):
+    pp = _poetry(tmp_path, 'modern = {version = "^1.0", python = ">=3.8"}\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"modern<2.0.0,>=1.0"}
+
+
+def test_poetry_git_dependency_becomes_direct_reference(tmp_path):
+    pp = _poetry(tmp_path, 'mylib = {git = "https://github.com/x/y.git"}\n')
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"mylib @ git+https://github.com/x/y.git"}
+
+
+def test_poetry_path_dependency_is_skipped(tmp_path):
+    # Lokalnej ścieżki nie zainstalujemy w izolowanym środowisku builda; jeśli
+    # kod ją importuje, skan importów i tak ją dopisze.
+    pp = _poetry(tmp_path, 'local = {path = "../local"}\n')
+    deps = resolve_dependencies(_s("import rich"), set(), pyproject_path=pp)
+    assert _names(deps) == {"rich"}
+
+
+def test_poetry_multiple_constraints_pick_matching_python(tmp_path):
+    pp = _poetry(
+        tmp_path,
+        'django = [\n'
+        '    {version = "^4.0", python = ">=3.8"},\n'
+        '    {version = "^3.0", python = "<3.8"},\n'
+        ']\n',
+    )
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"django<5.0.0,>=4.0"}
+
+
+def test_poetry_dependencies_are_authoritative(tmp_path):
+    # Wersje z Poetry są autorytatywne: skan importów NIE nadpisuje ich gołą nazwą.
+    pp = _poetry(tmp_path, 'python = "^3.12"\nrequests = "^2.28"\n')
+    deps = resolve_dependencies(_s("import requests"), set(), pyproject_path=pp)
+    assert _names(deps) == {"requests<3.0.0,>=2.28"}
+
+
+def test_import_not_in_poetry_is_supplemented_with_trace(tmp_path):
+    pp = _poetry(tmp_path, 'python = "^3.12"\nrich = "^13.0"\n')
+    issues: list = []
+    deps = resolve_dependencies(_s("import requests"), set(), pyproject_path=pp, issues=issues)
+    assert _names(deps) == {"rich<14.0.0,>=13.0", "requests"}
+    traces = [i for i in issues if i.code == "dependency_not_declared"]
+    assert [i.data["package"] for i in traces] == ["requests"]
+
+
+def test_poetry_only_python_is_authoritative_empty(tmp_path):
+    # Sam `python` bez pakietów = autor nie deklaruje bibliotek. Import spoza
+    # tego dopisujemy ze śladem, zamiast oddawać po cichu tylko skan.
+    pp = _poetry(tmp_path, 'python = "^3.12"\n')
+    issues: list = []
+    deps = resolve_dependencies(_s("import requests"), set(), pyproject_path=pp, issues=issues)
+    assert _names(deps) == {"requests"}
+    assert "dependency_not_declared" in {i.code for i in issues}
+
+
+def test_project_table_wins_over_poetry(tmp_path):
+    # PEP 621 to standard; gdy jest tabela [project], Poetry jej nie przesłania.
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(
+        '[project]\nname = "x"\ndependencies = ["rich"]\n'
+        '[tool.poetry.dependencies]\npython = "^3.12"\nrequests = "^2.28"\n',
+        encoding="utf-8",
+    )
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"rich"}
+
+
+def test_requirements_txt_wins_over_poetry(tmp_path):
+    pp = _poetry(tmp_path, 'python = "^3.12"\nrequests = "^2.28"\n')
+    req = tmp_path / "requirements.txt"
+    req.write_text("httpx==0.27.0\n", encoding="utf-8")
+    deps = resolve_dependencies(_s(""), set(), requirements_path=req, pyproject_path=pp)
+    assert _names(deps) == {"httpx==0.27.0"}
+
+
 def test_requirements_txt_wins_over_pyproject(tmp_path):
     pp = tmp_path / "pyproject.toml"
     pp.write_text('[project]\nname = "x"\ndependencies = ["rich"]\n', encoding="utf-8")
