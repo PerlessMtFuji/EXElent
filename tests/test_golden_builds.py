@@ -467,3 +467,48 @@ def test_nested_txt_module_is_converted_in_place_and_imported(tmp_path, shared_s
     _assert_source_untouched(
         root, {"main.py", "pkg", "pkg/__init__.py", "pkg/pomoc.txt"}
     )
+
+
+# --- A07: import pominiety w requirements.txt trafia do EXE mimo to ---
+
+
+def test_import_missing_from_requirements_is_supplemented_and_runs(tmp_path, shared_state):
+    """Manifest jest autorytatywny co do WERSJI, ale import spoza niego dopisujemy
+    z widocznym sladem (A07) — i tu jest tego jedyny dowod w prawdziwym EXE.
+
+    `requirements.txt` deklaruje `six` (zainstalowany z manifestu), a kod uzywa
+    JESZCZE `idna`, ktorego w manifescie brak — kod dla laika generuje AI, ktore
+    latwo pomija pakiet. Gdyby resolver zwracal wylacznie liste zadeklarowana
+    (zachowanie sprzed A07), `idna` nie wszedlby do srodowiska builda i EXE
+    witaloby odbiorce `ModuleNotFoundError: No module named 'idna'`. Oba pakiety
+    sa bezzaleznosciowe i pure-python, wiec `six` nie wciaga `idna` bokiem —
+    obecnosc `idna` w gotowym EXE moze pochodzic tylko z dopisania.
+
+    Slad `dependency_not_declared` (WARNING, bo brak wymaganego importu lamie EXE)
+    dociera z analizy przez `carried` az do `result.issues`, gdzie uzytkownik go
+    widzi — punycode `bücher` -> `xn--bcher-kva` dowodzi, ze `idna` naprawde
+    wykonalo swoja prace, a nie tylko sie zaimportowalo.
+    """
+    root = _project(
+        tmp_path,
+        "brakujaca-zaleznosc",
+        {
+            "requirements.txt": "six\n",
+            "main.py": (
+                "import six\n"
+                "import idna\n"
+                "print('BRAK-DEP-OK', six.__name__, idna.encode('bücher').decode('ascii'))\n"
+            ),
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([result.artifact], timeout=180)
+    assert "BRAK-DEP-OK six xn--bcher-kva" in run.stdout
+
+    # Slad dopisania jest widoczny w wyniku — i dotyczy WYLACZNIE pominietego
+    # `idna`, nie zadeklarowanego `six`.
+    traces = [i for i in result.issues if i.code == "dependency_not_declared"]
+    assert [i.data["package"] for i in traces] == ["idna"]
+    _assert_source_untouched(root, {"main.py", "requirements.txt"})
