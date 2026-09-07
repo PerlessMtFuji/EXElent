@@ -132,9 +132,29 @@ def test_strips_a_bare_fence_label_left_by_the_chat_window():
 
 
 def test_strips_bare_label_in_its_other_spellings():
+    """Etykieta jest rozpoznawana w swoich pisowniach, ale zdejmowana tylko
+    gdy REALNIE psula kompilacje (przypadek smiecia z czatu). Tu kazda etykieta
+    spycha `from __future__` z pierwszej linii, wiec wejscie sie nie kompiluje
+    i etykieta musi zostac zdjeta (B02: otoczke zdejmujemy dla NIEpoprawnego
+    wejscia)."""
     for label in (b"py", b"python3", b"  Python  "):
-        result = convert_text_to_python(label + b"\nprint(1)\n")
-        assert result.ok and result.code == "print(1)", label
+        raw = label + b"\nfrom __future__ import annotations\nprint(1)\n"
+        result = convert_text_to_python(raw)
+        assert result.ok, label
+        assert result.code.startswith("from __future__"), label
+        assert "fence_label" in result.steps, label
+
+
+def test_bare_label_that_already_compiles_is_kept_unchanged():
+    """Kompromis B02: sama etykieta `py` na osobnej linii daje program, ktory
+    NADAL sie kompiluje (`py` to zwykle wyrazenie-nazwa). Zasada compile-first
+    mowi: poprawnego wejscia nie poddajemy zdejmowaniu otoczki, wiec zwracamy je
+    NIETKNIETE, zamiast zgadywac, ze to smiec. (W runtime da to NameError — to
+    jasny koszt reguly "nie ruszaj poprawnego programu", nie utrata programu.)"""
+    result = convert_text_to_python(b"py\nprint(1)\n")
+    assert result.ok
+    assert result.code == "py\nprint(1)"
+    assert "fence_label" not in result.steps
 
 
 def test_keeps_a_first_line_that_is_real_code():
@@ -147,6 +167,43 @@ def test_keeps_a_first_line_that_is_real_code():
 def test_does_not_strip_the_label_when_nothing_would_be_left():
     result = convert_text_to_python(b"python\n\n\n")
     assert "fence_label" not in result.steps
+
+
+# --- B02: poprawny program nie jest poddawany zdejmowaniu otoczki ---
+
+
+def test_valid_program_with_fenced_example_in_a_string_is_kept_whole():
+    """Samodokumentujacy sie program: poprawny Python, ktory TRZYMA blok
+    ```python jako tekst WEWNATRZ literalu napisowego. Zdejmowanie ogrodzen
+    siegalo do wnetrza literalu, wycinalo `EXAMPLE` i WYRZUCALO prawdziwy
+    program, zwracajac ok=True z trescia przykladu (B02: najpierw sprawdzic
+    cale wejscie kompilatorem; poprawnego programu nie poddawac usuwaniu
+    fences)."""
+    src = 'DOC = """\n```python\nprint(\'EXAMPLE\')\n```\n"""\nprint(\'REAL PROGRAM\')\n'
+    result = convert_text_to_python(src.encode())
+    assert result.ok
+    assert result.code == src.rstrip("\n")
+    assert "REAL PROGRAM" in result.code
+    assert "fence" not in result.steps
+
+
+def test_valid_program_with_numbered_lines_inside_a_literal_is_kept_whole():
+    """Poprawny program, ktorego wielolinijkowy literal jest zdominowany przez
+    linie zaczynajace sie od cyfr. Heurystyka numeracji (>=70% linii z numerem)
+    obcielaby prefiksy WEWNATRZ literalu i zamieniala `1 a` na `a`, niszczac
+    dane. Compile-first tego nie dopuszcza (B02: numerowana tresc literalu)."""
+    src = (
+        'MENU = """\n'
+        "1 alpha\n2 beta\n3 gamma\n4 delta\n5 epsilon\n"
+        "6 zeta\n7 eta\n8 theta\n"
+        '"""\n'
+        "print(MENU)\n"
+    )
+    result = convert_text_to_python(src.encode())
+    assert result.ok
+    assert result.code == src.rstrip("\n")
+    assert "1 alpha" in result.code
+    assert "line_numbers" not in result.steps
 
 
 # --- A05: poprawny Python zostaje bez ruszania tresci ---

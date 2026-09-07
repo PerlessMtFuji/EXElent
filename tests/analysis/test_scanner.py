@@ -63,6 +63,39 @@ def test_code_in_txt_is_a_candidate(tmp_path):
     assert [p.name for p in result.text_candidates] == ["kod.txt"]
 
 
+# --- B02: skaner i konwerter dekoduja tak samo ---
+
+
+def test_utf16_code_txt_is_a_candidate(tmp_path):
+    """TXT zapisany w UTF-16 (Notatnik "Unicode") z poprawnym Pythonem byl
+    dekodowany na sztywno jako utf-8, zamienial sie w smiec i ladowal jako
+    DANE (no_python_found). Dekodowanie ujednolicone z konwerterem (decode_bytes)
+    znajduje program (B02)."""
+    p = tmp_path / "kod.txt"
+    p.write_bytes("import sys\n\ndef main():\n    print('hi')\n".encode("utf-16"))
+    result = scan_directory(tmp_path)
+    assert [q.name for q in result.text_candidates] == ["kod.txt"]
+    assert result.data_files == ()
+
+
+def test_scan_single_utf16_txt_finds_the_program(tmp_path):
+    p = tmp_path / "kod.txt"
+    p.write_bytes("print('hi')\n".encode("utf-16"))
+    result = scan_single_file(p)
+    assert result.text_candidates == (p,)
+
+
+def test_binary_txt_with_null_bytes_is_data_not_a_crash(tmp_path):
+    """Plik .txt z bajtami NUL (np. przemianowany binarny) nie moze wywrocic
+    klasyfikacji: `ast.parse` na NUL rzuca ValueError, nie SyntaxError. Ma
+    wyladowac jako dane, bez wyjatku (B02: kontrolowane dekodowanie)."""
+    p = tmp_path / "obraz.txt"
+    p.write_bytes(b"\x89PNG\x00\x00\x00\rIHDR\x00\x00some text")
+    result = scan_directory(tmp_path)
+    assert [q.name for q in result.data_files] == ["obraz.txt"]
+    assert result.text_candidates == ()
+
+
 def test_classifies_data_and_icons(tmp_path):
     root = _make(tmp_path, {"main.py": "", "dane.json": "{}", "logo.png": "x"})
     result = scan_directory(root)
