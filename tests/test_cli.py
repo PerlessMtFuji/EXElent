@@ -59,6 +59,10 @@ def stub_build(monkeypatch, tmp_path):
             uv=Path("uv.exe"), venv=Path("venv"), python=Path("python.exe")
         ),
     )
+    # Walidacja docelowym interpreterem odpala podproces na prawdziwym
+    # Pythonie — tu `create_build_env` oddaje atrape `python.exe`, wiec
+    # zaslepiamy ja na "brak bledu". Jej wlasne testy zyja w test_validate.py.
+    monkeypatch.setattr(cli, "validate_target_syntax", lambda *_a, **_kw: None)
     backend = _FakeBackend
     backend.result = BuildResult(ok=True, artifact=tmp_path / "x.exe", size_bytes=1024)
     backend.seen = None
@@ -119,6 +123,31 @@ def test_failed_required_package_stops_the_build(tmp_path, monkeypatch, stub_bui
     assert "requests" in failed[0].data["packages"]
     assert "nie-ma-takiej-paczki" in failed[0].data["packages"]
     # PyInstaller nie zostal w ogole uruchomiony z niekompletnym srodowiskiem.
+    assert _FakeBackend.seen is None
+
+
+def test_target_syntax_error_stops_before_the_backend(tmp_path, monkeypatch, stub_build):
+    """A08: źródło niezgodne z docelowym Pythonem zatrzymuje build ZANIM
+    PyInstaller po cichu wyrzuci moduł i skończy z kodem 0. Backend nie rusza,
+    a analiza deweloperska (ast.parse 3.13) tej niezgodności by nie złapała."""
+    root = _project(tmp_path, {"main.py": "print(1)\n"})
+    issue = Issue(
+        "target_syntax_error",
+        Severity.BLOCKER,
+        {"file": "main.py", "line": "1", "detail": "invalid syntax", "version": "3.12"},
+    )
+    monkeypatch.setattr(cli, "validate_target_syntax", lambda *a, **kw: issue)
+
+    class _Exploding:
+        def build(self, plan, env, progress, cancel):
+            raise RuntimeError("bum")
+
+    monkeypatch.setattr(cli, "PyInstallerBackend", _Exploding)
+
+    result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
+
+    assert result.ok is False
+    assert "target_syntax_error" in [i.code for i in result.issues]
     assert _FakeBackend.seen is None
 
 

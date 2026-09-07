@@ -31,6 +31,11 @@ CATALOG: dict[str, str] = {
         "There is a syntax error in {file}, line {line}: {detail}. "
         "A program written like this will not run — fix it and try again."
     ),
+    "target_syntax_error": (
+        "There is an error in {file}, line {line}: {detail}. The code does not compile on the "
+        "target Python {version} — the built EXE would be missing this module and fail at "
+        "startup. Fix it and try again."
+    ),
     "txt_no_code": (
         "There is no code to run in {file} — only chat-window wrapping or an empty block was "
         "left. Paste the program and try again."
