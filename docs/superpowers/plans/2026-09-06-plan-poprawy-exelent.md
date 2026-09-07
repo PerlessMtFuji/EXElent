@@ -17,8 +17,10 @@ zielonych. Poniżej co domknięte i co świadomie zostało jako zakres częścio
   nazwa modułu i korzenie importów; golden dla `pkg/main.py` i `src/`.
   *Zostaje:* domknięcie importów trybu jednoplikowego, diagnostyka kolizji nazw.
 - **A04 — zasoby (P1): rdzeń.** `--add-data` zachowuje układ; ONEDIR z
-  `--contents-directory .`; golden ONEDIR z innego cwd. *Zostaje:* kolizje
-  zasobów przed buildem, lista zasobów w UI.
+  `--contents-directory .`; golden ONEDIR z innego cwd. Zapis przez
+  `Path(...).open(mode)` czyta tryb z pozycji 0 (nie 1) → wymusza ONEDIR, więc
+  dane nie giną w katalogu tymczasowym. *Zostaje:* kolizje zasobów przed
+  buildem, lista zasobów w UI.
 - **A05 — konwersja TXT (P1): rdzeń.** Poprawny Python bez zmian treści; taby
   tylko we wcięciu; numeracja zachowuje wcięcie; pusty wynik odrzucony.
   *Zostaje:* tokenowa naprawa uszkodzonych ograniczników, mapa linii, podgląd/UI.
@@ -28,8 +30,11 @@ zielonych. Poniżej co domknięte i co świadomie zostało jako zakres częścio
   markery dla Windows/3.12, extras, `-r`/`-c`), poprawne try/except. *Zostaje:*
   pyproject.toml i zgłaszanie cyklu/braku pliku jako Issue.
 - **A08 — wiarygodny wynik (P1): rdzeń.** Nieudana wymagana paczka →
-  `required_package_failed`, stop przed PyInstallerem. *Zostaje:* walidacja
-  źródeł interpreterem 3.12, rozróżnienie „utworzono/zweryfikowano".
+  `required_package_failed`, stop przed PyInstallerem. Zepsuty składniowo `.py`
+  daje `py_syntax_error` (BLOCKER) w analizie — koniec „fałszywego sukcesu",
+  symetrycznie do zepsutego TXT. *Zostaje:* walidacja źródeł docelowym
+  interpreterem 3.12 (dziś `ast.parse` deweloperskim), rozróżnienie
+  „utworzono/zweryfikowano".
 - **A09 — anulowanie (P2): rdzeń.** Token w pobieraniu/tworzeniu środowiska
   (anulowalny `_stream_uv`, `kill_tree`); UI „Przerywanie…". *Zostaje:* token
   dla bootstrapu uv i publikacji.
