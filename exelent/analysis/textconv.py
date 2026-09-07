@@ -328,18 +328,29 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
 
     # 1. Zdejmowanie OTOCZKI z okna czatu i numeracji. To zmiany strukturalne —
     #    dotykaja rzeczy, ktore nie sa kodem — i nie ruszaja tresci programu.
-    text, origins, changed = _strip_fences(text, origins)
-    if changed:
-        steps.append("fence")
-    text, origins, changed = _strip_fence_label(text, origins)
-    if changed:
-        steps.append("fence_label")
-    text, changed = _strip_line_numbers(text)
-    if changed:
-        steps.append("line_numbers")
-    text, changed = _strip_prompts(text)
-    if changed:
-        steps.append("prompts")
+    #
+    #    NAJPIERW sprawdzamy cale wejscie kompilatorem: poprawny program NIE jest
+    #    poddawany zdejmowaniu otoczki (B02). Bez tej bramki fence stojacy
+    #    WEWNATRZ literalu napisowego — samodokumentujacy sie program z blokiem
+    #    ```python w docstringu — bylby wziety za otoczke, wyciety, a prawdziwy
+    #    program zastapiony trescia przykladu (ok=True). Normalizacja wciec i
+    #    finalna walidacja (nizej) obowiazuja dalej: to nie jest zdejmowanie
+    #    otoczki, tylko zachowujaca znaczenie normalizacja. Pusty/bialy wejscie
+    #    kompiluje sie jako pusty modul, wiec wyraznie wymagamy tresci — inaczej
+    #    ta sciezka wyprzedzilaby komunikat NO_CODE ponizej.
+    if not (text.strip() and _compiles(text)):
+        text, origins, changed = _strip_fences(text, origins)
+        if changed:
+            steps.append("fence")
+        text, origins, changed = _strip_fence_label(text, origins)
+        if changed:
+            steps.append("fence_label")
+        text, changed = _strip_line_numbers(text)
+        if changed:
+            steps.append("line_numbers")
+        text, changed = _strip_prompts(text)
+        if changed:
+            steps.append("prompts")
 
     lead = len(text) - len(text.lstrip("\n"))
     trail = len(text) - len(text.rstrip("\n"))

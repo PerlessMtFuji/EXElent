@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from exelent.analysis.textconv import convert_text_to_python
+from exelent.analysis.textconv import convert_text_to_python, decode_bytes
 from exelent.constants import (
     EXCLUDED_DIRS,
     MAX_SCAN_BYTES,
@@ -60,6 +60,11 @@ def looks_like_python(text: str) -> bool:
         return True
     except SyntaxError:
         pass
+    except ValueError:
+        # `ast.parse` rzuca ValueError (nie SyntaxError) na bajty NUL — np.
+        # binarny plik przemianowany na .txt. To nie jest Python; klasyfikujemy
+        # jako dane zamiast wywracac skan wyjatkiem.
+        return False
     if convert_text_to_python(text.encode("utf-8", errors="replace")).ok:
         return True
     return len(_CODE_HINT.findall(text)) >= 1
@@ -69,12 +74,22 @@ def _read_head(path: Path, limit: int = 64_000) -> str:
     """Czyta co najwyżej `limit` bajtów — do rozpoznania rodzaju pliku.
 
     `read_bytes()[:limit]` wciągało do pamięci CAŁY plik (np. 2 GB .txt) i
-    dopiero potem obcinało. Otwieramy i czytamy tylko potrzebny prefiks (A10)."""
+    dopiero potem obcinało. Otwieramy i czytamy tylko potrzebny prefiks (A10).
+
+    Dekodujemy przez `decode_bytes` — TĄ SAMĄ funkcją co konwerter — więc TXT w
+    UTF-16/BOM jest widziany jako program, a nie jako śmieć z twardego utf-8
+    (B02: skaner i konwerter dekodują tak samo). Prefiks może uciąć 2-bajtową
+    jednostkę UTF-16; wtedy `decode_bytes` rzuca UnicodeDecodeError na gałęzi
+    BOM i do samej KLASYFIKACJI wracamy do tolerancyjnego utf-8."""
     try:
         with open(path, "rb") as handle:
-            return handle.read(limit).decode("utf-8", errors="replace")
+            raw = handle.read(limit)
     except OSError:
         return ""
+    try:
+        return decode_bytes(raw)[0]
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", errors="replace")
 
 
 def _module_imports(code: str) -> list[tuple[int, str | None, tuple[str, ...]]]:
