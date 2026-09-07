@@ -3,6 +3,7 @@ więc ta ścieżka jest bardziej podejrzliwa niż reszta analizy."""
 
 from __future__ import annotations
 
+import bisect
 import io
 import re
 import tokenize
@@ -67,14 +68,39 @@ def decode_bytes(raw: bytes) -> tuple[str, str]:
     return raw.decode("latin-1", errors="replace"), "latin-1"
 
 
-def _strip_fences(text: str) -> tuple[str, bool]:
-    blocks = _FENCE.findall(text)
-    if not blocks:
-        return text, False
-    return "\n".join(b.strip("\n") for b in blocks), True
+def _line_starts(text: str) -> list[int]:
+    """Offsety (w znakach) poczatku kazdej linii — do przeliczenia pozycji
+    dopasowania regexa na numer linii przy budowaniu mapy linii (A05)."""
+    starts = [0]
+    for i, ch in enumerate(text):
+        if ch == "\n":
+            starts.append(i + 1)
+    return starts
 
 
-def _strip_fence_label(text: str) -> tuple[str, bool]:
+def _strip_fences(text: str, origins: list[int]) -> tuple[str, list[int], bool]:
+    """Wycina bloki kodu z ogrodzen i laczy je. Poza tekstem prowadzi `origins`:
+    dla kazdej linii wyniku numer jej linii w oryginale. To najwazniejszy krok
+    dla mapy linii — bloki stoja w rozproszeniu miedzy proza czatu, wiec ich
+    numeracja skacze i bez mapy blad wskazywalby nieistniejaca linie (A05)."""
+    matches = list(_FENCE.finditer(text))
+    if not matches:
+        return text, origins, False
+    starts = _line_starts(text)
+    out_lines: list[str] = []
+    out_origins: list[int] = []
+    for match in matches:
+        content = match.group(1)
+        first = bisect.bisect_right(starts, match.start(1)) - 1
+        base = first + (len(content) - len(content.lstrip("\n")))
+        for offset, line in enumerate(content.strip("\n").split("\n")):
+            out_lines.append(line)
+            idx = base + offset
+            out_origins.append(origins[idx] if idx < len(origins) else origins[-1])
+    return "\n".join(out_lines), out_origins, True
+
+
+def _strip_fence_label(text: str, origins: list[int]) -> tuple[str, list[int], bool]:
     """Zdejmuje osamotniona etykiete ogrodzenia z pierwszej linii.
 
     Tylko gdy stoi SAMA na linii — `python = 3` to prawdziwy kod i zostaje.
@@ -82,14 +108,16 @@ def _strip_fence_label(text: str) -> tuple[str, bool]:
     jest kodem, ktoremu ta funkcja ma pomoc, a pusty wynik zbudowalby EXE,
     ktory nic nie robi.
     """
-    body = text.lstrip("\n")
+    lead = len(text) - len(text.lstrip("\n"))
+    body = text[lead:]
     match = _FENCE_LABEL.match(body)
     if match is None:
-        return text, False
+        return text, origins, False
     rest = body[match.end() :]
     if not rest.strip():
-        return text, False
-    return rest, True
+        return text, origins, False
+    # Zdjeto `lead` pustych linii z gory oraz 1 linie etykiety.
+    return rest, origins[lead + 1 :], True
 
 
 def _strip_line_numbers(text: str) -> tuple[str, bool]:
@@ -269,12 +297,19 @@ def _check_syntax(text: str) -> None:
     compile(text, "<exelent>", "exec")
 
 
-def _fail(encoding: str, steps: list[str], exc: SyntaxError) -> ConversionResult:
+def _map_error_line(origins: list[int], lineno: int | None) -> int | None:
+    """Linia z kompilatora (w KODZIE po konwersji) → linia w ORYGINALNYM TXT."""
+    if lineno is not None and 1 <= lineno <= len(origins):
+        return origins[lineno - 1]
+    return lineno
+
+
+def _fail(encoding: str, steps: list[str], exc: SyntaxError, origins: list[int]) -> ConversionResult:
     return ConversionResult(
         ok=False,
         encoding=encoding,
         steps=tuple(steps),
-        error_line=exc.lineno,
+        error_line=_map_error_line(origins, exc.lineno),
         error_text=exc.msg,
     )
 
@@ -285,12 +320,18 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
+    # `origins[k]` = numer linii w oryginalnym TXT dla k-tej linii biezacego
+    # tekstu. Niesiony przez kroki, ktore przesuwaja numeracje (ogrodzenia,
+    # etykieta, puste linie na brzegach); pozostale kroki sa 1:1 co do liczby
+    # linii, wiec mapa pozostaje wazna az do konca (A05).
+    origins = list(range(1, text.count("\n") + 2))
+
     # 1. Zdejmowanie OTOCZKI z okna czatu i numeracji. To zmiany strukturalne —
     #    dotykaja rzeczy, ktore nie sa kodem — i nie ruszaja tresci programu.
-    text, changed = _strip_fences(text)
+    text, origins, changed = _strip_fences(text, origins)
     if changed:
         steps.append("fence")
-    text, changed = _strip_fence_label(text)
+    text, origins, changed = _strip_fence_label(text, origins)
     if changed:
         steps.append("fence_label")
     text, changed = _strip_line_numbers(text)
@@ -300,7 +341,10 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
     if changed:
         steps.append("prompts")
 
+    lead = len(text) - len(text.lstrip("\n"))
+    trail = len(text) - len(text.rstrip("\n"))
     text = text.strip("\n")
+    origins = origins[lead : len(origins) - trail] if trail else origins[lead:]
 
     # 2. Pusto po zdjeciu otoczki to nie program — osobny komunikat od bledu
     #    skladni ("wklej program", nie "popraw linie X").
@@ -320,7 +364,9 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
     #    znakow zmieniala jego wartosc (A05).
     try:
         _check_syntax(text)
-        return ConversionResult(ok=True, code=text, encoding=encoding, steps=tuple(steps))
+        return ConversionResult(
+            ok=True, code=text, encoding=encoding, steps=tuple(steps), line_map=tuple(origins)
+        )
     except TabError:
         # CPython nie zawsze zglasza mieszanie tabow jako TabError przy kroku 3;
         # gdy jednak zglosi, rozwin wciecia i sprobuj jeszcze raz.
@@ -328,10 +374,12 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
         try:
             _check_syntax(fixed)
         except SyntaxError as exc:
-            return _fail(encoding, steps, exc)
+            return _fail(encoding, steps, exc, origins)
         if "tabs" not in steps:
             steps.append("tabs")
-        return ConversionResult(ok=True, code=fixed, encoding=encoding, steps=tuple(steps))
+        return ConversionResult(
+            ok=True, code=fixed, encoding=encoding, steps=tuple(steps), line_map=tuple(origins)
+        )
     except SyntaxError as exc:
         # `as exc` znika po bloku (Python kasuje cel except), wiec przenosimy
         # blad do zwyklej zmiennej, zeby uzyc go, gdy naprawa nie pomoze.
@@ -346,8 +394,10 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
         try:
             _check_syntax(repaired)
         except SyntaxError as exc:
-            return _fail(encoding, steps, exc)
+            return _fail(encoding, steps, exc, origins)
         steps.append("normalize")
-        return ConversionResult(ok=True, code=repaired, encoding=encoding, steps=tuple(steps))
+        return ConversionResult(
+            ok=True, code=repaired, encoding=encoding, steps=tuple(steps), line_map=tuple(origins)
+        )
 
-    return _fail(encoding, steps, first_error)
+    return _fail(encoding, steps, first_error, origins)
