@@ -6,6 +6,7 @@ które tworzy kopię roboczą — katalog użytkownika pozostaje nietknięty.
 
 from __future__ import annotations
 
+import ast
 from collections import Counter
 from pathlib import Path
 
@@ -132,6 +133,23 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             issues.append(Issue("txt_no_code", txt_severity, {"file": data["file"]}))
         else:
             issues.append(Issue("txt_syntax_error", txt_severity, data))
+
+    # Realne pliki .py nie przechodzily dotad zadnej kontroli skladni: analiza
+    # (`_trees`) po cichu pomijala nieparsowalne drzewa, wiec niepoprawny program
+    # przechodzil przez caly potok i przewracal sie dopiero jako uruchomiony EXE
+    # (build zglaszal "sukces"). Konwersje TXT sa juz sprawdzone przez
+    # convert_text_to_python, wiec walidujemy tylko oryginalne pliki .py.
+    for py in scan.py_files:
+        try:
+            ast.parse(sources[py])
+        except SyntaxError as exc:
+            issues.append(
+                Issue(
+                    "py_syntax_error",
+                    Severity.BLOCKER,
+                    {"file": py.name, "line": str(exc.lineno or 0), "detail": exc.msg or ""},
+                )
+            )
 
     if not sources:
         other = _detect_other_language(scan)

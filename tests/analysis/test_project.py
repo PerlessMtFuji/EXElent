@@ -42,6 +42,22 @@ def test_broken_txt_produces_blocker(tmp_path):
     assert "txt_syntax_error" in codes
 
 
+def test_broken_py_file_produces_blocker(tmp_path):
+    # Realny plik .py z bledem skladni musi zatrzymac build blokada — inaczej
+    # niepoprawny program przechodzi caly potok i przewraca sie dopiero jako
+    # uruchomiony EXE, a build zglasza "sukces".
+    root = _make(tmp_path, {"main.py": "def f(:\n    pass"})
+    result = analyze_project(root)
+    blockers = {i.code for i in result.issues if i.severity is Severity.BLOCKER}
+    assert "py_syntax_error" in blockers
+
+
+def test_valid_py_file_has_no_syntax_blocker(tmp_path):
+    root = _make(tmp_path, {"main.py": "print('ok')"})
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "py_syntax_error" not in codes
+
+
 def test_txt_in_subdir_keeps_its_relative_path(tmp_path):
     """A06: `pkg/help.txt` ma zostac `pkg/help.py`, nie `help.py` w korzeniu."""
     root = _make(
