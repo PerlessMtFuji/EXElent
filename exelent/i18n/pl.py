@@ -85,6 +85,11 @@ CATALOG: dict[str, str] = {
     "pyproject_dynamic_deps": (
         "{file} deklaruje biblioteki dynamicznie, więc rozpoznałem je z kodu."
     ),
+    "module_name_collision": (
+        "Dwa pliki mają tę samą nazwę modułu „{module}” w różnych folderach ({files}). "
+        "Jeden przesłoniłby drugi przy uruchomieniu — zmień nazwę jednego albo zostaw "
+        "tylko ten potrzebny."
+    ),
     # środowisko
     "no_network": (
         "Brak połączenia z internetem. Pierwsze budowanie wymaga pobrania narzędzi "

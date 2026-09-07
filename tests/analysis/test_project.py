@@ -42,6 +42,38 @@ def test_broken_txt_produces_blocker(tmp_path):
     assert "txt_syntax_error" in codes
 
 
+def test_same_named_modules_in_different_folders_collide(tmp_path):
+    # Dwa `util.py` w folderach, ktore NIE sa pakietami, importuja sie gola
+    # nazwa `util` — o zwyciezcy decyduje przypadkowa kolejnosc sys.path (A03).
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print(1)",
+            "a/util.py": "X = 1",
+            "b/util.py": "X = 2",
+        },
+    )
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "module_name_collision" in codes
+
+
+def test_same_named_modules_in_packages_do_not_collide(tmp_path):
+    # W pakietach nazwa jest kwalifikowana (pkg_a.util vs pkg_b.util) — kolizji
+    # nie ma i ostrzezenie nie moze sie pojawic.
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print(1)",
+            "pkg_a/__init__.py": "",
+            "pkg_a/util.py": "X = 1",
+            "pkg_b/__init__.py": "",
+            "pkg_b/util.py": "X = 2",
+        },
+    )
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "module_name_collision" not in codes
+
+
 def test_broken_py_file_produces_blocker(tmp_path):
     # Realny plik .py z bledem skladni musi zatrzymac build blokada — inaczej
     # niepoprawny program przechodzi caly potok i przewraca sie dopiero jako

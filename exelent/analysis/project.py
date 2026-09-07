@@ -30,6 +30,27 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _module_name_collisions(py_files: tuple[Path, ...], root: Path) -> list[tuple[str, list[Path]]]:
+    """Moduły o tej samej gołej nazwie w różnych folderach (A03).
+
+    Plik w pakiecie (`__init__.py` obok) ma nazwę kwalifikowaną — `pkg_a.util`
+    vs `pkg_b.util` się nie mylą. Ale dwa `util.py` w folderach BEZ `__init__.py`
+    importują się oba jako `util`; o zwycięzcy decyduje kolejność `sys.path`,
+    która przy pakowaniu bywa przypadkowa. To ostrzeżenie, nie blokada: build da
+    się zrobić, ale użytkownik musi wiedzieć, że jeden z modułów przesłoni drugi.
+    """
+    by_name: dict[str, list[Path]] = {}
+    for path in py_files:
+        if path.name == "__init__.py" or (path.parent / "__init__.py").exists():
+            continue
+        by_name.setdefault(path.stem.lower(), []).append(path)
+    collisions: list[tuple[str, list[Path]]] = []
+    for name, files in by_name.items():
+        if len({f.parent for f in files}) > 1:
+            collisions.append((name, sorted(files)))
+    return collisions
+
+
 def _rel_key(root: Path, path: Path) -> str:
     """Znormalizowany klucz sciezki wzgledem korzenia — do wykrywania kolizji.
 
@@ -150,6 +171,18 @@ def analyze_project(root: Path) -> ProjectAnalysis:
                     {"file": py.name, "line": str(exc.lineno or 0), "detail": exc.msg or ""},
                 )
             )
+
+    for name, files in _module_name_collisions(scan.py_files, root):
+        issues.append(
+            Issue(
+                "module_name_collision",
+                Severity.WARNING,
+                {
+                    "module": name,
+                    "files": ", ".join(f.relative_to(root).as_posix() for f in files),
+                },
+            )
+        )
 
     if not sources:
         other = _detect_other_language(scan)
