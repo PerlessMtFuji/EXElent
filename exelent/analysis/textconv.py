@@ -3,7 +3,9 @@ więc ta ścieżka jest bardziej podejrzliwa niż reszta analizy."""
 
 from __future__ import annotations
 
+import io
 import re
+import tokenize
 
 from exelent.models import ConversionResult
 
@@ -142,10 +144,95 @@ def _mixes_tabs_and_spaces(text: str) -> bool:
     return has_tab and has_space
 
 
-def _apply_replacements(text: str) -> str:
-    for bad, good in _REPLACEMENTS.items():
-        text = text.replace(bad, good)
-    return text
+# Tokeny, ktorych TRESCI naprawa nie ma prawa ruszac: napisy i tekstowe czesci
+# f-stringow. FSTRING_MIDDLE istnieje od 3.12 — chronimy je, bo `{wyrazenie}`
+# wewnatrz f-stringa to zwykly kod (osobne tokeny) i tam podmiana jest w porzadku.
+_PROTECTED_TOKENS = frozenset(
+    {tokenize.STRING} | ({tokenize.FSTRING_MIDDLE} if hasattr(tokenize, "FSTRING_MIDDLE") else set())
+)
+
+
+def _protected_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) offsety znakow nalezacych do literalow napisowych.
+
+    tokenizer zatrzymuje sie na PIERWSZYM uszkodzonym ograniczniku, wiec
+    dostajemy literaly stojace PRZED tym miejscem — dokladnie te, ktorych
+    naprawa nie moze dotknac. `label = 'A—B…'` to poprawny STRING; jego myslnik
+    i wielokropek to tresc, nie ogranicznik, wiec globalna podmiana nie ma tu
+    wstepu (A05)."""
+    line_starts = [0]
+    for i, ch in enumerate(text):
+        if ch == "\n":
+            line_starts.append(i + 1)
+
+    spans: list[tuple[int, int]] = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type in _PROTECTED_TOKENS:
+                start = line_starts[tok.start[0] - 1] + tok.start[1]
+                end = line_starts[tok.end[0] - 1] + tok.end[1]
+                spans.append((start, end))
+    except (tokenize.TokenError, SyntaxError, ValueError):
+        # Uszkodzony ogranicznik zatrzymuje tokenizer — zebrane do tej pory
+        # literaly nadal chronimy, reszte zostawiamy naprawie.
+        pass
+    return spans
+
+
+# Znaki-OGRANICZNIKI: typograficzne cudzyslowy uzywane zamiast prostych. Reszta
+# `_REPLACEMENTS` (myslniki, wielokropek, twarde spacje) to znaki TRESCI. Podzial
+# ma znaczenie: ogranicznik naprawiamy jako pierwszy, bo dopiero po zamknieciu
+# literalu jego tresc (np. myslnik w srodku) staje sie chroniona (A05).
+_QUOTE_CHARS = frozenset("„“”«»‘’′")
+_CONTENT_CHARS = frozenset(_REPLACEMENTS) - _QUOTE_CHARS
+
+# Naprawa zbiega monotonicznie (kazdy przebieg usuwa co najmniej jeden psuty
+# znak), wiec to tylko bezpiecznik przed nieoczekiwana petla.
+_MAX_REPAIR_PASSES = 10
+
+
+def _compiles(text: str) -> bool:
+    try:
+        _check_syntax(text)
+    except SyntaxError:
+        return False
+    return True
+
+
+def _replace_outside(text: str, spans: list[tuple[int, int]], chars: frozenset[str]) -> tuple[str, bool]:
+    """Podmienia znaki z `chars` stojace POZA trescia rozpoznanych literalow."""
+    out: list[str] = []
+    changed = False
+    for i, ch in enumerate(text):
+        if ch in chars and not any(s <= i < e for s, e in spans):
+            out.append(_REPLACEMENTS[ch])
+            changed = True
+        else:
+            out.append(ch)
+    return "".join(out), changed
+
+
+def _token_aware_repair(text: str) -> str:
+    """Podmienia znaki, ktore czat lubi psuc, ale WYLACZNIE poza trescia
+    rozpoznanych literalow. Zastepuje wczesniejsza globalna podmiane, ktora
+    zmieniala wartosc poprawnych literalow (A05).
+
+    Ograniczniki naprawiamy przed trescia: `msg = ‘ok—now’` najpierw dostaje
+    proste cudzyslowy, a przy kolejnym tokenizowaniu myslnik jest juz w srodku
+    literalu i zostaje nietkniety. Gdy nie da sie juz nic bezpiecznie zmienic,
+    zwracamy stan biezacy — decyzje o bledzie podejmuje wywolujacy."""
+    current = text
+    for _ in range(_MAX_REPAIR_PASSES):
+        if _compiles(current):
+            return current
+        spans = _protected_spans(current)
+        candidate, changed = _replace_outside(current, spans, _QUOTE_CHARS)
+        if not changed:
+            candidate, changed = _replace_outside(current, spans, _CONTENT_CHARS)
+        if not changed:
+            return current
+        current = candidate
+    return current
 
 
 def _expand_indent_tabs(text: str) -> str:
@@ -254,7 +341,7 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
     #    ktore czat lubi psuc (cudzyslowy typograficzne uzyte jako ogranicznik
     #    napisu, twarda spacja, myslniki). Dla juz poprawnego kodu ten krok sie
     #    nie wykonuje, wiec nie moze zepsuc jego literalow.
-    repaired = _apply_replacements(text)
+    repaired = _token_aware_repair(text)
     if repaired != text:
         try:
             _check_syntax(repaired)

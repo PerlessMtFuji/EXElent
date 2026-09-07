@@ -198,3 +198,46 @@ def test_only_chat_wrapper_is_rejected_as_no_code():
     result = convert_text_to_python(b"```python\n\n\n```")
     assert result.ok is False
     assert result.error_text == NO_CODE
+
+
+# --- A05: tokenowa naprawa uszkodzonych ogranicznikow ---
+
+
+def test_repair_preserves_typographic_chars_inside_valid_literals():
+    """Kod sie nie kompiluje przez typograficzny cudzyslow uzyty jako
+    OGRANICZNIK (linia 2). Naprawa ma go podmienic, ale NIE ruszac myslnika,
+    ktory jest trescia poprawnego literalu w linii 1. Globalna podmiana
+    znakow psula wartosc tego dobrego literalu (A05)."""
+    src = "title = 'Rok 2024—2025'\nmsg = ‘ok’\n"
+    result = convert_text_to_python(src.encode())
+    assert result.ok
+    assert result.code == "title = 'Rok 2024—2025'\nmsg = 'ok'"
+
+
+def test_repair_fixes_delimiters_but_keeps_wrapped_content():
+    """Typograficzne cudzyslowy jako OGRANICZNIK, a w srodku myslnik jako
+    TRESC. Naprawa ma podmienic ograniczniki, ale zostawic myslnik — po
+    zamknieciu literalu staje sie on chroniona trescia. Globalna podmiana
+    psula go razem z ogranicznikami (A05)."""
+    result = convert_text_to_python("msg = ‘ok—now’\n".encode())
+    assert result.ok
+    assert result.code == "msg = 'ok—now'"
+
+
+def test_repair_reports_instead_of_guessing_unbalanced_delimiter():
+    """Pojedynczy typograficzny cudzyslow-otwarcie bez pary. Naprawa nie
+    zmysla domkniecia literalu — zwraca kontrolowany blad, nie pozorny sukces
+    (A05: gdy granic literalu nie da sie pewnie rozpoznac, wskaz problem)."""
+    result = convert_text_to_python("msg = ‘ok\n".encode())
+    assert result.ok is False
+    assert result.code is None
+
+
+def test_repair_keeps_nbsp_inside_fstring_but_fixes_it_outside():
+    """Twarda spacja w czesci TEKSTOWEJ f-stringa to tresc (chroniona), ta sama
+    poza literalem to strukturalny smiec (do podmiany). Naprawa musi rozroznic
+    te dwa miejsca — czesci tekstowe f-stringow sa chronione (A05)."""
+    src = "x = f'a b'\ny = 1\n"
+    result = convert_text_to_python(src.encode())
+    assert result.ok
+    assert result.code == "x = f'a b'\ny = 1"
