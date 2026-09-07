@@ -26,9 +26,13 @@ zielonych. Poniżej co domknięte i co świadomie zostało jako zakres częścio
   *Zostaje:* tokenowa naprawa uszkodzonych ograniczników, mapa linii, podgląd/UI.
 - **A06 — ścieżki konwersji (P1): zrobione.** Klucz = ścieżka względna; kolizje
   `txt_collision`; golden na zagnieżdżony TXT.
-- **A07 — zależności (P1): rdzeń.** `packaging.Requirement` (wersje ze spacjami,
-  markery dla Windows/3.12, extras, `-r`/`-c`), poprawne try/except. *Zostaje:*
-  pyproject.toml i zgłaszanie cyklu/braku pliku jako Issue.
+- **A07 — zależności (P1): zrobione.** `packaging.Requirement` (wersje ze
+  spacjami, markery dla Windows/3.12, extras, `-r`/`-c`), poprawne try/except.
+  `pyproject.toml` (PEP 621 `[project].dependencies`) z pierwszeństwem
+  `requirements.txt` przed pyproject; `dynamic`/Poetry/nieczytelny TOML spada do
+  skanu importów. Cykl, brak pliku `-r` i nieczytelny pyproject idą jako `Issue`
+  (WARNING). *Zostaje:* rozdział zadeklarowane vs wykryte importy (rozbieżności),
+  Poetry `[tool.poetry]`, ręczne dopisanie hidden imports.
 - **A08 — wiarygodny wynik (P1): rdzeń.** Nieudana wymagana paczka →
   `required_package_failed`, stop przed PyInstallerem. Zepsuty składniowo `.py`
   daje `py_syntax_error` (BLOCKER) w analizie — koniec „fałszywego sukcesu",
