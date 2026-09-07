@@ -137,6 +137,11 @@ CATALOG: dict[str, str] = {
         "it would crash on the person you give it to. Check the library name and your internet "
         "connection, then try again."
     ),
+    "requirements_conflict": (
+        "The required libraries have conflicting version requirements that cannot be satisfied "
+        "together. The EXE was not built — the environment would be inconsistent. Reconcile the "
+        "versions in your requirements (e.g. in requirements.txt) and try again."
+    ),
     "antivirus_blocked": (
         "Antivirus software blocked writing the file. "
         "Add the EXElent folder to its exceptions and try again."

@@ -105,6 +105,35 @@ def test_optional_packages_do_not_abort_on_failure(monkeypatch, tmp_path):
     assert "nieistniejaca-paczka" in result.failed_packages
 
 
+def test_requirements_conflict_blocks_instead_of_a_silent_separate_install(monkeypatch, tmp_path):
+    """Konflikt wersji: hurtowa instalacja calego zestawu pada (resolver nie ma
+    rozwiazania), ale KAZDA paczka instaluje sie osobno — nadpisujac wersje
+    poprzedniej. Wczesniej dawalo to failed_packages=() i build z NIESPOJNYM
+    srodowiskiem. Teraz blokujemy z pierwotnym bledem rozwiazania (B06):
+    udana instalacja pojedyncza nie jest dowodem gotowosci."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(env, "ensure_uv", lambda _p: tmp_path / "uv.exe")
+
+    def fake_run(uv, args, *, cwd=None, cancel=None):
+        # Kazda POJEDYNCZA instalacja sie udaje — to wlasnie pulapka konfliktu.
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(env, "run_uv", fake_run)
+    # Hurtowa instalacja pada: caly zestaw nie ma wspolnego rozwiazania.
+    monkeypatch.setattr(
+        env, "_stream_uv", _fake_stream_uv(returncode=1, text="No solution found: a==1 and a==2")
+    )
+
+    with pytest.raises(env.BuildEnvError) as excinfo:
+        env.create_build_env(tmp_path / "src", ["a==1", "b"], noop_progress)
+    assert excinfo.value.issue.code == "requirements_conflict"
+
+
 # --- Critical C2: nieudany krok uv nie moze zwrocic zdrowo wygladajacego BuildEnv ---
 
 

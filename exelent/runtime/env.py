@@ -349,20 +349,30 @@ def create_build_env(
             )
         )
 
-    returncode, _text = _stream_uv(
+    returncode, bulk_text = _stream_uv(
         uv, ["pip", "install", "--python", str(python), *wanted], on_line, cancel=cancel
     )
     _raise_if_cancelled(cancel)
 
     failed: list[str] = []
     if returncode != 0:
-        # Instalacja hurtowa padła — próbujemy pojedynczo, żeby jedna zła
-        # nazwa paczki nie zabiła całego builda.
+        # Instalacja HURTOWA padła. Próba pojedyncza jest tu wyłącznie
+        # DIAGNOSTYKĄ — wskazuje paczki, których w ogóle nie da się zainstalować
+        # (zła nazwa, brak artefaktu). Jej powodzenie NIE jest dowodem
+        # gotowości: gdy każda paczka instaluje się osobno, a cały zestaw nie,
+        # to KONFLIKT — pojedyncze instalacje tylko nadpisują nawzajem swoje
+        # wersje i zostawiają środowisko niespójne. Taki fallback blokujemy
+        # niżej, niosąc pierwotny błąd rozwiązania (B06).
         for spec in wanted:
             _raise_if_cancelled(cancel)
             single = run_uv(uv, ["pip", "install", "--python", str(python), spec], cancel=cancel)
             if single.returncode != 0:
                 failed.append(spec)
+        if not failed:
+            # Zestaw nie ma wspólnego rozwiązania, choć każda paczka wchodzi
+            # osobno. Środowisko po pojedynczych instalacjach jest niespójne —
+            # nie budujemy z niego EXE. Zatrzymujemy się z pierwotnym błędem.
+            raise _requirements_conflict(bulk_text)
 
     done, total, speed, _eta = tally.snapshot()
     progress(
@@ -375,6 +385,19 @@ def create_build_env(
         )
     )
     return BuildEnv(uv=uv, venv=venv, python=python, failed_packages=tuple(failed))
+
+
+def _requirements_conflict(bulk_text: str) -> BuildEnvError:
+    """Cały zestaw wymagań nie da się rozwiązać razem (sprzeczne piny lub
+    zależności przechodnie), choć każda paczka wchodzi osobno. Powstałe po
+    pojedynczych instalacjach środowisko jest niespójne i nie jest dowodem
+    gotowości — blokujemy build, niosąc pierwotny błąd resolvera przez
+    `explain_log`, tak jak przy awarii środowiska (B06)."""
+    return BuildEnvError(
+        Issue("requirements_conflict", Severity.BLOCKER),
+        RuntimeError("uv nie rozwiazalo pelnego zestawu wymagan"),
+        extra=explain_log(bulk_text),
+    )
 
 
 def _env_failure(
