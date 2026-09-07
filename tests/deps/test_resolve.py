@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from exelent.deps.resolve import resolve_dependencies
+from exelent.deps.resolve import resolve_dependencies, resolve_extra_modules
 from exelent.models import Severity
 
 
@@ -452,6 +452,40 @@ def test_declared_but_unused_dependency_is_not_flagged():
     deps = resolve_dependencies(_s("import os"), set(), "rich\n", issues=issues)
     assert _names(deps) == {"rich"}
     assert "dependency_not_declared" not in {i.code for i in issues}
+
+
+# --- A07: reczne dopisanie modulow (importy niewidoczne dla skanu) ---
+
+
+def test_extra_module_becomes_hidden_import_and_package():
+    hidden, deps = resolve_extra_modules(["sklearn"], set())
+    assert hidden == ("sklearn",)
+    # Nazwa najwyzszego poziomu po aliasie -> pakiet do instalacji.
+    assert _names(deps) == {"scikit-learn"}
+
+
+def test_extra_dotted_module_is_kept_whole_and_top_level_installed():
+    hidden, deps = resolve_extra_modules(["scipy.stats"], set())
+    assert hidden == ("scipy.stats",)
+    assert _names(deps) == {"scipy"}
+
+
+def test_extra_stdlib_module_is_hidden_but_not_installed():
+    hidden, deps = resolve_extra_modules(["json.decoder"], set())
+    assert hidden == ("json.decoder",)
+    assert deps == ()
+
+
+def test_extra_local_module_is_hidden_but_not_installed():
+    hidden, deps = resolve_extra_modules(["mypkg.plugin"], {"mypkg"})
+    assert hidden == ("mypkg.plugin",)
+    assert deps == ()
+
+
+def test_extra_modules_dedupe_and_skip_blanks():
+    hidden, deps = resolve_extra_modules(["rich", "  ", "", "rich"], set())
+    assert hidden == ("rich",)
+    assert _names(deps) == {"rich"}
 
 
 # --- A07: cykl i brakujacy plik manifestu jako Issue ---

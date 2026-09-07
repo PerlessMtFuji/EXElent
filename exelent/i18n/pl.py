@@ -237,6 +237,10 @@ CATALOG: dict[str, str] = {
     "review_pick_icon": "wybierz",
     "review_icon_filter": "Obrazy (*.png *.jpg *.jpeg *.ico)",
     "review_deps_title": "Potrzebne dodatki — zostaną pobrane automatycznie",
+    "review_extra_modules": "Brakuje modułu? Dopisz go tutaj",
+    "review_extra_modules_placeholder": (
+        "np. moja_wtyczka, pakiet.podmoduł — oddziel przecinkami"
+    ),
     "single_file_extra": "Dołączam też: {files}",
     "review_mode": "Postać wyniku",
     "review_recommended_suffix": "(zalecane)",

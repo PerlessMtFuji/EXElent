@@ -90,6 +90,45 @@ def test_hidden_imports_are_taken_from_the_analysis(tmp_path):
     assert make_plan(analysis).hidden_imports == ("ukryty_modul",)
 
 
+# --- A07: reczne dopisanie modulow trafia do planu ---
+
+
+def test_extra_modules_reach_hidden_imports_and_packages(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "print(1)"})
+    plan = make_plan(analyze_project(root), extra_modules=["sklearn"])
+    assert "sklearn" in plan.hidden_imports
+    assert "scikit-learn" in plan.packages
+
+
+def test_extra_modules_merge_with_detected_dependencies(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    plan = make_plan(analyze_project(root), extra_modules=["dynmod"])
+    assert "requests" in plan.packages
+    assert "dynmod" in plan.packages
+    assert "dynmod" in plan.hidden_imports
+
+
+def test_extra_module_already_detected_is_not_duplicated(tmp_path):
+    code = "import importlib\nimportlib.import_module('ukryty')\n"
+    root = _make(tmp_path / "p", {"main.py": code})
+    plan = make_plan(analyze_project(root), extra_modules=["ukryty"])
+    assert plan.hidden_imports.count("ukryty") == 1
+
+
+def test_extra_local_module_is_not_installed(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import helper\n", "helper.py": "X = 1\n"})
+    plan = make_plan(analyze_project(root), extra_modules=["helper.plugin"])
+    assert "helper.plugin" in plan.hidden_imports
+    assert "helper" not in plan.packages
+
+
+def test_no_extra_modules_leaves_plan_unchanged(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    plan = make_plan(analyze_project(root))
+    assert plan.hidden_imports == ()
+    assert plan.packages == ("requests",)
+
+
 def test_make_plan_without_entry_raises_value_error(tmp_path):
     root = _make(tmp_path / "pusty", {})
     root.mkdir(parents=True, exist_ok=True)

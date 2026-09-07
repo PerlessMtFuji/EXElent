@@ -427,6 +427,39 @@ def test_restore_link_returns_the_recommended_value(screen, tmp_path):
     assert screen.row_kind.restore_visible() is False
 
 
+# --- reczne dopisanie modulow (A07) ---
+
+
+def test_extra_modules_field_reaches_the_plan(screen, qtbot, tmp_path):
+    """Import dynamiczny, ktorego skan nie widzi: uzytkownik dopisuje modul
+    recznie, a ten ma trafic do planu jako ukryty import (A07)."""
+    _load(screen, tmp_path, {"main.py": "print(1)"})
+    screen.extra_edit.setText("moja_wtyczka, pakiet.podmodul")
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    plan = blocker.args[0]
+    assert "moja_wtyczka" in plan.hidden_imports
+    assert "pakiet.podmodul" in plan.hidden_imports
+
+
+def test_empty_extra_field_adds_nothing(screen, qtbot, tmp_path):
+    _load(screen, tmp_path, {"main.py": "print(1)"})
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    assert blocker.args[0].hidden_imports == ()
+
+
+def test_extra_modules_do_not_survive_the_next_project(screen, qtbot, tmp_path):
+    """Modul dopisany dla jednego projektu nie moze przeciec do nastepnego —
+    to byloby ukryte dopisanie do cudzego builda."""
+    _load(screen, tmp_path, {"main.py": "print(1)"})
+    screen.extra_edit.setText("moja_wtyczka")
+    _load(screen, tmp_path / "drugi", {"main.py": "print(1)"})
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    assert blocker.args[0].hidden_imports == ()
+
+
 # --- wiersz faktu ---
 
 

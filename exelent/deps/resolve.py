@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import sys
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -465,6 +465,43 @@ def _supplement_with_detected(
         issues.append(Issue("dependency_not_declared", severity, {"package": dep.package}))
     result.sort(key=lambda d: d.package.lower())
     return tuple(result)
+
+
+def resolve_extra_modules(
+    entries: Iterable[str],
+    local_modules: set[str],
+) -> tuple[tuple[str, ...], tuple[Dependency, ...]]:
+    """Moduły dopisane RĘCZNIE przez użytkownika, których statyczny skan nie mógł
+    zobaczyć (import dynamiczny, wtyczka, `importlib`) -> (ukryte importy,
+    zależności do instalacji) (A07).
+
+    Każdy wpis pakujemy DOSŁOWNIE jako ukryty import PyInstallera — nazwa z
+    kropką (`pkg.plugins.foo`) zostaje w całości, bo to właśnie submoduł, którego
+    PyInstaller sam nie znalazł. Nazwa NAJWYŻSZEGO poziomu staje się dodatkowo
+    pakietem do instalacji (po aliasie: `sklearn` -> `scikit-learn`), chyba że to
+    moduł biblioteki standardowej albo lokalny — żeby `--hidden-import` miał co
+    zaimportować. Deduplikacja: ukryte importy po dosłownym wpisie, pakiety po
+    nazwie po aliasie."""
+    stdlib = sys.stdlib_module_names
+    hidden: list[str] = []
+    seen: set[str] = set()
+    by_package: dict[str, Dependency] = {}
+    for raw in entries:
+        name = raw.strip()
+        if not name:
+            continue
+        if name not in seen:
+            seen.add(name)
+            hidden.append(name)
+        top = name.split(".")[0]
+        if not top or top in stdlib or top in local_modules or top.startswith("_"):
+            continue
+        package = ALIASES.get(top, top)
+        by_package.setdefault(
+            package, Dependency(import_name=top, package=package, heavy=is_heavy(package))
+        )
+    deps = tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
+    return tuple(hidden), deps
 
 
 def resolve_dependencies(

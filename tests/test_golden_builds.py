@@ -545,3 +545,37 @@ def test_poetry_dependency_installs_and_runs(tmp_path, shared_state):
     run = run_bounded([result.artifact], timeout=180)
     assert "POETRY-OK six" in run.stdout
     _assert_source_untouched(root, {"main.py", "pyproject.toml"})
+
+
+def test_manually_added_hidden_import_reaches_the_exe(tmp_path, shared_state):
+    """Reczne dopisanie modulu, ktorego statyczny skan nie widzi (A07).
+
+    `main.py` laduje `pkg.plugin` przez importlib pod WYLICZONA nazwa
+    (sklejona ze stringow), wiec `collect_hidden_imports` — ktory rozpoznaje
+    tylko literaly — nie ma jej skad zobaczyc. Bez `--hidden-import` PyInstaller
+    nie spakowalby tego submodulu i EXE padloby u odbiorcy na
+    `ModuleNotFoundError: No module named 'pkg.plugin'`. Obecnosc modulu w
+    gotowym EXE moze pochodzic tylko z recznego dopisania przekazanego przez
+    ekran 2 do planu."""
+    root = _project(
+        tmp_path,
+        "reczny-modul",
+        {
+            "main.py": (
+                "import importlib\n"
+                "nazwa = 'pkg.' + 'plugin'\n"  # wyliczona, nie literal
+                "mod = importlib.import_module(nazwa)\n"
+                "print('HIDDEN-OK', mod.WARTOSC)\n"
+            ),
+            "pkg/__init__.py": "",
+            "pkg/plugin.py": "WARTOSC = 'MODUL-DOPISANY-RECZNIE'\n",
+        },
+    )
+    result = run_build(
+        root, noop_progress, dest_dir=tmp_path / "out", extra_modules=["pkg.plugin"]
+    )
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([result.artifact], timeout=180)
+    assert "HIDDEN-OK MODUL-DOPISANY-RECZNIE" in run.stdout
+    _assert_source_untouched(root, {"main.py", "pkg", "pkg/__init__.py", "pkg/plugin.py"})
