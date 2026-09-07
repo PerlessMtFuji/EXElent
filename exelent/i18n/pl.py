@@ -151,6 +151,11 @@ CATALOG: dict[str, str] = {
         "Plik EXE NIE powstał — środowisko byłoby niespójne. Uzgodnij wersje w wymaganiach "
         "(np. w requirements.txt) i spróbuj ponownie."
     ),
+    "validation_failed": (
+        "Nie udało się sprawdzić kodu docelowym Pythonem {version}, więc build został "
+        "zatrzymany — to była awaria samej kontroli, nie potwierdzenie, że kod jest dobry. "
+        "Spróbuj ponownie; jeśli się powtarza, zgłoś to. Szczegóły: {detail}"
+    ),
     "antivirus_blocked": (
         "Program antywirusowy zablokował zapis pliku. "
         "Dodaj folder EXElent do wyjątków i spróbuj ponownie."

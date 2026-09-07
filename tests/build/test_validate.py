@@ -40,6 +40,34 @@ def test_broken_source_returns_blocker_with_file_and_line(tmp_path):
     assert issue.data["version"] == "3.12"
 
 
+def test_unavailable_target_interpreter_blocks_instead_of_passing_as_no_error(tmp_path):
+    """B09: gdy walidacja NIE zostala wykonana — docelowy interpreter nie
+    wystartowal — nie wolno uznac tego za 'brak bledu'. Zamiast None (czytanego
+    jako sukces) albo golego wyjatku zwracamy nazwany bloker validation_failed."""
+    ws = _workspace(tmp_path, {"main.py": "print(1)\n"})
+    missing_python = tmp_path / "nie-ma-takiego-python.exe"
+    issue = validate_target_syntax(missing_python, ws, python_version="3.12")
+    assert issue is not None
+    assert issue.code == "validation_failed"
+    assert issue.severity is Severity.BLOCKER
+
+
+def test_nonzero_without_protocol_line_is_a_failure_not_success(tmp_path, monkeypatch):
+    """Niezerowy kod bez rozpoznawalnego protokolu (checker sie wywrocil albo
+    wypisal cos innego) to walidacja NIEWYKONANA/AWARIA, nie 'skladnia
+    poprawna'. B09: brak protokolu nie moze oznaczac None rozumianego jako
+    sukces; nie rozpoznajemy tez bledu po dowolnym tabulatorze na stdout."""
+    from exelent.build import validate
+
+    ws = _workspace(tmp_path, {"main.py": "print(1)\n"})
+    # Podmieniony checker konczy niezerowo i NIE wypisuje markera protokolu —
+    # a przy tym wstawia tabulator, ktory dawna heurystyka wzielaby za blad.
+    monkeypatch.setattr(validate, "_CHECK_SOURCE", "import sys\nprint('a\\tb')\nsys.exit(3)\n")
+    issue = validate.validate_target_syntax(Path(sys.executable), ws, python_version="3.12")
+    assert issue is not None
+    assert issue.code == "validation_failed"
+
+
 def test_compiler_stage_error_is_caught_where_ast_parse_would_miss_it(tmp_path):
     """`return` poza funkcja: `ast.parse` (walidacja deweloperska) przepuszcza,
     a KOMPILATOR odrzuca. To dokladnie ta luka, przez ktora PyInstaller wyrzucal

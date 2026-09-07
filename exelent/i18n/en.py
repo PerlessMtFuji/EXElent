@@ -142,6 +142,11 @@ CATALOG: dict[str, str] = {
         "together. The EXE was not built — the environment would be inconsistent. Reconcile the "
         "versions in your requirements (e.g. in requirements.txt) and try again."
     ),
+    "validation_failed": (
+        "The code could not be checked with the target Python {version}, so the build was "
+        "stopped — this was a failure of the check itself, not a confirmation that the code is "
+        "fine. Try again; if it keeps happening, please report it. Details: {detail}"
+    ),
     "antivirus_blocked": (
         "Antivirus software blocked writing the file. "
         "Add the EXElent folder to its exceptions and try again."
