@@ -14,14 +14,13 @@ from exelent.analysis.apptype import (
     collect_code_issues,
     collect_hidden_imports,
     detect_app_kind,
-    detect_output_mode,
 )
 from exelent.analysis.entrypoint import entry_is_certain, local_module_names, rank_entry_candidates
 from exelent.analysis.scanner import scan_directory, scan_single_file
 from exelent.analysis.textconv import NO_CODE, convert_text_to_python
 from exelent.deps.resolve import resolve_dependencies
 from exelent.deps.sizes import LARGE_WARNING_MB, estimate_exe_size
-from exelent.models import Issue, ProjectAnalysis, ScanResult, Severity
+from exelent.models import Issue, OutputMode, ProjectAnalysis, ScanResult, Severity
 
 OTHER_LANGUAGE_SUFFIXES = {".js", ".ts", ".java", ".cs", ".cpp", ".c", ".go", ".rb", ".php"}
 
@@ -219,7 +218,10 @@ def analyze_project(root: Path) -> ProjectAnalysis:
         )
 
     app_kind, kind_certain = detect_app_kind(sources)
-    output_mode = detect_output_mode(sources)
+    # Tryb wyjscia nie jest juz zgadywany z tresci (B01): zalecany jest zawsze
+    # ONEDIR, bo tylko on gwarantuje trwaly zapis ORAZ odczyt zasobow lezacych
+    # obok EXE. ONEFILE zostaje recznym wyborem uzytkownika na ekranie przegladu.
+    output_mode = OutputMode.ONEDIR
     issues.extend(collect_code_issues(sources))
 
     # Ścieżka, a nie sam tekst: resolver rozwija `-r`/`-c` względem katalogu

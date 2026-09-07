@@ -317,6 +317,21 @@ def test_output_mode_override_reaches_plan(screen, qtbot, tmp_path):
     assert blocker.args[0].output_mode is OutputMode.ONEDIR
 
 
+def test_choosing_onefile_shows_a_visible_limitation(screen, tmp_path):
+    """B01: „jeden plik EXE" to swiadomy wybor obarczony ograniczeniem odczytu
+    zasobow. Domyslny ONEDIR nie ostrzega; przelaczenie na ONEFILE natychmiast
+    pokazuje ograniczenie, a powrot na ONEDIR je chowa."""
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    assert screen.warnings_label.isHidden()
+
+    screen.mode_combo.setCurrentIndex(screen.mode_combo.findData(OutputMode.ONEFILE))
+    assert not screen.warnings_label.isHidden()
+    assert t("onefile_no_resource_guarantee") in screen.warnings_label.text()
+
+    screen.mode_combo.setCurrentIndex(screen.mode_combo.findData(OutputMode.ONEDIR))
+    assert screen.warnings_label.isHidden()
+
+
 def test_chosen_icon_reaches_the_plan(screen, qtbot, monkeypatch, tmp_path):
     _load(screen, tmp_path, {"main.py": "print(1)"})
     wybrana = tmp_path / "moja.png"

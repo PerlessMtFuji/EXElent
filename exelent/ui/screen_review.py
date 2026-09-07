@@ -27,8 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from exelent.i18n import describe, t
-from exelent.models import AppKind, OutputMode, ProjectAnalysis, Severity
-from exelent.planning import make_plan
+from exelent.models import AppKind, Issue, OutputMode, ProjectAnalysis, Severity
+from exelent.planning import make_plan, onefile_limitation_issues
 from exelent.ui.format import human_size
 from exelent.ui.rows import FactRow
 
@@ -71,6 +71,9 @@ class ReviewScreen(QWidget):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem(t("mode_onefile"), OutputMode.ONEFILE)
         self.mode_combo.addItem(t("mode_onedir"), OutputMode.ONEDIR)
+        # Reczny wybor ONEFILE niesie widoczne ograniczenie (B01). Ostrzezenia
+        # sa wiec przeliczane przy KAZDEJ zmianie trybu, nie tylko przy `load`.
+        self.mode_combo.currentIndexChanged.connect(lambda *_: self._update_issue_labels())
 
         self.row_entry = FactRow(t("review_entry"), self.entry_combo)
         self.row_kind = FactRow(t("review_kind"), self.kind_combo)
@@ -214,14 +217,36 @@ class ReviewScreen(QWidget):
         self.mode_combo.setCurrentIndex(mode_index)
         self.row_mode.set_recommended(self.mode_combo.currentText())
 
-        warnings = [describe(i) for i in analysis.issues if i.severity is not Severity.INFO]
-        notes = [describe(i) for i in analysis.issues if i.severity is Severity.INFO]
+        self._update_issue_labels()
+
+    def _mode_issues(self) -> tuple[Issue, ...]:
+        """Ostrzezenia wynikajace z AKTUALNIE wybranego trybu wyjscia (B01).
+
+        Qt oddaje dane pozycji jako goly napis, wiec tryb odtwarzamy przez
+        `OutputMode(...)` — tak samo jak `_emit_plan`, zeby porownanie `is` w
+        rdzeniu widzialo enum, a nie string."""
+        data = self.mode_combo.currentData()
+        if data is None:
+            return ()
+        return onefile_limitation_issues(OutputMode(data))
+
+    def _update_issue_labels(self) -> None:
+        """Sklada ostrzezenia i notatki z analizy ORAZ z wyboru trybu.
+
+        Wolane z `load` i przy kazdej zmianie trybu, wiec przelaczenie na
+        „Jeden plik EXE" natychmiast pokazuje jego ograniczenie, a powrot na
+        „Folder z programem" je chowa."""
+        if self._analysis is None:
+            return
+        issues = (*self._analysis.issues, *self._mode_issues())
+        warnings = [describe(i) for i in issues if i.severity is not Severity.INFO]
+        notes = [describe(i) for i in issues if i.severity is Severity.INFO]
         self.warnings_label.setText("\n".join(warnings))
         self.warnings_label.setVisible(bool(warnings))
         self.notes_label.setText("\n".join(notes))
         self.notes_label.setVisible(bool(notes))
 
-        blocked = any(i.severity is Severity.BLOCKER for i in analysis.issues)
+        blocked = any(i.severity is Severity.BLOCKER for i in issues)
         self.build_button.setEnabled(not blocked)
 
     def retranslate(self) -> None:

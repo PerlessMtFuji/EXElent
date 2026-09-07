@@ -182,6 +182,30 @@ def test_writing_program_gets_onedir(tmp_path):
     assert analyze_project(root).output_mode is OutputMode.ONEDIR
 
 
+def test_read_only_program_also_gets_onedir(tmp_path):
+    """B01: zalecany tryb to ZAWSZE ONEDIR, takze dla programu bez widocznego
+    zapisu. ONEFILE ustawialby cwd na katalog tymczasowy, a brak wykrytego
+    zapisu nie jest dowodem, ze program niczego nie zapisze."""
+    root = _make(tmp_path, {"main.py": "print('tylko-odczyt')\n"})
+    assert analyze_project(root).output_mode is OutputMode.ONEDIR
+
+
+def test_aliased_open_write_still_gets_onedir(tmp_path):
+    """Reprodukcja z tabeli dowodow: zapis przez alias `open` wymykal sie
+    heurystyce zapisu i dostawal ONEFILE, gdzie plik ginal w `_MEIPASS`.
+    Zalecany tryb jest teraz ONEDIR niezaleznie od tego, czy zapis wykryto."""
+    root = _make(tmp_path, {"main.py": "zapis = open\nzapis('wynik.txt', 'w').write('x')\n"})
+    assert analyze_project(root).output_mode is OutputMode.ONEDIR
+
+
+def test_pillow_save_still_gets_onedir(tmp_path):
+    """Reprodukcja z tabeli dowodow: `Image.save(...)` nie byl na liscie metod
+    zapisu, wiec program z Pillow dostawal ONEFILE i tracil zapisany obraz."""
+    code = "from PIL import Image\nImage.new('RGB', (2, 2)).save('obraz.png')\n"
+    root = _make(tmp_path, {"main.py": code})
+    assert analyze_project(root).output_mode is OutputMode.ONEDIR
+
+
 def test_requirements_pins_win_and_undeclared_imports_are_supplemented(tmp_path):
     # rich jest importowany I przypięty w manifescie → używamy wersji z manifestu
     # (`rich==13.7.0`), nie gołej nazwy ze skanu. requests jest importowany, ale

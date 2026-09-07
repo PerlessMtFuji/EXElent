@@ -41,14 +41,26 @@ def test_launcher_runs_entry_module_as_main():
     assert 'run_name="__main__"' in code
 
 
-def test_onefile_readonly_chdir_to_bundle():
-    code = render_launcher("main", AppKind.CONSOLE, OutputMode.ONEFILE)
-    assert "_MEIPASS" in code
+def _chdir_body(code: str) -> str:
+    """Tresc `_set_working_directory` — bez reszty launchera, ktora tez wspomina
+    `_MEIPASS` (rejestracja katalogow DLL)."""
+    start = code.index("def _set_working_directory")
+    return code[start : code.index("def ", start + 1)]
+
+
+def test_onefile_anchors_cwd_to_executable_not_temp_bundle():
+    """B01: ONEFILE nie moze ustawiac cwd na `sys._MEIPASS` — to katalog
+    tymczasowy, ktory PyInstaller kasuje przy zakonczeniu, wiec wzgledny zapis
+    ginie razem z nim. cwd ma wskazywac trwaly katalog EXE, tak jak w ONEDIR."""
+    body = _chdir_body(render_launcher("main", AppKind.CONSOLE, OutputMode.ONEFILE))
+    assert "sys.executable" in body
+    assert "_MEIPASS" not in body
 
 
 def test_onedir_chdir_to_executable_folder():
-    code = render_launcher("main", AppKind.CONSOLE, OutputMode.ONEDIR)
-    assert "sys.executable" in code
+    body = _chdir_body(render_launcher("main", AppKind.CONSOLE, OutputMode.ONEDIR))
+    assert "sys.executable" in body
+    assert "_MEIPASS" not in body
 
 
 def test_windowed_launcher_shows_dialog():

@@ -251,6 +251,12 @@ CATALOG: dict[str, str] = {
     "kind_console": "Program konsolowy",
     "mode_onefile": "Jeden plik EXE",
     "mode_onedir": "Folder z programem",
+    "onefile_no_resource_guarantee": (
+        "Jeden plik EXE: dołączone pliki są rozpakowywane do katalogu tymczasowego, "
+        "więc odczyt zasobu przez względną ścieżkę (np. open('config.json')) może się "
+        "nie powieść. Jeśli program czyta pliki leżące obok siebie, wybierz „Folder z "
+        "programem”. Zapisane pliki trafiają obok EXE i zostają."
+    ),
     # ekran 3 - budowanie i wynik
     "build_cancel": "Przerwij",
     "build_cancelling": "Przerywanie…",
