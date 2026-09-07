@@ -63,6 +63,22 @@ CATALOG: dict[str, str] = {
         "The finished program will take about {low}–{high} MB and will take longer than usual "
         "to build. Largest: {packages}."
     ),
+    # dependency manifests (A07)
+    "requirements_missing": (
+        "The requirements list points to {file}, which is not there — the list of extra "
+        "packages may be incomplete."
+    ),
+    "requirements_cycle": (
+        "The requirements files refer to each other in a loop (through {file}); the repeat "
+        "was skipped."
+    ),
+    "pyproject_unreadable": (
+        "{file} could not be read, so its declared packages were skipped — they will be "
+        "detected from the code instead."
+    ),
+    "pyproject_dynamic_deps": (
+        "{file} declares its packages dynamically, so they were detected from the code instead."
+    ),
     # environment
     "no_network": (
         "No internet connection. The first build needs to download tools — connect and try again."

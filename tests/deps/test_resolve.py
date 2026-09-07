@@ -165,6 +165,121 @@ def test_recursive_requirements_cycle_does_not_hang(tmp_path):
     assert _names(deps) == {"rich", "requests"}
 
 
+# --- A07: pyproject.toml (PEP 621) ---
+
+
+def test_pyproject_dependencies_are_read(tmp_path):
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(
+        '[project]\nname = "x"\ndependencies = ["requests>=2.0", "rich"]\n',
+        encoding="utf-8",
+    )
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"requests>=2.0", "rich"}
+
+
+def test_pyproject_build_system_requires_are_not_runtime_deps(tmp_path):
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(
+        '[build-system]\nrequires = ["setuptools>=61", "wheel"]\n'
+        '[project]\nname = "x"\ndependencies = ["rich"]\n',
+        encoding="utf-8",
+    )
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert _names(deps) == {"rich"}
+
+
+def test_pyproject_marker_for_other_platform_is_excluded(tmp_path):
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(
+        '[project]\nname = "x"\ndependencies = ["pyobjc; sys_platform == \'darwin\'"]\n',
+        encoding="utf-8",
+    )
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
+    assert deps == ()
+
+
+def test_pyproject_with_empty_dependencies_is_authoritative(tmp_path):
+    # Jawne `dependencies = []` znaczy "brak zaleznosci" — nie wolno wtedy
+    # zgadywac z importow, bo autor zadeklarowal pusta liste.
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text('[project]\nname = "x"\ndependencies = []\n', encoding="utf-8")
+    deps = resolve_dependencies(_s("import requests"), set(), pyproject_path=pp)
+    assert deps == ()
+
+
+def test_pyproject_dynamic_dependencies_fall_back_to_imports(tmp_path):
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text('[project]\nname = "x"\ndynamic = ["dependencies"]\n', encoding="utf-8")
+    issues: list = []
+    deps = resolve_dependencies(_s("import rich"), set(), pyproject_path=pp, issues=issues)
+    assert _names(deps) == {"rich"}
+    assert "pyproject_dynamic_deps" in {i.code for i in issues}
+
+
+def test_pyproject_without_project_table_falls_back_to_imports(tmp_path):
+    # Np. projekt Poetry (deps w [tool.poetry]) — nie znamy tego formatu, wiec
+    # spadamy do skanu importow zamiast oddawac pusta liste.
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text('[tool.poetry]\nname = "x"\n', encoding="utf-8")
+    deps = resolve_dependencies(_s("import rich"), set(), pyproject_path=pp)
+    assert _names(deps) == {"rich"}
+
+
+def test_requirements_txt_wins_over_pyproject(tmp_path):
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text('[project]\nname = "x"\ndependencies = ["rich"]\n', encoding="utf-8")
+    req = tmp_path / "requirements.txt"
+    req.write_text("requests==2.31.0\n", encoding="utf-8")
+    deps = resolve_dependencies(_s(""), set(), requirements_path=req, pyproject_path=pp)
+    assert _names(deps) == {"requests==2.31.0"}
+
+
+def test_unreadable_pyproject_is_reported_and_falls_back(tmp_path):
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text("[project\nname = broken toml", encoding="utf-8")
+    issues: list = []
+    deps = resolve_dependencies(_s("import rich"), set(), pyproject_path=pp, issues=issues)
+    assert _names(deps) == {"rich"}
+    assert "pyproject_unreadable" in {i.code for i in issues}
+
+
+# --- A07: cykl i brakujacy plik manifestu jako Issue ---
+
+
+def test_missing_referenced_requirements_is_reported(tmp_path):
+    main = tmp_path / "requirements.txt"
+    main.write_text("-r nie-ma.txt\nrich\n", encoding="utf-8")
+    issues: list = []
+    deps = resolve_dependencies(_s(""), set(), requirements_path=main, issues=issues)
+    assert _names(deps) == {"rich"}
+    assert "requirements_missing" in {i.code for i in issues}
+
+
+def test_requirements_cycle_is_reported(tmp_path):
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text("-r b.txt\nrich\n", encoding="utf-8")
+    b.write_text("-r a.txt\nrequests\n", encoding="utf-8")
+    issues: list = []
+    deps = resolve_dependencies(_s(""), set(), requirements_path=a, issues=issues)
+    assert _names(deps) == {"rich", "requests"}
+    assert "requirements_cycle" in {i.code for i in issues}
+
+
+def test_shared_requirements_diamond_is_not_a_cycle(tmp_path):
+    common = tmp_path / "common.txt"
+    common.write_text("rich\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("-r common.txt\nrequests\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("-r common.txt\nhttpx\n", encoding="utf-8")
+    main = tmp_path / "requirements.txt"
+    main.write_text("-r a.txt\n-r b.txt\n", encoding="utf-8")
+    issues: list = []
+    deps = resolve_dependencies(_s(""), set(), requirements_path=main, issues=issues)
+    assert _names(deps) == {"rich", "requests", "httpx"}
+    assert "requirements_cycle" not in {i.code for i in issues}
+
+
 def test_non_import_error_guard_is_not_optional():
     """`try: import x except ValueError` NIE czyni importu opcjonalnym (A07)."""
     code = "try:\n    import numpy\nexcept ValueError:\n    numpy = None\n"

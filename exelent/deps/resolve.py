@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import sys
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from exelent.constants import TARGET_PYTHON
 from exelent.deps.aliases import ALIASES
 from exelent.deps.sizes import is_heavy
-from exelent.models import Dependency
+from exelent.models import Dependency, Issue, Severity
 
 _DIRECT_REF_PREFIXES = ("git+", "hg+", "svn+", "bzr+")
 _DIRECT_REF_SUFFIXES = (".whl", ".tar.gz", ".zip")
@@ -57,19 +58,33 @@ def _strip_inline_comment(line: str) -> str:
     return line.strip()
 
 
-def _manifest_lines(path: Path, seen: set[Path], depth: int) -> list[str]:
+def _manifest_lines(
+    path: Path,
+    seen: set[Path],
+    stack: list[Path],
+    depth: int,
+    issues: list[Issue],
+) -> list[str]:
     """Linie wymagań z pliku, z rozwinięciem `-r`/`-c` względem jego katalogu.
 
-    Cykle i brakujące pliki nie wywalają analizy — plik, którego nie ma albo
-    który już czytaliśmy, jest po prostu pomijany (best-effort)."""
+    Cykl i brakujący plik nie wywalają analizy (best-effort), ale zostawiają
+    ślad w `issues` (A07): milcząco pominięty `-r` znaczy niekompletną listę
+    zależności, o czym użytkownik musi wiedzieć. `stack` to bieżąca ścieżka
+    zejścia — cykl to powrót do pliku, który JEST na tej ścieżce; ten sam plik
+    dołączony dwiema różnymi gałęziami (diament) to nie cykl, tylko dedup."""
     resolved = path.resolve()
+    if resolved in stack:
+        issues.append(Issue("requirements_cycle", Severity.WARNING, {"file": path.name}))
+        return []
     if depth > _MAX_MANIFEST_DEPTH or resolved in seen:
         return []
-    seen.add(resolved)
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        issues.append(Issue("requirements_missing", Severity.WARNING, {"file": path.name}))
         return []
+    seen.add(resolved)
+    stack.append(resolved)
 
     lines: list[str] = []
     for raw in text.splitlines():
@@ -79,13 +94,40 @@ def _manifest_lines(path: Path, seen: set[Path], depth: int) -> list[str]:
         lowered = line.lower()
         if lowered.startswith(("-r ", "--requirement ", "-c ", "--constraint ")):
             ref = line.split(None, 1)[1].strip()
-            lines.extend(_manifest_lines(path.parent / ref, seen, depth + 1))
+            lines.extend(_manifest_lines(path.parent / ref, seen, stack, depth + 1, issues))
         elif line.startswith("-"):
             # Inne opcje pip (-e, --index-url, --hash) nie są nazwą paczki.
             continue
         else:
             lines.append(line)
+    stack.pop()
     return lines
+
+
+def _deps_from_pyproject(path: Path, issues: list[Issue]) -> tuple[Dependency, ...] | None:
+    """Zależności z `[project].dependencies` (PEP 621) albo `None`, gdy plik nie
+    jest autorytatywny i trzeba spaść do skanu importów.
+
+    `None` znaczy „nie wiem stąd": brak tabeli `[project]`, deklaracja
+    `dynamic = ["dependencies"]` (deps są gdzie indziej) albo nieczytelny TOML.
+    Jawne `dependencies = []` to co innego — autor mówi „brak zależności", więc
+    zwracamy pustą krotkę i NIE zgadujemy z importów. Tabeli `[build-system]`
+    nie ruszamy: `requires` to zależności backendu budowania, nie aplikacji."""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        issues.append(Issue("pyproject_unreadable", Severity.WARNING, {"file": path.name}))
+        return None
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return None
+    if "dependencies" in project.get("dynamic", []):
+        issues.append(Issue("pyproject_dynamic_deps", Severity.WARNING, {"file": path.name}))
+        return None
+    declared = project.get("dependencies")
+    if declared is None:
+        return None
+    return _deps_from_manifest([spec for spec in declared if isinstance(spec, str)])
 
 
 def _text_lines(text: str) -> list[str]:
@@ -187,14 +229,26 @@ def resolve_dependencies(
     requirements_text: str | None = None,
     *,
     requirements_path: Path | None = None,
+    pyproject_path: Path | None = None,
+    issues: list[Issue] | None = None,
 ) -> tuple[Dependency, ...]:
-    # Manifest (requirements.txt/pyproject nadrzędnie): jawnie zadeklarowane
-    # wymagania biją zgadywanie z importów.
+    # `issues` to opcjonalny kanał diagnostyki (cykl/brak pliku manifestu,
+    # nieczytelny pyproject). Domyślnie throwaway, żeby dawni wołający — i cały
+    # zestaw testów resolvera — działali bez zmian.
+    sink = issues if issues is not None else []
+    # Manifest bije zgadywanie z importów. Pierwszeństwo jest deterministyczne,
+    # nie zależy od kolejności skanowania (A07): requirements.txt (konkretna
+    # lista instalacyjna) przed pyproject.toml (deklaracja abstrakcyjna).
     if requirements_path is not None:
-        lines = _manifest_lines(requirements_path, set(), 0)
+        lines = _manifest_lines(requirements_path, set(), [], 0, sink)
         return _deps_from_manifest(lines)
     if requirements_text is not None:
         return _deps_from_manifest(_text_lines(requirements_text))
+    if pyproject_path is not None:
+        declared = _deps_from_pyproject(pyproject_path, sink)
+        if declared is not None:
+            return declared
+        # pyproject nieautorytatywny (dynamic/Poetry/nieczytelny) → skan importów.
 
     stdlib = sys.stdlib_module_names
     # Klucz to nazwa PAKIETU po aliasowaniu, nie nazwa importu — alias table

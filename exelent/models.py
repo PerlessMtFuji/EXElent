@@ -83,6 +83,7 @@ class ScanResult:
     data_files: tuple[Path, ...] = ()
     icon_files: tuple[Path, ...] = ()
     requirements: Path | None = None
+    pyproject: Path | None = None
     file_count: int = 0
     total_bytes: int = 0
     truncated: bool = False
