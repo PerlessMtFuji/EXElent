@@ -146,6 +146,11 @@ CATALOG: dict[str, str] = {
         "wywaliłby się u osoby, której byś go dał. Sprawdź nazwę biblioteki i połączenie z "
         "internetem, a potem spróbuj ponownie."
     ),
+    "requirements_conflict": (
+        "Potrzebne biblioteki mają sprzeczne wymagania co do wersji i nie da się ich pogodzić. "
+        "Plik EXE NIE powstał — środowisko byłoby niespójne. Uzgodnij wersje w wymaganiach "
+        "(np. w requirements.txt) i spróbuj ponownie."
+    ),
     "antivirus_blocked": (
         "Program antywirusowy zablokował zapis pliku. "
         "Dodaj folder EXElent do wyjątków i spróbuj ponownie."
