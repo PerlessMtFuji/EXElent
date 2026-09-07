@@ -26,8 +26,14 @@ zielonych. Poniżej co domknięte i co świadomie zostało jako zakres częścio
   dane nie giną w katalogu tymczasowym. *Zostaje:* kolizje zasobów przed
   buildem, lista zasobów w UI.
 - **A05 — konwersja TXT (P1): rdzeń.** Poprawny Python bez zmian treści; taby
-  tylko we wcięciu; numeracja zachowuje wcięcie; pusty wynik odrzucony.
-  *Zostaje:* tokenowa naprawa uszkodzonych ograniczników, mapa linii, podgląd/UI.
+  tylko we wcięciu; numeracja zachowuje wcięcie; pusty wynik odrzucony. Naprawa
+  niekompilującego się kodu jest świadoma tokenów: chroni treść rozpoznanych
+  literałów (zwykłych, wielowierszowych, raw, bytes, części tekstowych
+  f-stringów), naprawia ograniczniki przed treścią (`msg = ‘ok—now’` →
+  `'ok—now'`, myślnik zostaje), a gdy granic literału nie da się pewnie
+  rozpoznać (niesparowany cudzysłów) zwraca kontrolowany błąd zamiast zgadywać.
+  *Zostaje:* mapa linii wynik→oryginał, podgląd/UI (podgląd oryginału, wyniku
+  i listy zmian przed buildem).
 - **A06 — ścieżki konwersji (P1): zrobione.** Klucz = ścieżka względna; kolizje
   `txt_collision`; golden na zagnieżdżony TXT.
 - **A07 — zależności (P1): zrobione.** `packaging.Requirement` (wersje ze
