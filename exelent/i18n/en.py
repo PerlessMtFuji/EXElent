@@ -226,6 +226,8 @@ CATALOG: dict[str, str] = {
     "review_pick_icon": "choose",
     "review_icon_filter": "Images (*.png *.jpg *.jpeg *.ico)",
     "review_deps_title": "Add-ons needed — they will be downloaded automatically",
+    "review_extra_modules": "Missing a module? Add it here",
+    "review_extra_modules_placeholder": "e.g. my_plugin, package.submodule — separate with commas",
     "single_file_extra": "Also including: {files}",
     "review_mode": "Result layout",
     "review_recommended_suffix": "(recommended)",

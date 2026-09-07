@@ -10,6 +10,7 @@ znaczą te dane, została w rdzeniu; tutaj jest wyłącznie ich prezentacja.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PySide6.QtCore import Signal
@@ -110,6 +111,18 @@ class ReviewScreen(QWidget):
         deps_layout.addWidget(self.deps_size_label)
         self.deps_box.setVisible(False)
 
+        # Ręczne dopisanie modułów, których statyczny skan nie widzi (import
+        # dynamiczny, wtyczka). Zawsze widoczne, niezależnie od `deps_box`:
+        # projekt bez wykrytych zależności też może potrzebować tego pola.
+        self.extra_box = QFrame(objectName="Card")
+        extra_layout = QVBoxLayout(self.extra_box)
+        extra_layout.setContentsMargins(24, 18, 24, 18)
+        self.extra_title_label = QLabel(t("review_extra_modules"))
+        extra_layout.addWidget(self.extra_title_label)
+        self.extra_edit = QLineEdit()
+        self.extra_edit.setPlaceholderText(t("review_extra_modules_placeholder"))
+        extra_layout.addWidget(self.extra_edit)
+
         self.warnings_label = QLabel("", objectName="Muted")
         self.warnings_label.setWordWrap(True)
         self.warnings_label.setVisible(False)
@@ -139,6 +152,7 @@ class ReviewScreen(QWidget):
         outer.addWidget(card)
         outer.addWidget(self.extra_label)
         outer.addWidget(self.deps_box)
+        outer.addWidget(self.extra_box)
         outer.addWidget(self.warnings_label)
         outer.addWidget(self.notes_label)
         outer.addStretch(1)
@@ -191,6 +205,10 @@ class ReviewScreen(QWidget):
         self.deps_box.setVisible(bool(packages))
         self.deps_size_label.setText(t("download_checking") if packages else "")
 
+        # Bezwarunkowo, jak każde pole: moduł dopisany dla poprzedniego projektu
+        # nie może przeciec do następnego builda.
+        self.extra_edit.clear()
+
         mode_index = max(self.mode_combo.findData(analysis.output_mode), 0)
         _mark_recommended(self.mode_combo, mode_index)
         self.mode_combo.setCurrentIndex(mode_index)
@@ -218,6 +236,8 @@ class ReviewScreen(QWidget):
         """
         self.headline.setText(t("review_headline"))
         self.deps_title_label.setText(t("review_deps_title"))
+        self.extra_title_label.setText(t("review_extra_modules"))
+        self.extra_edit.setPlaceholderText(t("review_extra_modules_placeholder"))
         self.back_button.setText(t("review_back"))
         self.build_button.setText(t("review_build"))
         for row, key in (
@@ -288,8 +308,15 @@ class ReviewScreen(QWidget):
             # Typ odtwarzamy tu, na granicy z Qt.
             app_kind=AppKind(self.kind_combo.currentData()),
             output_mode=OutputMode(self.mode_combo.currentData()),
+            extra_modules=_parse_modules(self.extra_edit.text()),
         )
         self.build_requested.emit(plan)
+
+
+def _parse_modules(text: str) -> list[str]:
+    """Wpisane moduły -> lista nazw. Przecinki i spacje rozdzielają, puste
+    fragmenty odpadają — `resolve_extra_modules` i tak filtruje białe znaki."""
+    return [token for token in re.split(r"[,\s]+", text.strip()) if token]
 
 
 def _label_for(root: Path, path: Path) -> str:

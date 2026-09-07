@@ -9,9 +9,12 @@ import os
 import re
 import sys
 import uuid
+from collections.abc import Iterable, Sequence
 from contextlib import suppress
 from pathlib import Path
 
+from exelent.analysis.entrypoint import local_module_names
+from exelent.deps.resolve import resolve_extra_modules
 from exelent.models import AppKind, BuildPlan, OutputMode, ProjectAnalysis
 
 _ILLEGAL = re.compile(r'[/\\:*?"<>|]')
@@ -239,6 +242,25 @@ def default_dest_dir(root: Path, exe_name: str) -> Path:
     return fallback / folder
 
 
+def _dedup(items: Iterable[str]) -> tuple[str, ...]:
+    """Unikalne, z zachowaniem kolejności pierwszego wystąpienia."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return tuple(out)
+
+
+def _local_module_names(analysis: ProjectAnalysis) -> set[str]:
+    """Nazwy najwyższego poziomu modułów lokalnych — także tych skonwertowanych
+    z `.txt`, których nie ma na dysku. Chronią przed potraktowaniem ręcznie
+    dopisanego `mojpakiet.sub` jako brakującej paczki z PyPI."""
+    paths = [*analysis.scan.py_files, *(analysis.root / rel for rel in analysis.converted)]
+    return local_module_names(analysis.root, {p: "" for p in paths})
+
+
 def make_plan(
     analysis: ProjectAnalysis,
     *,
@@ -249,12 +271,18 @@ def make_plan(
     output_mode: OutputMode | None = None,
     app_kind: AppKind | None = None,
     total_download_bytes: int = 0,
+    extra_modules: Sequence[str] = (),
 ) -> BuildPlan:
     chosen_entry = entry or analysis.entry
     if chosen_entry is None:
         raise ValueError("brak pliku glownego — analiza nie znalazla kodu Pythona")
 
     name = sanitize_exe_name(exe_name or analysis.suggested_name)
+
+    # Moduły dopisane ręcznie na ekranie 2: przypadki, których statyczny skan nie
+    # widzi (import dynamiczny, wtyczka). Scalane z tym, co znalazła analiza —
+    # build wykonuje DOKŁADNIE plan (A02), więc dopisania muszą być już w nim.
+    extra_hidden, extra_deps = resolve_extra_modules(extra_modules, _local_module_names(analysis))
 
     return BuildPlan(
         root=analysis.root,
@@ -264,11 +292,15 @@ def make_plan(
         exe_name=name,
         dest_dir=Path(dest_dir) if dest_dir else default_dest_dir(analysis.root, name),
         icon=Path(icon) if icon else analysis.suggested_icon,
-        packages=tuple(d.package for d in analysis.dependencies if not d.optional),
+        packages=_dedup(
+            [d.package for d in analysis.dependencies if not d.optional]
+            + [d.package for d in extra_deps]
+        ),
         data_files=analysis.scan.data_files,
         # Policzone raz, w zadaniu 8, na prawdziwych treściach plików
-        # (łącznie z tymi skonwertowanymi z `.txt`, których nie ma na dysku).
-        hidden_imports=analysis.hidden_imports,
+        # (łącznie z tymi skonwertowanymi z `.txt`, których nie ma na dysku),
+        # plus ręczne dopisania użytkownika.
+        hidden_imports=_dedup([*analysis.hidden_imports, *extra_hidden]),
         single_file=analysis.single_file,
         extra_sources=analysis.extra_sources,
         total_download_bytes=total_download_bytes,
