@@ -29,6 +29,10 @@ CATALOG: dict[str, str] = {
     "txt_syntax_error": (
         "W pliku {file} jest błąd w linii {line}: {detail}. Popraw go i spróbuj ponownie."
     ),
+    "py_syntax_error": (
+        "W pliku {file} jest błąd składni w linii {line}: {detail}. "
+        "Tak napisany program się nie uruchomi — popraw go i spróbuj ponownie."
+    ),
     "txt_no_code": (
         "W pliku {file} nie ma żadnego kodu do uruchomienia — została sama otoczka z okna "
         "czatu albo pusty blok. Wklej program i spróbuj ponownie."

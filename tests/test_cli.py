@@ -193,13 +193,17 @@ def test_empty_directory_is_stopped_by_a_blocker(tmp_path, stub_build):
     assert [i.code for i in result.issues] == ["no_python_found"]
 
 
-def test_only_python_file_has_a_syntax_error_still_has_an_entry(tmp_path, stub_build):
-    """Zepsuty skladniowo `.py` nadal jest plikiem glownym — `make_plan` nie
-    dostaje `None` i nie rzuca `ValueError`."""
+def test_only_python_file_has_a_syntax_error_is_a_blocker(tmp_path, stub_build):
+    """Zepsuty skladniowo `.py` zatrzymuje build czytelna blokada — nie crashem
+    (`make_plan` nadal wybiera entry, nie dostaje `None` ani nie rzuca
+    `ValueError`) i nie falszywym sukcesem (build nie zglasza `ok`). Symetria z
+    zepsutym TXT: niepoprawny kod nie moze skonczyc sie dzialajacym EXE (A08)."""
     root = _project(tmp_path, {"main.py": "def ( to nie jest python\n"})
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
-    assert result.ok is True
-    assert "no_entry_point" not in [i.code for i in result.issues]
+    assert result.ok is False
+    codes = [i.code for i in result.issues]
+    assert "py_syntax_error" in codes
+    assert "no_entry_point" not in codes
 
 
 def test_txt_that_cannot_be_converted_is_a_blocker(tmp_path, stub_build):
