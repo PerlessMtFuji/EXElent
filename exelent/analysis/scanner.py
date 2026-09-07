@@ -77,31 +77,83 @@ def _read_head(path: Path, limit: int = 64_000) -> str:
         return ""
 
 
-def _local_target(root: Path, name: str) -> Path | None:
-    """Ścieżka modułu lokalnego o tej nazwie albo None, gdy go tu nie ma."""
-    module = root / f"{name}.py"
-    if module.is_file():
-        return module
-    package = root / name / "__init__.py"
-    if package.is_file():
-        return package
-    return None
+def _module_imports(code: str) -> list[tuple[int, str | None, tuple[str, ...]]]:
+    """`(poziom, moduł, nazwy)` dla każdego importu. Plik z błędem składni →
+    pusta lista: nie wiemy, co importuje, ale to nie powód, żeby go pominąć.
 
-
-def _imported_names(code: str) -> list[str]:
+    Poziom > 0 to import względny (`from ..pkg import x`); moduł bywa `None`
+    (`from . import helper`); nazwy z `from X import a, b` mogą być podmodułami."""
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        # Plik z bledem skladni nadal moze byc czescia projektu; po prostu nie
-        # wiemy, co importuje. To nie jest powod, zeby go pominac.
         return []
-    names: list[str] = []
+    out: list[tuple[int, str | None, tuple[str, ...]]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            names.extend(a.name.split(".")[0] for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            names.append(node.module.split(".")[0])
-    return names
+            out.extend((0, alias.name, ()) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            out.append((node.level, node.module, tuple(a.name for a in node.names)))
+    return out
+
+
+def _resolve_module(base: Path, parts: list[str]) -> list[Path]:
+    """Pliki modułu `a.b.c` względem `base`: `__init__.py` każdego pakietu po
+    drodze plus sam moduł (`a/b/c.py` albo `a/b/c/__init__.py`). Pusta lista,
+    gdy moduł nie istnieje lokalnie albo pakiet pośredni nie jest pakietem."""
+    if not parts:
+        return []
+    files: list[Path] = []
+    cur = base
+    for part in parts[:-1]:
+        cur = cur / part
+        init = cur / "__init__.py"
+        if not init.is_file():
+            return []
+        files.append(init)
+    leaf = cur / f"{parts[-1]}.py"
+    package = cur / parts[-1] / "__init__.py"
+    if leaf.is_file():
+        files.append(leaf)
+    elif package.is_file():
+        files.append(package)
+    else:
+        return []
+    return files
+
+
+def _relative_base(current: Path, root: Path, level: int) -> Path | None:
+    """Katalog bazowy importu względnego. `None`, gdy `..` wychodzi ponad korzeń
+    projektu — to już poza zakresem pojedynczego pliku (nie wciągamy Pobranych)."""
+    base = current.parent
+    for _ in range(level - 1):
+        base = base.parent
+    if base == root or root in base.parents:
+        return base
+    return None
+
+
+def _import_targets(
+    current: Path,
+    root: Path,
+    level: int,
+    module: str | None,
+    names: tuple[str, ...],
+) -> list[Path]:
+    if level == 0:
+        base = root
+    else:
+        found = _relative_base(current, root, level)
+        if found is None:
+            return []
+        base = found
+    parts = module.split(".") if module else []
+    targets = _resolve_module(base, parts) if parts else []
+    # `from X import a` — `a` bywa podmodułem `X` (a dla `from . import a` po
+    # prostu modułem w bieżącym pakiecie). Atrybuty (funkcje, klasy) nie
+    # rozwiążą się do pliku i po cichu wypadną.
+    for name in names:
+        targets += _resolve_module(base, [*parts, name])
+    return targets
 
 
 def local_import_closure(
@@ -123,15 +175,16 @@ def local_import_closure(
 
     while queue:
         current = queue.pop(0)
-        for name in _imported_names(_read_head(current, limit=1_000_000)):
-            target = _local_target(root, name)
-            if target is None or target in seen:
-                continue
-            if len(found) >= limit:
-                return (), True
-            seen.add(target)
-            found.append(target)
-            queue.append(target)
+        code = _read_head(current, limit=1_000_000)
+        for level, module, names in _module_imports(code):
+            for target in _import_targets(current, root, level, module, names):
+                if target in seen:
+                    continue
+                if len(found) >= limit:
+                    return (), True
+                seen.add(target)
+                found.append(target)
+                queue.append(target)
 
     return tuple(found), False
 

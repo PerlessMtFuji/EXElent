@@ -171,6 +171,73 @@ def test_local_import_closure_stops_at_the_limit(tmp_path):
     assert found == ()
 
 
+def test_local_import_closure_follows_dotted_submodule(tmp_path):
+    # `from pkg.child import x` musi wciagnac pkg/child.py, nie tylko
+    # pkg/__init__.py — inaczej EXE umiera u odbiorcy na brakujacym podmodule.
+    (tmp_path / "main.py").write_text("from pkg.child import x\n", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / "child.py").write_text("x = 1\n", encoding="utf-8")
+
+    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "pkg" / "__init__.py", tmp_path / "pkg" / "child.py"}
+
+
+def test_local_import_closure_follows_dotted_import(tmp_path):
+    (tmp_path / "main.py").write_text("import pkg.child\n", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / "child.py").write_text("x = 1\n", encoding="utf-8")
+
+    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "pkg" / "__init__.py", tmp_path / "pkg" / "child.py"}
+
+
+def test_local_import_closure_follows_from_package_submodule(tmp_path):
+    # `from pkg import child`, gdzie child to podmodul (pkg/child.py), nie atrybut.
+    (tmp_path / "main.py").write_text("from pkg import child\n", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / "child.py").write_text("y = 1\n", encoding="utf-8")
+
+    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "pkg" / "__init__.py", tmp_path / "pkg" / "child.py"}
+
+
+def test_local_import_closure_follows_relative_bare_import(tmp_path):
+    (tmp_path / "main.py").write_text("from . import helper\n", encoding="utf-8")
+    (tmp_path / "helper.py").write_text("X = 1\n", encoding="utf-8")
+
+    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "helper.py"}
+
+
+def test_local_import_closure_follows_relative_module(tmp_path):
+    (tmp_path / "main.py").write_text("from .sub import y\n", encoding="utf-8")
+    (tmp_path / "sub.py").write_text("y = 1\n", encoding="utf-8")
+
+    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "sub.py"}
+
+
+def test_local_import_closure_relative_does_not_escape_the_root(tmp_path):
+    # `from .. import x` z pliku w korzeniu wskazuje POZA projekt — poza zakres
+    # pojedynczego pliku, wiec nie wciagamy niczego z katalogu nadrzednego.
+    (tmp_path / "outside.py").write_text("Z = 1\n", encoding="utf-8")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "main.py").write_text("from .. import outside\n", encoding="utf-8")
+
+    found, _ = local_import_closure(proj / "main.py", proj, limit=50)
+
+    assert found == ()
+
+
 def test_local_import_closure_ignores_unparsable_files(tmp_path):
     (tmp_path / "main.py").write_text("import zepsuty\n", encoding="utf-8")
     (tmp_path / "zepsuty.py").write_text("def (\n", encoding="utf-8")

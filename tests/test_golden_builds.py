@@ -365,6 +365,27 @@ def test_package_entry_point_runs_and_imports_a_submodule(tmp_path, shared_state
     _assert_source_untouched(root, {"pkg", "pkg/__init__.py", "pkg/main.py", "pkg/pomocnik.py"})
 
 
+def test_single_file_pulls_in_its_local_submodule(tmp_path, shared_state):
+    """Tryb jednoplikowy: uzytkownik wskazuje SAM `main.py`, a ten importuje
+    podmodul pakietu lezacego obok. Domkniecie importow (A03) ma wciagnac
+    pkg/__init__.py i pkg/child.py do builda — inaczej EXE umiera u odbiorcy na
+    `ModuleNotFoundError: No module named 'pkg'`."""
+    root = _project(
+        tmp_path,
+        "jeden-plik",
+        {
+            "main.py": "from pkg.child import W\nprint(W)\n",
+            "pkg/__init__.py": "",
+            "pkg/child.py": "W = 'PODMODUL-DZIALA'\n",
+        },
+    )
+    result = run_build(root / "main.py", noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([result.artifact], timeout=180)
+    assert "PODMODUL-DZIALA" in run.stdout
+
+
 def test_src_layout_package_builds_and_runs(tmp_path, shared_state):
     """Uklad `src/`: korzeniem importow jest `src/`, wiec modul to `pkg.main`,
     a `src` musi trafic na `--paths`, inaczej PyInstaller nie znajdzie pakietu."""
