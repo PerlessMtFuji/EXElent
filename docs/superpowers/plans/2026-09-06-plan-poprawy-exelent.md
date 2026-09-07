@@ -49,8 +49,13 @@ zielonych. Poniżej co domknięte i co świadomie zostało jako zakres częścio
 - **A08 — wiarygodny wynik (P1): rdzeń.** Nieudana wymagana paczka →
   `required_package_failed`, stop przed PyInstallerem. Zepsuty składniowo `.py`
   daje `py_syntax_error` (BLOCKER) w analizie — koniec „fałszywego sukcesu",
-  symetrycznie do zepsutego TXT. *Zostaje:* walidacja źródeł docelowym
-  interpreterem 3.12 (dziś `ast.parse` deweloperskim), rozróżnienie
+  symetrycznie do zepsutego TXT. Przygotowane źródła są dodatkowo kompilowane
+  DOCELOWYM interpreterem (z planu, `env.python`) tuż przed PyInstallerem
+  (`build/validate.py`): kod poprawny u dewelopera 3.13, lecz niezgodny z 3.12,
+  albo z błędem etapu kompilacji, którego `ast.parse` nie widzi (`return` poza
+  funkcją), dostaje `target_syntax_error` (BLOCKER) z plikiem i linią, zamiast
+  zostać po cichu wyrzucony przez PyInstaller przy składaniu PYZ (kod 0, EXE bez
+  modułu). Kompilacja, nie uruchomienie. *Zostaje:* rozróżnienie
   „utworzono/zweryfikowano".
 - **A09 — anulowanie (P2): rdzeń.** Token w pobieraniu/tworzeniu środowiska
   (anulowalny `_stream_uv`, `kill_tree`); UI „Przerywanie…". *Zostaje:* token

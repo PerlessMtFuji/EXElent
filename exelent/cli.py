@@ -16,6 +16,7 @@ from pathlib import Path
 from exelent.analysis.project import analyze_project
 from exelent.build.backend import CancelToken
 from exelent.build.pyinstaller import PyInstallerBackend, log_path_for
+from exelent.build.validate import validate_target_syntax
 from exelent.build.workspace import materialize_workspace
 from exelent.diagnostics.patterns import explain_log, filename_of, map_os_error, sort_issues
 from exelent.models import BuildPlan, BuildResult, Issue, IssueError, Severity
@@ -230,7 +231,7 @@ def _build(
     cancel: CancelToken,
 ) -> BuildResult:
     """Wlasciwy build. Wolane wylacznie spod granicy wyjatkow w `execute_build`."""
-    materialize_workspace(plan)
+    workspace = materialize_workspace(plan)
 
     scale = _Progress(progress)
     env = create_build_env(
@@ -260,6 +261,16 @@ def _build(
                 ),
             ),
         )
+
+    # Skladnia przygotowanych zrodel sprawdzona DOCELOWYM interpreterem (z planu),
+    # a nie deweloperskim ast.parse: kod poprawny w 3.13, lecz niezgodny z 3.12,
+    # inaczej przechodzi az do PyInstallera, ktory po cichu wyrzuca modul i konczy
+    # z kodem 0 — pozorny sukces bez kodu uzytkownika (A08).
+    syntax_issue = validate_target_syntax(
+        env.python, workspace, python_version=plan.python_version, cancel=cancel
+    )
+    if syntax_issue is not None:
+        return BuildResult(ok=False, issues=(syntax_issue,))
 
     result = PyInstallerBackend().build(plan, env, scale.stage(ENV_PROGRESS_SHARE, 1.0), cancel)
 

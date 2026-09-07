@@ -33,6 +33,11 @@ CATALOG: dict[str, str] = {
         "W pliku {file} jest błąd składni w linii {line}: {detail}. "
         "Tak napisany program się nie uruchomi — popraw go i spróbuj ponownie."
     ),
+    "target_syntax_error": (
+        "W pliku {file} jest błąd w linii {line}: {detail}. Kod nie kompiluje się docelowym "
+        "Pythonem {version} — gotowy EXE nie zawierałby tego modułu i padłby na starcie. "
+        "Popraw go i spróbuj ponownie."
+    ),
     "txt_no_code": (
         "W pliku {file} nie ma żadnego kodu do uruchomienia — została sama otoczka z okna "
         "czatu albo pusty blok. Wklej program i spróbuj ponownie."
