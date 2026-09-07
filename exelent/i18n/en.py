@@ -79,6 +79,10 @@ CATALOG: dict[str, str] = {
     "pyproject_dynamic_deps": (
         "{file} declares its packages dynamically, so they were detected from the code instead."
     ),
+    "module_name_collision": (
+        "Two files share the module name \"{module}\" in different folders ({files}). "
+        "One would hide the other at runtime — rename one or keep only the one you need."
+    ),
     # environment
     "no_network": (
         "No internet connection. The first build needs to download tools — connect and try again."
