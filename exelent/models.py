@@ -113,7 +113,11 @@ class ProjectAnalysis:
     entry_certain: bool = True
     app_kind: AppKind = AppKind.CONSOLE
     app_kind_certain: bool = True
-    output_mode: OutputMode = OutputMode.ONEFILE
+    # ONEDIR jest zachowawczym domyslnym trybem (B01): zasoby leza obok EXE
+    # (odczyt przez wzgledna sciezke dziala), a zapis trafia obok EXE i zostaje.
+    # ONEFILE to swiadomy reczny wybor obarczony ograniczeniem odczytu zasobow —
+    # patrz `planning.onefile_limitation_issues`.
+    output_mode: OutputMode = OutputMode.ONEDIR
     dependencies: tuple[Dependency, ...] = ()
     hidden_imports: tuple[str, ...] = ()
     converted: Mapping[str, str] = field(default_factory=dict)

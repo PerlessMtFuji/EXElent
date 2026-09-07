@@ -15,7 +15,7 @@ from pathlib import Path
 
 from exelent.analysis.entrypoint import local_module_names
 from exelent.deps.resolve import resolve_extra_modules
-from exelent.models import AppKind, BuildPlan, OutputMode, ProjectAnalysis
+from exelent.models import AppKind, BuildPlan, Issue, OutputMode, ProjectAnalysis, Severity
 
 _ILLEGAL = re.compile(r'[/\\:*?"<>|]')
 
@@ -28,6 +28,24 @@ _O_TEMPORARY = getattr(os, "O_TEMPORARY", 0)
 def sanitize_exe_name(name: str) -> str:
     cleaned = _ILLEGAL.sub("-", name).strip().rstrip(".")
     return cleaned or "program"
+
+
+def onefile_limitation_issues(output_mode: OutputMode) -> tuple[Issue, ...]:
+    """Ostrzezenia zwiazane z RECZNYM wyborem trybu wyjscia (B01).
+
+    Zalecany tryb to ONEDIR — zasoby leza obok EXE i odczyt przez wzgledna
+    sciezke dziala, a zapis trafia obok EXE i zostaje. ONEFILE rozpakowuje
+    dolaczone pliki do katalogu tymczasowego (`_MEIPASS`), ktory znika przy
+    zakonczeniu; katalog roboczy programu jest zakotwiczony w trwalym katalogu
+    EXE, wiec ZAPIS nie ginie, ale ODCZYT zasobu przez `open('config.json')`
+    moze nie znalezc pliku. Nie da sie tego udowodnic z gory (nie wiemy, czy
+    program czyta zasoby), wiec kazdy reczny wybor ONEFILE dostaje widoczne
+    ograniczenie zamiast zapewnienia o bezpieczenstwie — zamiast go po cichu
+    ukrywac. Rdzen zwraca kod; tekst PL/EN sklada `i18n`.
+    """
+    if output_mode is OutputMode.ONEFILE:
+        return (Issue("onefile_no_resource_guarantee", Severity.WARNING),)
+    return ()
 
 
 def _is_writable(path: Path) -> bool:

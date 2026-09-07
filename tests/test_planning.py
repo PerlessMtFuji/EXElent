@@ -5,8 +5,8 @@ import pytest
 
 from exelent import planning
 from exelent.analysis.project import analyze_project
-from exelent.models import AppKind, OutputMode
-from exelent.planning import default_dest_dir, make_plan
+from exelent.models import AppKind, OutputMode, Severity
+from exelent.planning import default_dest_dir, make_plan, onefile_limitation_issues
 
 
 def _make(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -38,6 +38,19 @@ def test_overrides_win_over_analysis(tmp_path):
     assert plan.exe_name == "Moj Program"
     assert plan.app_kind is AppKind.WINDOWED
     assert plan.output_mode is OutputMode.ONEDIR
+
+
+def test_onefile_choice_carries_a_visible_limitation():
+    """B01: reczny wybor „jeden plik EXE" ma dawac widoczne ostrzezenie o
+    odczycie zasobow, a nie zapewnienie o bezpieczenstwie zapisu."""
+    issues = onefile_limitation_issues(OutputMode.ONEFILE)
+    assert [i.code for i in issues] == ["onefile_no_resource_guarantee"]
+    assert all(i.severity is Severity.WARNING for i in issues)
+
+
+def test_onedir_choice_has_no_limitation():
+    """Zalecany tryb nie niesie ostrzezenia — zasoby leza obok EXE, zapis zostaje."""
+    assert onefile_limitation_issues(OutputMode.ONEDIR) == ()
 
 
 def test_optional_dependencies_are_excluded_from_packages(tmp_path):

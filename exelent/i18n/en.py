@@ -238,6 +238,12 @@ CATALOG: dict[str, str] = {
     "kind_console": "A console program",
     "mode_onefile": "A single EXE file",
     "mode_onedir": "A folder with the program",
+    "onefile_no_resource_guarantee": (
+        "A single EXE file: bundled files are unpacked into a temporary folder, so "
+        "reading a resource by a relative path (e.g. open('config.json')) may fail. If "
+        "the program reads files that sit next to it, choose “A folder with the "
+        "program”. Files the program writes land next to the EXE and stay there."
+    ),
     # screen 3 - building and result
     "build_cancel": "Stop",
     "build_cancelling": "Stopping…",

@@ -176,12 +176,18 @@ if __name__ == "__main__":
     main()
 '''
 
-_CHDIR_BUNDLE = """\
-    base = getattr(sys, "_MEIPASS", None)
-    if base:
-        os.chdir(base)
-"""
-
+# cwd wskazuje TRWALY katalog EXE w OBU trybach (B01). Wczesniej ONEFILE
+# chdir'owal do `sys._MEIPASS` — tymczasowego katalogu rozpakowania, ktory
+# PyInstaller kasuje przy zakonczeniu procesu. Kazdy wzgledny zapis
+# (`open('wynik.txt','w')`, `Image.save('out.png')`) ladowal tam i przepadal
+# razem z katalogiem. Katalog EXE jest trwaly, wiec zapisy zostaja — takze gdy
+# heurystyka nie rozpoznala, ze program w ogole cos zapisuje.
+#
+# Cena dotyczy WYLACZNIE trybu ONEFILE: zasoby dolaczone do programu leza w
+# `_MEIPASS`, wiec odczyt przez wzgledna sciezke (`open('config.json')`) moze
+# nie znalezc pliku. Dlatego zalecanym i domyslnym trybem jest ONEDIR (zasoby
+# leza obok EXE), a reczny wybor ONEFILE niesie widoczne ostrzezenie
+# (`planning.onefile_limitation_issues` -> `onefile_no_resource_guarantee`).
 _CHDIR_EXECUTABLE = """\
     os.chdir(os.path.dirname(os.path.abspath(sys.executable)))
 """
@@ -230,7 +236,12 @@ def _quote_module_name(value: str) -> str:
 
 
 def render_launcher(entry_module: str, app_kind: AppKind, output_mode: OutputMode) -> str:
-    chdir_body = _CHDIR_BUNDLE if output_mode is OutputMode.ONEFILE else _CHDIR_EXECUTABLE
+    # `output_mode` nie rozgalezia juz katalogu roboczego — oba tryby kotwicza
+    # cwd w trwalym katalogu EXE (patrz komentarz przy `_CHDIR_EXECUTABLE`).
+    # Parametr zostaje w kontrakcie: build go przekazuje, a rozdzial sposobow
+    # uruchomienia skryptu i pakietu wraca w B03.
+    _ = output_mode
+    chdir_body = _CHDIR_EXECUTABLE
     windowed = app_kind is AppKind.WINDOWED
     report_body = _REPORT_WINDOWED if windowed else _REPORT_CONSOLE
     finish_body = _FINISH_WINDOWED if windowed else _FINISH_CONSOLE

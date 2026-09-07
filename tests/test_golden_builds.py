@@ -76,7 +76,7 @@ def test_console_program_builds_and_prints(tmp_path, shared_state):
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=120)
+    run = run_bounded([_exe_of(result)], timeout=120)
     assert "WITAJ-SWIECIE" in run.stdout
     _assert_source_untouched(root, {"main.py"})
 
@@ -93,7 +93,7 @@ def test_program_reading_bundled_data_file(tmp_path, shared_state):
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=120)
+    run = run_bounded([_exe_of(result)], timeout=120)
     assert "WARTOSC-Z-PLIKU" in run.stdout
 
 
@@ -111,7 +111,7 @@ def test_txt_source_is_converted_and_built(tmp_path, shared_state):
     assert not (root / "program.py").exists(), "katalog zrodlowy musi zostac nietkniety"
     _assert_source_untouched(root, {"program.txt"})
 
-    run = run_bounded([result.artifact], timeout=120)
+    run = run_bounded([_exe_of(result)], timeout=120)
     assert "Z-PLIKU-TXT" in run.stdout
 
 
@@ -126,7 +126,7 @@ def test_program_with_third_party_dependency(tmp_path, shared_state):
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=180)
+    run = run_bounded([_exe_of(result)], timeout=180)
     assert "PILLOW-OK" in run.stdout
 
 
@@ -161,7 +161,7 @@ def test_two_packages_vendoring_the_same_dll_both_load(tmp_path, shared_state):
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=300)
+    run = run_bounded([_exe_of(result)], timeout=300)
     assert "LICZBY-OK 6 2" in run.stdout
 
 
@@ -181,6 +181,93 @@ def test_writing_program_gets_onedir_and_writes_next_to_exe(tmp_path, shared_sta
     assert (exe.parent / "wynik.txt").read_text(encoding="utf-8") == "ZAPISANE"
 
 
+# --- B01: zapis nie ginie, choc heurystyka go nie widzi; cwd jest trwaly ---
+#
+# Wspolny motyw: EXE uruchamiany z OBCEGO katalogu roboczego (cwd=tmp_path, nie
+# katalog EXE) musi zapisac plik OBOK SIEBIE i zostawic go po zakonczeniu. To
+# jedyny dowod, ze launcher kotwiczy cwd w trwalym katalogu EXE, a nie w
+# tymczasowym `_MEIPASS`, ktory znika razem z zapisem.
+
+
+def test_aliased_open_write_persists_next_to_exe(tmp_path, shared_state):
+    """Zapis przez alias `open` wymykal sie heurystyce, dostawal ONEFILE i ginal
+    w `_MEIPASS`. Zalecany tryb to teraz ONEDIR, a zapis zostaje."""
+    root = _project(
+        tmp_path,
+        "alias-zapis",
+        {"main.py": "zapis = open\nzapis('wynik.txt', 'w', encoding='utf-8').write('ALIAS')\n"},
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    exe = _exe_of(result)
+    run_bounded([exe], timeout=120, cwd=tmp_path)
+    assert (exe.parent / "wynik.txt").read_text(encoding="utf-8") == "ALIAS"
+
+
+def test_pathlib_open_write_persists_next_to_exe(tmp_path, shared_state):
+    """`Path(...).open('w')` — inny wzorzec zapisu, ta sama obietnica."""
+    root = _project(
+        tmp_path,
+        "path-zapis",
+        {
+            "main.py": (
+                "from pathlib import Path\n"
+                "Path('wynik.txt').open('w', encoding='utf-8').write('PATH-OPEN')\n"
+            )
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    exe = _exe_of(result)
+    run_bounded([exe], timeout=120, cwd=tmp_path)
+    assert (exe.parent / "wynik.txt").read_text(encoding="utf-8") == "PATH-OPEN"
+
+
+def test_pillow_save_persists_next_to_exe(tmp_path, shared_state):
+    """`Image.save(...)` nie byl na liscie metod zapisu, wiec program z Pillow
+    dostawal ONEFILE i tracil obraz. Plik ma powstac obok EXE i zostac."""
+    root = _project(
+        tmp_path,
+        "pillow-zapis",
+        {
+            "main.py": (
+                "from PIL import Image\n"
+                "Image.new('RGB', (2, 2)).save('obraz.png')\n"
+                "print('PILLOW-ZAPIS-OK')\n"
+            )
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    exe = _exe_of(result)
+    run = run_bounded([exe], timeout=180, cwd=tmp_path)
+    assert "PILLOW-ZAPIS-OK" in run.stdout
+    saved = exe.parent / "obraz.png"
+    assert saved.exists() and saved.stat().st_size > 0
+
+
+def test_manual_onefile_write_persists_next_to_exe(tmp_path, shared_state):
+    """Reczny wybor ONEFILE: zapis MA zostac obok EXE (launcher kotwiczy cwd w
+    trwalym katalogu EXE, nie w `_MEIPASS`). Odczyt zasobow to osobne, jawne
+    ograniczenie tego trybu — tutaj sprawdzamy wylacznie brak utraty danych."""
+    root = _project(
+        tmp_path,
+        "onefile-zapis",
+        {"main.py": "open('wynik.txt', 'w', encoding='utf-8').write('ONEFILE-ZAPIS')\n"},
+    )
+    result = run_build(
+        root, noop_progress, output_mode=OutputMode.ONEFILE, dest_dir=tmp_path / "out"
+    )
+    assert result.ok, [i.code for i in result.issues]
+
+    exe = _exe_of(result)
+    run_bounded([exe], timeout=120, cwd=tmp_path)
+    assert (exe.parent / "wynik.txt").read_text(encoding="utf-8") == "ONEFILE-ZAPIS"
+
+
 def test_rebuild_keeps_the_previous_version_and_its_data(tmp_path, shared_state):
     """A01 + A14 od konca: kolejny build nie nadpisuje poprzedniego EXE ani
     danych zapisanych obok niego — laduje pod kolejnym numerem."""
@@ -198,7 +285,7 @@ def test_rebuild_keeps_the_previous_version_and_its_data(tmp_path, shared_state)
     assert first.artifact.exists(), "pierwsza wersja zniknela"
     assert first.artifact != second.artifact, "druga wersja nadpisala pierwsza"
     assert (out / "moje-dane.txt").read_bytes() == b"WAZNE DANE", "dane uzytkownika zniknely"
-    run = run_bounded([second.artifact], timeout=120)
+    run = run_bounded([_exe_of(second)], timeout=120)
     assert "WERSJA" in run.stdout
 
 
@@ -213,7 +300,7 @@ def test_crashing_console_program_reports_instead_of_vanishing(tmp_path, shared_
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=120, input="\n")
+    run = run_bounded([_exe_of(result)], timeout=120, input="\n")
     assert "CELOWY-BLAD" in run.stderr
     assert run.returncode == 1
 
@@ -315,9 +402,11 @@ def test_console_program_reading_input_builds_and_runs(tmp_path, shared_state):
     """Program, ktory o cos pyta — dla laika najbardziej typowy skrypt.
 
     ONEFILE rozpakowuje sie przez bootloader, wiec stdin przechodzi przez
-    dodatkowy proces; zaden inny test golden tego nie dotyka. Podsystem musi
-    zostac konsolowy: program pytajacy o dane bez okna konsoli nie ma gdzie
-    zadac pytania.
+    dodatkowy proces; zaden inny test golden tego nie dotyka. Tryb jest tu
+    wybrany JAWNIE, bo zalecanym (domyslnym) trybem jest teraz ONEDIR (B01) —
+    a to jedyny golden, ktory ma sprawdzac wlasnie sciezke jednoplikowa.
+    Podsystem musi zostac konsolowy: program pytajacy o dane bez okna konsoli
+    nie ma gdzie zadac pytania.
     """
     root = _project(
         tmp_path,
@@ -328,7 +417,9 @@ def test_console_program_reading_input_builds_and_runs(tmp_path, shared_state):
             ),
         },
     )
-    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    result = run_build(
+        root, noop_progress, output_mode=OutputMode.ONEFILE, dest_dir=tmp_path / "out"
+    )
     assert result.ok, [i.code for i in result.issues]
 
     exe = _exe_of(result)
@@ -360,7 +451,7 @@ def test_package_entry_point_runs_and_imports_a_submodule(tmp_path, shared_state
     )
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=180)
+    run = run_bounded([_exe_of(result)], timeout=180)
     assert "PAKIET-DZIALA" in run.stdout
     _assert_source_untouched(root, {"pkg", "pkg/__init__.py", "pkg/main.py", "pkg/pomocnik.py"})
 
@@ -382,7 +473,7 @@ def test_single_file_pulls_in_its_local_submodule(tmp_path, shared_state):
     result = run_build(root / "main.py", noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=180)
+    run = run_bounded([_exe_of(result)], timeout=180)
     assert "PODMODUL-DZIALA" in run.stdout
 
 
@@ -403,7 +494,7 @@ def test_src_layout_package_builds_and_runs(tmp_path, shared_state):
     )
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=180)
+    run = run_bounded([_exe_of(result)], timeout=180)
     assert "SRC-OK 7" in run.stdout
 
 
@@ -461,7 +552,7 @@ def test_nested_txt_module_is_converted_in_place_and_imported(tmp_path, shared_s
     )
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=180)
+    run = run_bounded([_exe_of(result)], timeout=180)
     assert "TXT-Z-PAKIETU" in run.stdout
     # Katalog zrodlowy nietkniety: konwersja zyje w kopii roboczej.
     _assert_source_untouched(
@@ -504,7 +595,7 @@ def test_import_missing_from_requirements_is_supplemented_and_runs(tmp_path, sha
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=180)
+    run = run_bounded([_exe_of(result)], timeout=180)
     assert "BRAK-DEP-OK six xn--bcher-kva" in run.stdout
 
     # Slad dopisania jest widoczny w wyniku — i dotyczy WYLACZNIE pominietego
@@ -542,7 +633,7 @@ def test_poetry_dependency_installs_and_runs(tmp_path, shared_state):
     result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=180)
+    run = run_bounded([_exe_of(result)], timeout=180)
     assert "POETRY-OK six" in run.stdout
     _assert_source_untouched(root, {"main.py", "pyproject.toml"})
 
@@ -576,6 +667,6 @@ def test_manually_added_hidden_import_reaches_the_exe(tmp_path, shared_state):
     )
     assert result.ok, [i.code for i in result.issues]
 
-    run = run_bounded([result.artifact], timeout=180)
+    run = run_bounded([_exe_of(result)], timeout=180)
     assert "HIDDEN-OK MODUL-DOPISANY-RECZNIE" in run.stdout
     _assert_source_untouched(root, {"main.py", "pkg", "pkg/__init__.py", "pkg/plugin.py"})

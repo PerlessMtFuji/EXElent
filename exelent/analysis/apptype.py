@@ -1,13 +1,15 @@
-"""Typ aplikacji, tryb wyjścia i ostrzeżenia o kodzie, którego nie da się
+"""Typ aplikacji (okno vs konsola) i ostrzeżenia o kodzie, którego nie da się
 w pełni spakować.
 
-Wybór między ONEFILE a ONEDIR celowo faworyzuje ONEDIR: błędny ONEDIR to co
-najwyżej drobna niedogodność (folder zamiast jednego pliku, widoczna od razu
-i odwracalna w Advanced), a błędny ONEFILE bezpowrotnie i po cichu kasuje dane
-użytkownika zapisane do katalogu tymczasowego PyInstallera. Dlatego lista
-wzorców zapisu poniżej jest celowo nadmiarowa, a każdy przypadek niemożliwy
-do jednoznacznego udowodnienia (np. zmienna zamiast literału trybu otwarcia
-pliku) liczy się jako zapis."""
+O trybie wyjścia (jeden plik EXE vs folder) NIE decyduje analiza źródeł.
+Wcześniej robiła to heurystyka „czy program zapisuje na dysk": brak wykrytego
+zapisu dawał ONEFILE, a ten ustawiał katalog roboczy na `sys._MEIPASS` —
+tymczasowy katalog rozpakowania, który znika przy zakończeniu procesu. Zapis
+przez alias `open`, `Image.save` czy dowolny wzorzec spoza listy wymykał się
+heurystyce, trafiał do ONEFILE i ginął. Brak rozpoznanego zapisu nie jest
+dowodem, że program niczego nie zapisuje (B01), więc zalecanym i domyślnym
+trybem jest teraz zawsze ONEDIR — patrz `planning.onefile_limitation_issues`
+oraz launcher, który w obu trybach kotwiczy cwd w trwałym katalogu EXE."""
 
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
-from exelent.models import AppKind, Issue, OutputMode, Severity
+from exelent.models import AppKind, Issue, Severity
 
 GUI_MODULES = frozenset(
     {
@@ -36,55 +38,6 @@ GUI_MODULES = frozenset(
 )
 SERVER_MODULES = frozenset({"flask", "fastapi", "django", "aiohttp", "bottle", "starlette"})
 EXTERNAL_TOOLS = frozenset({"ffmpeg", "ffprobe", "tesseract", "magick", "pandoc", "yt-dlp"})
-
-# Nazwy metod/funkcji zapisujących dane na dysk, dopasowywane po samej nazwie
-# (bez względu na moduł/odbiorcę) — patrz uzasadnienie w docstringu modułu.
-WRITE_METHODS = frozenset(
-    {
-        # pliki tekstowe/binarne, pandas, matplotlib, opencv
-        "dump",
-        "to_csv",
-        "to_excel",
-        "to_json",
-        "to_parquet",
-        "to_pickle",
-        "to_html",
-        "to_sql",
-        "to_feather",
-        "savefig",
-        "write_text",
-        "write_bytes",
-        "imwrite",
-        # shutil
-        "copy",
-        "copy2",
-        "copyfile",
-        "copytree",
-        "move",
-        "make_archive",
-        # tworzenie katalogów (os / pathlib)
-        "mkdir",
-        "makedirs",
-        # bazy danych
-        "connect",
-        # handlery logowania do pliku
-        "FileHandler",
-        "RotatingFileHandler",
-        "TimedRotatingFileHandler",
-    }
-)
-
-# Konstruktory, których zapisowość zależy od trybu otwarcia (`open`, `ZipFile`) —
-# sprawdzane przez _resolved_mode w detect_output_mode zamiast trafiać od razu do
-# WRITE_METHODS.
-WRITE_MODE_CHARS = "wax+"
-
-# Odbiorniki, których `.open(name, mode=...)` ma sygnaturę jak wbudowane open —
-# tryb na pozycji 1. Dla pozostałych wywołań metody `.open(...)` (przede
-# wszystkim `Path(...).open(mode)`) ścieżka jest odbiornikiem (`self`), więc tryb
-# ląduje na pozycji 0. Pomylenie tych dwóch przypadków to właśnie powód, dla
-# którego zapis pathlibem trafiał wcześniej do ONEFILE i ginął w katalogu tymczasowym.
-MODULE_OPEN_RECEIVERS = frozenset({"io", "gzip", "bz2", "lzma", "codecs", "tarfile"})
 
 _SECRET = re.compile(r"['\"](?:sk-|ghp_|AIza|xox[bap]-)[A-Za-z0-9_\-]{16,}['\"]")
 
@@ -128,70 +81,6 @@ def detect_app_kind(sources: Mapping[Path, str]) -> tuple[AppKind, bool]:
     if gui:
         return AppKind.WINDOWED, not console
     return AppKind.CONSOLE, True
-
-
-def _call_name(func: ast.expr) -> str | None:
-    """Nazwa wywoływanej funkcji/metody, bez względu na to, czy wywołanie jest
-    postaci `modul.nazwa(...)` czy gołego `nazwa(...)` (import z `from ... import`)."""
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    if isinstance(func, ast.Name):
-        return func.id
-    return None
-
-
-def _resolved_mode(node: ast.Call, pos: int, kw_name: str) -> str | None:
-    """Zwraca literał trybu otwarcia, sentinel `"?"` gdy tryb podano, ale nie
-    jako literał (a więc nie do udowodnienia — liczy się jako zapis), albo
-    `None` gdy trybu w ogóle nie podano (domyślny odczyt)."""
-    if len(node.args) > pos:
-        arg = node.args[pos]
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            return arg.value
-        return "?"
-    for kw in node.keywords:
-        if kw.arg == kw_name:
-            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                return kw.value.value
-            return "?"
-    return None
-
-
-def _is_write_mode(mode: str | None) -> bool:
-    if mode is None:
-        return False
-    if mode == "?":
-        return True
-    return any(ch in mode for ch in WRITE_MODE_CHARS)
-
-
-def detect_output_mode(sources: Mapping[Path, str]) -> OutputMode:
-    for tree in _trees(sources):
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            name = _call_name(node.func)
-            if name == "open":
-                func = node.func
-                # `Path(...).open(mode)` trzyma tryb na pozycji 0; wbudowane
-                # `open(file, mode)` oraz `modul.open(name, mode)` na pozycji 1.
-                mode_pos = 1
-                if isinstance(func, ast.Attribute) and not (
-                    isinstance(func.value, ast.Name)
-                    and func.value.id in MODULE_OPEN_RECEIVERS
-                ):
-                    mode_pos = 0
-                if _is_write_mode(_resolved_mode(node, mode_pos, "mode")):
-                    return OutputMode.ONEDIR
-            elif name == "ZipFile":
-                if _is_write_mode(_resolved_mode(node, 1, "mode")):
-                    return OutputMode.ONEDIR
-            elif name == "basicConfig":
-                if any(kw.arg == "filename" for kw in node.keywords):
-                    return OutputMode.ONEDIR
-            elif name in WRITE_METHODS:
-                return OutputMode.ONEDIR
-    return OutputMode.ONEFILE
 
 
 def _dynamic_imports(sources: Mapping[Path, str]) -> tuple[list[str], bool]:
