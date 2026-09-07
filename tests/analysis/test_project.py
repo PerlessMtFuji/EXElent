@@ -205,6 +205,19 @@ def test_pyproject_dependencies_feed_the_plan(tmp_path):
     assert [d.package for d in analyze_project(root).dependencies] == ["requests>=2.0"]
 
 
+def test_poetry_dependencies_feed_the_plan(tmp_path):
+    # Projekt Poetry (deps w [tool.poetry.dependencies], składnia `^`) zasila plan
+    # z autorytatywną wersją, a nie gołą nazwą ze skanu importów (A07).
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "import requests\nprint(requests)",
+            "pyproject.toml": '[tool.poetry.dependencies]\npython = "^3.12"\nrequests = "^2.28"\n',
+        },
+    )
+    assert [d.package for d in analyze_project(root).dependencies] == ["requests<3.0.0,>=2.28"]
+
+
 def test_missing_referenced_manifest_surfaces_an_issue(tmp_path):
     root = _make(
         tmp_path,
