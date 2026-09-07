@@ -90,6 +90,10 @@ CATALOG: dict[str, str] = {
     "pyproject_dynamic_deps": (
         "{file} deklaruje biblioteki dynamicznie, więc rozpoznałem je z kodu."
     ),
+    "dependency_not_declared": (
+        "Twój kod używa biblioteki {package}, której nie ma na liście wymagań — "
+        "dołączyłem ją, żeby program działał."
+    ),
     "module_name_collision": (
         "Dwa pliki mają tę samą nazwę modułu „{module}” w różnych folderach ({files}). "
         "Jeden przesłoniłby drugi przy uruchomieniu — zmień nazwę jednego albo zostaw "
