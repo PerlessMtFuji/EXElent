@@ -32,8 +32,11 @@ zielonych. Poniżej co domknięte i co świadomie zostało jako zakres częścio
   f-stringów), naprawia ograniczniki przed treścią (`msg = ‘ok—now’` →
   `'ok—now'`, myślnik zostaje), a gdy granic literału nie da się pewnie
   rozpoznać (niesparowany cudzysłów) zwraca kontrolowany błąd zamiast zgadywać.
-  *Zostaje:* mapa linii wynik→oryginał, podgląd/UI (podgląd oryginału, wyniku
-  i listy zmian przed buildem).
+  `ConversionResult.line_map` wiąże każdą linię wyniku z linią oryginalnego TXT;
+  zdejmowanie otoczki (ogrodzenia, etykieta, puste linie na brzegach) przesuwa
+  numerację, więc `error_line` wskazuje teraz linię w pliku użytkownika, nie w
+  wyciętym kodzie. *Zostaje:* podgląd/UI (podgląd oryginału, wyniku i listy
+  zmian przed buildem) — z mapą linii jako podstawą.
 - **A06 — ścieżki konwersji (P1): zrobione.** Klucz = ścieżka względna; kolizje
   `txt_collision`; golden na zagnieżdżony TXT.
 - **A07 — zależności (P1): zrobione.** `packaging.Requirement` (wersje ze

@@ -98,6 +98,11 @@ class ConversionResult:
     steps: tuple[str, ...] = ()
     error_line: int | None = None
     error_text: str | None = None
+    # Dla linii wyniku k (0-based) — numer linii w ORYGINALNYM TXT (1-based).
+    # Zdejmowanie otoczki (ogrodzenia, etykieta, puste linie na brzegach)
+    # przesuwa numeracje, wiec `error_line` bez tej mapy wskazywalby linie w
+    # wycietym kodzie, ktorej uzytkownik nie znajdzie w swoim pliku (A05).
+    line_map: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)

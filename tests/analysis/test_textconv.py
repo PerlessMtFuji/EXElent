@@ -241,3 +241,39 @@ def test_repair_keeps_nbsp_inside_fstring_but_fixes_it_outside():
     result = convert_text_to_python(src.encode())
     assert result.ok
     assert result.code == "x = f'a b'\ny = 1"
+
+
+# --- A05: mapa linii wynik -> oryginalny TXT ---
+
+
+def test_error_line_points_to_the_original_txt_line_through_a_fence():
+    """Blad skladni w kodzie wyjetym z ogrodzenia ma wskazywac linie w
+    ORYGINALNYM TXT (tu 4), nie w wycietym kodzie (1) — inaczej uzytkownik
+    szuka nieistniejacej linii (A05: mapa linii)."""
+    raw = "Oto program:\n\n```python\ndef f(:\n    pass\n```\n"
+    result = convert_text_to_python(raw.encode())
+    assert result.ok is False
+    assert result.error_line == 4
+
+
+def test_error_line_maps_through_the_second_of_several_fences():
+    """Kilka bloków łączonych w jeden kod. Błąd w DRUGIM bloku ma wskazać jego
+    linię w oryginale (tu 7), a nie przesunięcie liczone od pierwszego bloku —
+    mapa jest budowana per-blok (A05)."""
+    raw = (
+        "Blok 1:\n```python\nimport sys\n```\n"
+        "teraz drugi:\n```python\ndef g(:\n```\n"
+    )
+    result = convert_text_to_python(raw.encode())
+    assert result.ok is False
+    assert result.error_line == 7
+
+
+def test_line_map_is_populated_for_fenced_success():
+    """Przy udanej konwersji mapa linii wiąże każdą linię wyniku z oryginałem —
+    podstawa dla przyszłego podglądu zmian (A05)."""
+    raw = "```python\nx = 1\ny = 2\n```\n"
+    result = convert_text_to_python(raw.encode())
+    assert result.ok
+    assert result.code == "x = 1\ny = 2"
+    assert result.line_map == (2, 3)
