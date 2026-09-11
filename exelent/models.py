@@ -133,6 +133,18 @@ class ProjectAnalysis:
 
 
 @dataclass(frozen=True)
+class SourceEntry:
+    """Plik zaakceptowany przez analizę (B08).
+
+    Hash utrwala treść w momencie akceptacji; weryfikacja przed buildem łapie
+    zmiany po analizie. `rel_path` jest znormalizowany do `/` — ścieżka
+    względna do korzenia projektu."""
+
+    rel_path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class BuildPlan:
     root: Path
     entry: Path
@@ -153,6 +165,10 @@ class BuildPlan:
     # plan (A02), a plan jest jego jedynym kontraktem. Krotka par zamiast dict,
     # bo `frozen=True` nie chroni modyfikowalnego słownika w środku (A13).
     converted: tuple[tuple[str, str], ...] = ()
+    # Inwentarz zaakceptowanych plików źródłowych i zasobów (B08). Materialization
+    # kopiuje TYLKO te pliki i weryfikuje hash; nowe pliki dodane po analizie
+    # nie wchodzą do builda bez ponownej analizy.
+    source_inventory: tuple[SourceEntry, ...] = ()
 
 
 @dataclass(frozen=True)

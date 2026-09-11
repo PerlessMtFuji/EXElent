@@ -142,6 +142,11 @@ CATALOG: dict[str, str] = {
         "together. The EXE was not built — the environment would be inconsistent. Reconcile the "
         "versions in your requirements (e.g. in requirements.txt) and try again."
     ),
+    "source_changed_after_analysis": (
+        "Source files changed after the analysis ({files}). "
+        "The EXE was not built — the finished program could differ from what you accepted. "
+        "Try again so EXElent analyses the current code."
+    ),
     "validation_failed": (
         "The code could not be checked with the target Python {version}, so the build was "
         "stopped — this was a failure of the check itself, not a confirmation that the code is "
