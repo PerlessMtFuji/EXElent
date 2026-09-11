@@ -51,7 +51,7 @@ class _FakeBackend:
 def stub_build(monkeypatch, tmp_path):
     """Wycina z `run_build` wszystko, co dotyka sieci i dysku systemowego."""
     monkeypatch.setattr(cli, "check_preconditions", lambda **_kw: ())
-    monkeypatch.setattr(cli, "materialize_workspace", lambda plan: tmp_path / "ws")
+    monkeypatch.setattr(cli, "materialize_workspace", lambda plan, cancel=None: tmp_path / "ws")
     monkeypatch.setattr(
         cli,
         "create_build_env",
@@ -82,11 +82,11 @@ def test_uv_download_failure_becomes_an_issue_not_a_traceback(tmp_path, monkeypa
     root = _project(tmp_path, {"main.py": "print(1)"})
     issue = Issue("uv_download_failed", Severity.BLOCKER)
 
-    def _boom(_progress):
+    def _boom(_progress, cancel=None):
         raise UvDownloadError(issue, OSError("brak polaczenia"))
 
     monkeypatch.setattr(cli, "check_preconditions", lambda **_kw: ())
-    monkeypatch.setattr(cli, "materialize_workspace", lambda plan: tmp_path / "ws")
+    monkeypatch.setattr(cli, "materialize_workspace", lambda plan, cancel=None: tmp_path / "ws")
     monkeypatch.setattr("exelent.runtime.env.ensure_uv", _boom)
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
@@ -351,7 +351,7 @@ def test_workspace_copy_failure_becomes_an_issue_not_a_traceback(tmp_path, monke
     wywala `FileExistsError [WinError 183]` przy kolejnej probie."""
     root = _project(tmp_path, {"main.py": "print(1)"})
 
-    def _boom(_plan):
+    def _boom(_plan, cancel=None):
         raise FileExistsError(17, "Cannot create a file when that file already exists")
 
     monkeypatch.setattr(cli, "materialize_workspace", _boom)
@@ -367,7 +367,7 @@ def test_a_locked_source_file_is_diagnosed_by_its_windows_error(tmp_path, monkey
     dlatego, ze wyjatek przyszedl z kopiowania, a nie z logu PyInstallera."""
     root = _project(tmp_path, {"main.py": "print(1)"})
 
-    def _boom(_plan):
+    def _boom(_plan, cancel=None):
         raise PermissionError(13, "Access is denied", str(root / "main.py"), 32)
 
     monkeypatch.setattr(cli, "materialize_workspace", _boom)

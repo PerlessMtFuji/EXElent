@@ -14,6 +14,10 @@ from exelent.constants import EXCLUDED_DIRS
 from exelent.models import BuildPlan, Issue, IssueError, Severity
 from exelent.runtime.paths import work_dir_for
 
+# B10: co ile plików sprawdzamy token anulowania przy kopiowaniu. Sprawdzanie
+# przy każdym pliku jest tanie, ale nie chcemy narzutu, gdy plików jest 5.
+_CANCEL_CHECK_INTERVAL = 1
+
 
 def workspace_for(root: Path, single_file: Path | None = None) -> Path:
     """Gdzie lezy kopia robocza projektu z `root`.
@@ -47,15 +51,25 @@ def _copy_and_verify(source: Path, target: Path, expected_hash: str) -> str | No
     return None
 
 
-def materialize_workspace(plan: BuildPlan) -> Path:
+def _check_cancel(cancel) -> None:
+    """B10: przerwanie kopiowania daje `build_cancelled`, nie błąd I/O."""
+    if cancel is not None and cancel.cancelled:
+        raise IssueError(Issue("build_cancelled", Severity.INFO))
+
+
+def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
     """Kopia robocza projektu z weryfikacją inwentarza (B08).
 
     Kopiuje TYLKO pliki zaakceptowane przez analizę (z inwentarza planu),
     nie cały katalog. Nowe pliki dodane po analizie nie wchodzą do builda
     bez ponownej analizy. Konwersje TXT->PY zapisywane z planu.
 
+    `cancel` (B10) przerywa kopiowanie między plikami. Anulowanie przed
+    kopią nie tworzy workspace; anulowanie w trakcie sprząta go.
+
     Gdy inwentarz jest pusty (starszy plan bez B08), spada do kopiowania
     jawnych pól planu — bezpieczniejsze niż copytree, choć bez weryfikacji."""
+    _check_cancel(cancel)
     workspace = workspace_for(plan.root, plan.single_file)
     if workspace.exists():
         shutil.rmtree(workspace, ignore_errors=True)
@@ -67,7 +81,9 @@ def materialize_workspace(plan: BuildPlan) -> Path:
     if plan.source_inventory:
         # B08: kopiowanie inwentarza — TYLKO zaakceptowane pliki.
         inventory_lookup = {e.rel_path: e.sha256 for e in plan.source_inventory}
-        for entry in plan.source_inventory:
+        for i, entry in enumerate(plan.source_inventory):
+            if i % _CANCEL_CHECK_INTERVAL == 0:
+                _check_cancel(cancel)
             source = plan.root / entry.rel_path
             if not source.is_file():
                 changed.append(f"{entry.rel_path} (usunięty)")

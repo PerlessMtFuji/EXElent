@@ -28,6 +28,12 @@ from exelent.runtime.uvlog import DOWNLOAD_DONE, DOWNLOAD_START, PREPARED, parse
 # żeby nie kręcić procesorem przez całą kilkuminutową instalację.
 _CANCEL_POLL_SECONDS = 0.1
 
+# Ile czekamy na zakończenie procesu po `kill_tree` i na dołączenie wątku
+# czytającego (B10). Te same wartości co w `pyinstaller.py` — kontrakt
+# ograniczonego czasu anulowania jest wspólny dla obu backendów.
+_KILL_WAIT_SECONDS = 3.0
+_READER_JOIN_SECONDS = 1.0
+
 
 class BuildEnvError(IssueError):
     """Srodowisko builda nie powstalo.
@@ -94,7 +100,14 @@ def _run_uv_cancellable(
             # uv sam uruchamia procesy potomne (pobieranie, rozpakowywanie),
             # więc samo `kill()` na nim zostawiłoby je osierocone.
             kill_tree(process.pid)
-            stdout, stderr = process.communicate()
+            # B10: po kill_tree potok zamyka się normalnie w ułamku sekundy,
+            # ale gdy ubicie zawiodło, `communicate()` bez limitu czeka do
+            # końca życia procesu. Ograniczamy to, żeby anulowanie zawsze
+            # kończyło się w skończonym czasie.
+            try:
+                stdout, stderr = process.communicate(timeout=_KILL_WAIT_SECONDS)
+            except subprocess.TimeoutExpired:
+                stdout, stderr = "", ""
             break
     return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
 
@@ -174,7 +187,14 @@ def _stream_uv(
         collected.append(line.rstrip("\n"))
         on_line(line)
 
-    process.wait()
+    # B10: po EOF lub kill_tree — skończony czas oczekiwania. Bez limitu
+    # `wait` wisząc na procesie, którego nie udało się ubić, blokowałby
+    # powrót z anulowania w nieskończoność.
+    try:
+        process.wait(timeout=_KILL_WAIT_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    reader.join(timeout=_READER_JOIN_SECONDS)
     return process.returncode, "\n".join(collected)
 
 
@@ -277,7 +297,7 @@ def create_build_env(
     total_download_bytes: int = 0,
     cancel=None,
 ) -> BuildEnv:
-    uv = ensure_uv(progress)
+    uv = ensure_uv(progress, cancel=cancel)
     _raise_if_cancelled(cancel)
     work = work_dir_for(source, single_file)
     venv = work / "venv"
