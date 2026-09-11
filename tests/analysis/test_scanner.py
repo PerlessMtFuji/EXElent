@@ -99,7 +99,10 @@ def test_binary_txt_with_null_bytes_is_data_not_a_crash(tmp_path):
 def test_classifies_data_and_icons(tmp_path):
     root = _make(tmp_path, {"main.py": "", "dane.json": "{}", "logo.png": "x"})
     result = scan_directory(root)
-    assert [p.name for p in result.data_files] == ["dane.json"]
+    # B07: ikona jest RÓWNOCZEŚNIE zasobem runtime — `logo.png` ląduje w obu.
+    data_names = [p.name for p in result.data_files]
+    assert "dane.json" in data_names
+    assert "logo.png" in data_names
     assert [p.name for p in result.icon_files] == ["logo.png"]
 
 
@@ -279,3 +282,36 @@ def test_local_import_closure_ignores_unparsable_files(tmp_path):
 
     assert found == (tmp_path / "zepsuty.py",)
     assert truncated is False
+
+
+# --- B07: zasoby i ich układ --------------------------------------------------
+
+
+def test_icon_is_also_a_data_file(tmp_path):
+    """B07: ikona aplikacji może być równocześnie zasobem runtime — wybór
+    `logo.png` jako ikony nie może usuwać go z danych. Program użytkownika
+    odczytuje `Image.open('logo.png')` i musi go znaleźć w paczce."""
+    root = _make(tmp_path, {"main.py": "print(1)", "logo.png": "x", "config.json": "{}"})
+    result = scan_directory(root)
+    data_names = {p.name for p in result.data_files}
+    icon_names = {p.name for p in result.icon_files}
+    assert "logo.png" in icon_names, "logo.png powinno być kandydatem na ikonę"
+    assert "logo.png" in data_names, "logo.png musi też być zasobem runtime"
+    assert "config.json" in data_names
+
+
+def test_all_image_types_are_data_files(tmp_path):
+    """B07: wszystkie obrazki trafiają do danych, nawet te z nazwami ikon."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print(1)",
+            "icon.ico": "x",
+            "logo.png": "x",
+            "tlo.jpg": "x",
+            "banner.gif": "x",
+        },
+    )
+    result = scan_directory(root)
+    data_names = {p.name for p in result.data_files}
+    assert data_names == {"icon.ico", "logo.png", "tlo.jpg", "banner.gif"}

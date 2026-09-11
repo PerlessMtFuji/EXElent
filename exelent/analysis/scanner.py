@@ -273,8 +273,11 @@ def scan_directory(
             elif suffix in IMAGE_SUFFIXES:
                 if path.stem.lower() in ICON_STEMS or suffix == ".ico":
                     icons.append(path)
-                else:
-                    data.append(path)
+                # Ikona aplikacji może być RÓWNOCZEŚNIE zasobem runtime (B07):
+                # `logo.png` użyty jako ikona EXE musi nadal być dostępny
+                # przez `Image.open('logo.png')` w uruchomionym programie.
+                # Nie: `else` — ZAWSZE do danych, niezależnie od roli ikony.
+                data.append(path)
             elif suffix in DATA_SUFFIXES:
                 data.append(path)
         if truncated:
