@@ -15,7 +15,11 @@ from exelent.analysis.apptype import (
     collect_hidden_imports,
     detect_app_kind,
 )
-from exelent.analysis.entrypoint import entry_is_certain, local_module_names, rank_entry_candidates
+from exelent.analysis.entrypoint import (
+    entry_is_certain,
+    local_module_names,
+    rank_entry_candidates,
+)
 from exelent.analysis.scanner import scan_directory, scan_single_file
 from exelent.analysis.textconv import NO_CODE, convert_text_to_python
 from exelent.deps.resolve import resolve_dependencies
@@ -224,6 +228,11 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     output_mode = OutputMode.ONEDIR
     issues.extend(collect_code_issues(sources))
 
+    # Ukryte importy muszą być znane PRZED resolverem: dynamiczny
+    # `importlib.import_module('PIL.Image')` zasila zarówno `--hidden-import`
+    # PyInstallera, jak i listę paczek do instalacji (B04).
+    hidden_imports = collect_hidden_imports(sources)
+
     # Ścieżka, a nie sam tekst: resolver rozwija `-r`/`-c` względem katalogu
     # manifestu (A07). `dep_issues` niesie diagnostykę manifestu (cykl, brak
     # pliku, nieczytelny pyproject), która inaczej ginęłaby po cichu.
@@ -233,10 +242,10 @@ def analyze_project(root: Path) -> ProjectAnalysis:
         local_module_names(root, sources),
         requirements_path=scan.requirements,
         pyproject_path=scan.pyproject,
+        hidden_imports=hidden_imports,
         issues=dep_issues,
     )
     issues.extend(dep_issues)
-    hidden_imports = collect_hidden_imports(sources)
 
     heavy_packages = [dep.package for dep in dependencies if dep.heavy]
     low, high, heaviest = estimate_exe_size(heavy_packages)

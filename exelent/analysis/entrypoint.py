@@ -36,13 +36,64 @@ STARTUP_CALL_BONUS = 15
 TEST_FILE_PENALTY = 40
 
 
-def _module_name(root: Path, path: Path) -> str:
+def import_roots(root: Path, sources: Mapping[Path, str]) -> tuple[Path, ...]:
+    """Korzenie importów projektu — katalogi, od których `import X` się rozwiązuje.
+
+    Układ zwykły: sam `root`. Układ `src/`: RÓWNIEŻ `root/src/`, gdy `src/`
+    istnieje jako katalog, ale NIE jest pakietem Pythona (brak `__init__.py`),
+    a przynajmniej jeden plik źródłowy leży pod `src/` (B04).
+
+    Ta sama logika musi obowiązywać wszędzie: w zestawie modułów lokalnych
+    (żeby `import demo` nie szło na PyPI), w domknięciu importów skanera
+    (żeby `import helper` znalazło sąsiada) i w argumentach PyInstallera
+    (`--paths`). Jedno miejsce.
+    """
+    roots: list[Path] = [root]
+    src = root / "src"
+    if (
+        src.is_dir()
+        and not (src / "__init__.py").is_file()
+        and any(_is_under(p, src) for p in sources)
+    ):
+        roots.append(src)
+    return tuple(roots)
+
+
+def _is_under(path: Path, directory: Path) -> bool:
+    """Czy `path` leży pod `directory` (nie jest samym `directory`)."""
+    try:
+        path.relative_to(directory)
+        return path != directory
+    except ValueError:
+        return False
+
+
+def _module_name_from_root(import_root: Path, path: Path) -> str:
+    """Nazwa modułu najwyższego poziomu względem jednego korzenia importów."""
+    rel = path.relative_to(import_root)
+    return rel.stem if rel.parent == Path(".") else rel.parts[0]
+
+
+def _module_name(root: Path, path: Path, roots: tuple[Path, ...] | None = None) -> str:
+    """Nazwa modułu najwyższego poziomu, z uwzględnieniem układu `src/`.
+
+    Dla `src/demo/main.py` gdy `src/` nie jest pakietem: zwraca `"demo"`,
+    nie `"src"`. Bez tego `import demo.helper` zostaje oznaczony jako
+    zewnętrzna paczka (B04)."""
+    if roots is not None:
+        # Wybierz najgłębszy pasujący korzeń (src/ jest głębszy niż root).
+        for ir in sorted(roots, key=lambda r: len(r.parts), reverse=True):
+            try:
+                return _module_name_from_root(ir, path)
+            except ValueError:
+                continue
     rel = path.relative_to(root)
     return rel.stem if rel.parent == Path(".") else rel.parts[0]
 
 
 def local_module_names(root: Path, sources: Mapping[Path, str]) -> set[str]:
-    return {_module_name(root, p) for p in sources}
+    roots = import_roots(root, sources)
+    return {_module_name(root, p, roots) for p in sources}
 
 
 def _is_test_file(path: Path) -> bool:
@@ -103,6 +154,7 @@ def rank_entry_candidates(root: Path, sources: Mapping[Path, str]) -> tuple[Entr
         only = next(iter(sources))
         return (EntryCandidate(path=only, score=100, reasons=("jedyny plik",)),)
 
+    roots = import_roots(root, sources)
     local = local_module_names(root, sources)
     imported_by_nontest: set[str] = set()
     imports_map: dict[Path, set[str]] = {}
@@ -116,7 +168,7 @@ def rank_entry_candidates(root: Path, sources: Mapping[Path, str]) -> tuple[Entr
     for path, code in sources.items():
         score = 0
         reasons: list[str] = []
-        module = _module_name(root, path)
+        module = _module_name(root, path, roots)
 
         if module not in imported_by_nontest:
             score += ROOT_CANDIDATE_BONUS

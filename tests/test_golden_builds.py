@@ -699,3 +699,54 @@ def test_manually_added_hidden_import_reaches_the_exe(tmp_path, shared_state):
     run = run_bounded([_exe_of(result)], timeout=180)
     assert "HIDDEN-OK MODUL-DOPISANY-RECZNIE" in run.stdout
     _assert_source_untouched(root, {"main.py", "pkg", "pkg/__init__.py", "pkg/plugin.py"})
+
+
+# --- B04: wspólny model importów i zależności ---------------------------------
+
+
+def test_src_layout_absolute_import_of_own_package(tmp_path, shared_state):
+    """B04: `src/demo/main.py` z `from demo import helper` — `demo` nie
+    powinno trafiac na PyPI, a EXE musi wykonac wlasciwy kod.
+    """
+    root = _project(
+        tmp_path,
+        "src-layout",
+        {
+            "src/demo/__init__.py": "",
+            "src/demo/main.py": (
+                "from demo import helper\n"
+                "if __name__ == '__main__':\n"
+                "    print('SRC-LAYOUT-OK', helper.MSG)\n"
+            ),
+            "src/demo/helper.py": "MSG = 'HELPER-DZIALA'\n",
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([_exe_of(result)], timeout=180)
+    assert "SRC-LAYOUT-OK HELPER-DZIALA" in run.stdout
+    _assert_source_untouched(
+        root,
+        {"src", "src/demo", "src/demo/__init__.py", "src/demo/main.py", "src/demo/helper.py"},
+    )
+
+
+def test_txt_single_file_with_local_helper(tmp_path, shared_state):
+    """B04: pojedynczy TXT z `import helper` wciaga sasiedni `helper.py`
+    po konwersji, nie z surowego tekstu.
+    """
+    # Plik .txt w katalogu z helper.py — tryb jednoplikowy.
+    folder = tmp_path / "projekt"
+    folder.mkdir()
+    (folder / "kod.txt").write_text(
+        "```python\nimport helper\nprint('TXT-HELPER-OK', helper.X)\n```\n",
+        encoding="utf-8",
+    )
+    (folder / "helper.py").write_text("X = 'SKONWERTOWANY'\n", encoding="utf-8")
+
+    result = run_build(folder / "kod.txt", noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([_exe_of(result)], timeout=180)
+    assert "TXT-HELPER-OK SKONWERTOWANY" in run.stdout
