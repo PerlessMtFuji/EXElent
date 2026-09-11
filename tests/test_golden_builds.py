@@ -750,3 +750,66 @@ def test_txt_single_file_with_local_helper(tmp_path, shared_state):
 
     run = run_bounded([_exe_of(result)], timeout=180)
     assert "TXT-HELPER-OK SKONWERTOWANY" in run.stdout
+
+
+# --- B03 domknięcie: pakiet z __main__.py i plik .pyw ---
+
+
+def test_package_dunder_main_runs_as_module(tmp_path, shared_state):
+    """B03: pakiet z `__main__.py` uruchamiany jak `python -m pkg`.
+    Launcher musi użyć runpy z poprawnym module spec, a __name__ i __package__
+    muszą mieć oczekiwane wartości."""
+    root = _project(
+        tmp_path,
+        "pakiet-main",
+        {
+            "mypkg/__init__.py": "VERSION = '1.0'\n",
+            "mypkg/__main__.py": (
+                "import sys\n"
+                "from mypkg import VERSION\n"
+                "print('PKG-MAIN-OK', VERSION)\n"
+                "print('NAME', __name__)\n"
+                "sys.exit(0)\n"
+            ),
+        },
+    )
+    result = run_build(
+        root, noop_progress, entry=root / "mypkg" / "__main__.py", dest_dir=tmp_path / "out"
+    )
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([_exe_of(result)], timeout=180)
+    assert "PKG-MAIN-OK 1.0" in run.stdout
+    assert "NAME __main__" in run.stdout
+    _assert_source_untouched(
+        root, {"mypkg", "mypkg/__init__.py", "mypkg/__main__.py"}
+    )
+
+
+def test_pyw_file_builds_as_windowed_and_runs(tmp_path, shared_state):
+    """B03: plik `.pyw` jest rozpoznawany jako program w oknie — podsystem PE
+    musi być GUI, a program musi się poprawnie uruchomić."""
+    root = _project(
+        tmp_path,
+        "pyw-okno",
+        {
+            "main.pyw": (
+                "import tkinter\n"
+                "okno = tkinter.Tk()\n"
+                "def zamknij():\n"
+                "    open('dowod.txt', 'w', encoding='utf-8').write('PYW-DZIALA')\n"
+                "    okno.destroy()\n"
+                "okno.after(500, zamknij)\n"
+                "okno.mainloop()\n"
+            ),
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    exe = _exe_of(result)
+    run = run_bounded([exe], timeout=180, cwd=exe.parent)
+    assert run.returncode == 0, run.stderr
+    assert (exe.parent / "dowod.txt").read_text(encoding="utf-8") == "PYW-DZIALA"
+    assert _pe_subsystem(exe) == SUBSYSTEM_GUI, "pyw powinno mieć podsystem GUI"
+    _assert_source_untouched(root, {"main.pyw"})
