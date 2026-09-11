@@ -5,6 +5,7 @@ Wspólny punkt dla CLI i GUI. Build nigdy nie zgaduje — dostaje gotowy plan.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sys
@@ -15,7 +16,15 @@ from pathlib import Path
 
 from exelent.analysis.entrypoint import local_module_names
 from exelent.deps.resolve import resolve_extra_modules
-from exelent.models import AppKind, BuildPlan, Issue, OutputMode, ProjectAnalysis, Severity
+from exelent.models import (
+    AppKind,
+    BuildPlan,
+    Issue,
+    OutputMode,
+    ProjectAnalysis,
+    Severity,
+    SourceEntry,
+)
 
 _ILLEGAL = re.compile(r'[/\\:*?"<>|]')
 
@@ -271,6 +280,70 @@ def _dedup(items: Iterable[str]) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _file_hash(path: Path) -> str:
+    """SHA-256 pliku — utrwala treść w momencie akceptacji (B08)."""
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
+def _build_source_inventory(analysis: ProjectAnalysis) -> tuple[SourceEntry, ...]:
+    """Inwentarz plików zaakceptowanych przez analizę (B08).
+
+    Zawiera źródła Pythona, zasoby, ikonę i manifesty — każdy z hashem.
+    Konwersje TXT nie są na dysku, więc nie mają wpisu — ich treść jest
+    utrwalona w `plan.converted`.
+    """
+    root = analysis.root
+    entries: list[SourceEntry] = []
+    seen: set[str] = set()
+
+    # Źródła Pythona (bez konwersji — te istnieją tylko w pamięci).
+    converted_paths = {root / rel for rel in analysis.converted}
+    for path in analysis.scan.py_files:
+        if path in converted_paths:
+            continue
+        rel = path.relative_to(root).as_posix()
+        if rel not in seen:
+            seen.add(rel)
+            entries.append(SourceEntry(rel_path=rel, sha256=_file_hash(path)))
+
+    # Dodatkowe źródła z domknięcia importów (tryb jednoplikowy).
+    for path in analysis.extra_sources:
+        rel = path.relative_to(root).as_posix()
+        if rel not in seen:
+            seen.add(rel)
+            entries.append(SourceEntry(rel_path=rel, sha256=_file_hash(path)))
+
+    # Zasoby.
+    for path in analysis.scan.data_files:
+        rel = path.relative_to(root).as_posix()
+        if rel not in seen:
+            seen.add(rel)
+            entries.append(SourceEntry(rel_path=rel, sha256=_file_hash(path)))
+
+    # Ikona.
+    if analysis.suggested_icon is not None:
+        rel = analysis.suggested_icon.relative_to(root).as_posix()
+        if rel not in seen:
+            seen.add(rel)
+            entries.append(SourceEntry(rel_path=rel, sha256=_file_hash(analysis.suggested_icon)))
+
+    # Oryginalne TXT-y (źródło konwersji — potrzebne do ewentualnej weryfikacji).
+    for path in analysis.scan.text_candidates:
+        rel = path.relative_to(root).as_posix()
+        if rel not in seen:
+            seen.add(rel)
+            entries.append(SourceEntry(rel_path=rel, sha256=_file_hash(path)))
+
+    return tuple(sorted(entries, key=lambda e: e.rel_path))
+
+
 def _local_module_names(analysis: ProjectAnalysis) -> set[str]:
     """Nazwy najwyższego poziomu modułów lokalnych — także tych skonwertowanych
     z `.txt`, których nie ma na dysku. Chronią przed potraktowaniem ręcznie
@@ -325,4 +398,7 @@ def make_plan(
         # Konwersje wędrują W PLANIE, żeby build dało się wykonać z samego
         # planu, bez ponownej analizy źródeł (A02).
         converted=tuple(analysis.converted.items()),
+        # Inwentarz utrwala listę zaakceptowanych plików z hashami (B08).
+        # Materializacja kopiuje TYLKO te pliki i weryfikuje hash.
+        source_inventory=_build_source_inventory(analysis),
     )

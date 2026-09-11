@@ -151,6 +151,11 @@ CATALOG: dict[str, str] = {
         "Plik EXE NIE powstał — środowisko byłoby niespójne. Uzgodnij wersje w wymaganiach "
         "(np. w requirements.txt) i spróbuj ponownie."
     ),
+    "source_changed_after_analysis": (
+        "Pliki źródłowe zmieniły się po analizie ({files}). "
+        "Plik EXE NIE powstał — zbudowany program mógłby się różnić od tego, co zaakceptowałeś. "
+        "Spróbuj ponownie, żeby EXElent przeanalizował aktualny kod."
+    ),
     "validation_failed": (
         "Nie udało się sprawdzić kodu docelowym Pythonem {version}, więc build został "
         "zatrzymany — to była awaria samej kontroli, nie potwierdzenie, że kod jest dobry. "

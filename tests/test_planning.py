@@ -368,3 +368,45 @@ def test_plan_carries_single_file_mode_from_analysis(tmp_path):
     plan = make_plan(analyze_project(root / "test.py"))
     assert plan.single_file == root / "test.py"
     assert root / "helper.py" in plan.extra_sources
+
+
+# --- B08: inwentarz zaakceptowanych plików ---
+
+
+def test_source_inventory_contains_py_files_with_hashes(tmp_path):
+    """B08: plan zawiera inwentarz z hashami plików Pythona."""
+    root = _make(tmp_path / "p", {"main.py": "print(1)", "lib.py": "X = 1"})
+    plan = make_plan(analyze_project(root))
+    assert len(plan.source_inventory) >= 2
+    paths = {e.rel_path for e in plan.source_inventory}
+    assert "main.py" in paths
+    assert "lib.py" in paths
+    assert all(len(e.sha256) == 64 for e in plan.source_inventory)
+
+
+def test_source_inventory_contains_data_files(tmp_path):
+    """B08: zasoby (JSON, CSV itp.) też są w inwentarzu."""
+    root = _make(tmp_path / "p", {"main.py": "print(1)", "dane.json": '{"a": 1}'})
+    plan = make_plan(analyze_project(root))
+    paths = {e.rel_path for e in plan.source_inventory}
+    assert "dane.json" in paths
+
+
+def test_source_inventory_is_sorted_by_path(tmp_path):
+    """B08: inwentarz jest posortowany po ścieżce — deterministyczny wynik."""
+    root = _make(tmp_path / "p", {"z_main.py": "print(1)", "a_lib.py": "X = 1"})
+    plan = make_plan(analyze_project(root), entry=root / "z_main.py")
+    rel_paths = [e.rel_path for e in plan.source_inventory]
+    assert rel_paths == sorted(rel_paths)
+
+
+def test_source_inventory_excludes_converted_files(tmp_path):
+    """B08: pliki wygenerowane przez konwersję TXT→PY nie są na dysku,
+    więc nie mają wpisu w inwentarzu — ich treść siedzi w plan.converted."""
+    root = _make(tmp_path / "p", {"main.py": "import kod", "kod.txt": "print(1)\n"})
+    plan = make_plan(analyze_project(root))
+    inv_paths = {e.rel_path for e in plan.source_inventory}
+    # Oryginalny TXT powinien być w inwentarzu (do weryfikacji).
+    assert "kod.txt" in inv_paths
+    # Ale plik wynikowy konwersji NIE jest w inwentarzu (nie istnieje na dysku).
+    assert "kod.py" not in inv_paths

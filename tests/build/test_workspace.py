@@ -1,7 +1,14 @@
+import hashlib
 from pathlib import Path
 
+import pytest
+
 from exelent.build.workspace import materialize_workspace
-from exelent.models import AppKind, BuildPlan, OutputMode
+from exelent.models import AppKind, BuildPlan, IssueError, OutputMode, SourceEntry
+
+
+def _sha(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
 
 
 def _plan(
@@ -12,6 +19,7 @@ def _plan(
     single_file: Path | None = None,
     extra: tuple[Path, ...] = (),
     converted: tuple[tuple[str, str], ...] = (),
+    source_inventory: tuple[SourceEntry, ...] = (),
 ) -> BuildPlan:
     return BuildPlan(
         root=root,
@@ -23,6 +31,7 @@ def _plan(
         single_file=single_file,
         extra_sources=extra,
         converted=converted,
+        source_inventory=source_inventory,
     )
 
 
@@ -173,3 +182,122 @@ def test_backend_works_in_the_workspace_that_was_materialized(tmp_path, monkeypa
     assert (workspace / LAUNCHER_FILENAME).exists(), (
         "backend pracowal w innym katalogu niz ten, ktory dostal kopie kodu"
     )
+
+
+# --- B08: inwentarz i weryfikacja hashów ---
+
+
+def test_inventory_copies_only_listed_files(tmp_path, monkeypatch):
+    """B08: plik NIE wymieniony w inwentarzu nie trafia do workspace, nawet
+    jeśli leży w katalogu projektu. Chroni przed przypadkowym dołączeniem
+    pliku dodanego po analizie."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = tmp_path / "src"
+    root.mkdir()
+    main_content = b"print(1)"
+    (root / "main.py").write_bytes(main_content)
+    (root / "nowy.py").write_text("print('dodany po analizie')", encoding="utf-8")
+
+    inventory = (SourceEntry(rel_path="main.py", sha256=_sha(main_content)),)
+    plan = _plan(root, source_inventory=inventory)
+    workspace = materialize_workspace(plan)
+
+    assert (workspace / "main.py").exists()
+    assert not (workspace / "nowy.py").exists()
+
+
+def test_inventory_verifies_hash_and_raises_on_mismatch(tmp_path, monkeypatch):
+    """B08: plik zmieniony po analizie blokuje build — hash się nie zgadza."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = tmp_path / "src"
+    root.mkdir()
+    (root / "main.py").write_text("print(1)", encoding="utf-8")
+
+    # Inwentarz z hashem STAREJ treści, ale plik się zmienił:
+    old_hash = _sha(b"print('stary')")
+    inventory = (SourceEntry(rel_path="main.py", sha256=old_hash),)
+    plan = _plan(root, source_inventory=inventory)
+
+    with pytest.raises(IssueError) as exc_info:
+        materialize_workspace(plan)
+
+    assert exc_info.value.issue.code == "source_changed_after_analysis"
+
+
+def test_inventory_raises_on_deleted_file(tmp_path, monkeypatch):
+    """B08: plik usunięty po analizie blokuje build."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = tmp_path / "src"
+    root.mkdir()
+    (root / "main.py").write_text("print(1)", encoding="utf-8")
+
+    inventory = (
+        SourceEntry(rel_path="main.py", sha256=_sha(b"print(1)")),
+        SourceEntry(rel_path="helper.py", sha256=_sha(b"X = 1")),
+    )
+    plan = _plan(root, source_inventory=inventory)
+
+    with pytest.raises(IssueError) as exc_info:
+        materialize_workspace(plan)
+
+    assert "usunięty" in exc_info.value.issue.data["files"]
+
+
+def test_inventory_happy_path_copies_and_verifies(tmp_path, monkeypatch):
+    """B08: inwentarz z poprawnymi hashami — pliki są skopiowane, brak błędu."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = tmp_path / "src"
+    root.mkdir()
+    main_content = b"print(1)"
+    data_content = b'{"key": "value"}'
+    (root / "main.py").write_bytes(main_content)
+    (root / "dane.json").write_bytes(data_content)
+
+    inventory = (
+        SourceEntry(rel_path="dane.json", sha256=_sha(data_content)),
+        SourceEntry(rel_path="main.py", sha256=_sha(main_content)),
+    )
+    plan = _plan(root, source_inventory=inventory)
+    workspace = materialize_workspace(plan)
+
+    assert (workspace / "main.py").read_bytes() == main_content
+    assert (workspace / "dane.json").read_bytes() == data_content
+
+
+def test_inventory_with_converted_txt_writes_code(tmp_path, monkeypatch):
+    """B08: konwersja TXT->PY nadpisuje workspace po skopiowaniu inwentarza."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = tmp_path / "src"
+    root.mkdir()
+    txt_content = b"```python\nprint('hi')\n```\n"
+    (root / "main.py").write_text("import kod", encoding="utf-8")
+    (root / "kod.txt").write_bytes(txt_content)
+
+    inventory = (
+        SourceEntry(rel_path="kod.txt", sha256=_sha(txt_content)),
+        SourceEntry(rel_path="main.py", sha256=_sha(b"import kod")),
+    )
+    plan = _plan(
+        root,
+        source_inventory=inventory,
+        converted=(("kod.py", "print('hi')"),),
+    )
+    workspace = materialize_workspace(plan)
+
+    assert (workspace / "kod.py").read_text(encoding="utf-8") == "print('hi')"
+    assert (workspace / "main.py").exists()
+
+
+def test_empty_hash_skips_verification(tmp_path, monkeypatch):
+    """B08: plik, którego nie dało się odczytać przy analizie (pusty hash),
+    jest kopiowany bez weryfikacji — brak dowodu ≠ dowód braku."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    root = tmp_path / "src"
+    root.mkdir()
+    (root / "main.py").write_text("print(1)", encoding="utf-8")
+
+    inventory = (SourceEntry(rel_path="main.py", sha256=""),)
+    plan = _plan(root, source_inventory=inventory)
+    workspace = materialize_workspace(plan)
+
+    assert (workspace / "main.py").exists()
