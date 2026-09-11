@@ -66,6 +66,8 @@ def _manifest_lines(
     stack: list[Path],
     depth: int,
     issues: list[Issue],
+    *,
+    constraints: list[str] | None = None,
 ) -> list[str]:
     """Linie wymagań z pliku, z rozwinięciem `-r`/`-c` względem jego katalogu.
 
@@ -73,7 +75,13 @@ def _manifest_lines(
     ślad w `issues` (A07): milcząco pominięty `-r` znaczy niekompletną listę
     zależności, o czym użytkownik musi wiedzieć. `stack` to bieżąca ścieżka
     zejścia — cykl to powrót do pliku, który JEST na tej ścieżce; ten sam plik
-    dołączony dwiema różnymi gałęziami (diament) to nie cykl, tylko dedup."""
+    dołączony dwiema różnymi gałęziami (diament) to nie cykl, tylko dedup.
+
+    `-c` / `--constraint` daje OGRANICZENIA wersji, nie wymagania instalacji:
+    sam wpis `numpy==1.24` w pliku constraints NIE instaluje numpy — ogranicza
+    jego wersję TYLKO jeśli numpy jest już wymagany skądinąd (B05).
+    `constraints` zbiera te linie osobno; wołający stosuje je w resolverze.
+    """
     resolved = path.resolve()
     if resolved in stack:
         issues.append(Issue("requirements_cycle", Severity.WARNING, {"file": path.name}))
@@ -94,9 +102,22 @@ def _manifest_lines(
         if not line:
             continue
         lowered = line.lower()
-        if lowered.startswith(("-r ", "--requirement ", "-c ", "--constraint ")):
+        if lowered.startswith(("-r ", "--requirement ")):
             ref = line.split(None, 1)[1].strip()
-            lines.extend(_manifest_lines(path.parent / ref, seen, stack, depth + 1, issues))
+            lines.extend(
+                _manifest_lines(
+                    path.parent / ref, seen, stack, depth + 1, issues, constraints=constraints
+                )
+            )
+        elif lowered.startswith(("-c ", "--constraint ")):
+            ref = line.split(None, 1)[1].strip()
+            # Constraint file: linie trafiają do osobnej listy, nie do
+            # wymagań instalacji (B05). Brak pliku/cykl zgłaszamy tak samo.
+            constraint_lines = _manifest_lines(
+                path.parent / ref, seen, stack, depth + 1, issues, constraints=constraints
+            )
+            if constraints is not None:
+                constraints.extend(constraint_lines)
         elif line.startswith("-"):
             # Inne opcje pip (-e, --index-url, --hash) nie są nazwą paczki.
             continue
@@ -175,12 +196,69 @@ def _dep_from_requirement_line(line: str) -> Dependency | None:
     return Dependency(import_name=req.name, package=spec, heavy=is_heavy(req.name))
 
 
-def _deps_from_manifest(lines: list[str]) -> tuple[Dependency, ...]:
+def _apply_constraints(
+    deps: dict[str, Dependency], constraint_lines: list[str]
+) -> None:
+    """Nakłada ograniczenia wersji na istniejące wymagania (B05).
+
+    Constraint ogranicza wersję paczki, która JUŻ jest wymagana — sam nie
+    dodaje nowego wymagania. To kluczowa różnica wobec `-r`: sam `-c numpy==1.24`
+    nie instaluje numpy; ogranicza go, tylko jeśli inny wymaganie go już żąda.
+    Constraint na paczkę spoza listy wymagań jest ignorowany zgodnie z
+    semantyką pip: https://pip.pypa.io/en/stable/user_guide/#constraints-files
+    """
+    if not constraint_lines:
+        return
+    # Mapa: znormalizowana nazwa -> specyfikator z pliku constraints.
+    constraint_map: dict[str, str] = {}
+    for line in constraint_lines:
+        if _is_direct_reference(line):
+            continue
+        try:
+            req = Requirement(line)
+        except InvalidRequirement:
+            continue
+        if req.marker is not None and not req.marker.evaluate(_TARGET_MARKER_ENV):
+            continue
+        constraint_map[canonicalize_name(req.name)] = str(req.specifier)
+
+    # Zastosuj constraints do pasujących wymagań.
+    for key, dep in list(deps.items()):
+        if _is_direct_reference(dep.package):
+            continue
+        try:
+            req = Requirement(dep.package)
+        except InvalidRequirement:
+            continue
+        canon = canonicalize_name(req.name)
+        if canon not in constraint_map:
+            continue
+        constraint_spec = constraint_map[canon]
+        if not constraint_spec:
+            continue
+        # Scal: oryginalne ograniczenie + constraint. Np. `requests>=2.0` +
+        # constraint `requests<3.0` daje `requests>=2.0,<3.0`.
+        merged = f"{req.specifier},{constraint_spec}" if str(req.specifier) else constraint_spec
+        extras = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
+        new_spec = f"{req.name}{extras}{merged}"
+        deps[key] = Dependency(
+            import_name=dep.import_name,
+            package=new_spec,
+            optional=dep.optional,
+            heavy=dep.heavy,
+        )
+
+
+def _deps_from_manifest(
+    lines: list[str], constraint_lines: list[str] | None = None
+) -> tuple[Dependency, ...]:
     by_package: dict[str, Dependency] = {}
     for line in lines:
         dep = _dep_from_requirement_line(line)
         if dep is not None:
             by_package.setdefault(dep.package, dep)
+    if constraint_lines:
+        _apply_constraints(by_package, constraint_lines)
     return tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
 
 
@@ -548,7 +626,11 @@ def resolve_dependencies(
     # (deklaracja abstrakcyjna). `None` = brak autorytatywnego manifestu.
     manifest_deps: tuple[Dependency, ...] | None = None
     if requirements_path is not None:
-        manifest_deps = _deps_from_manifest(_manifest_lines(requirements_path, set(), [], 0, sink))
+        constraints: list[str] = []
+        req_lines = _manifest_lines(
+            requirements_path, set(), [], 0, sink, constraints=constraints
+        )
+        manifest_deps = _deps_from_manifest(req_lines, constraints or None)
     elif requirements_text is not None:
         manifest_deps = _deps_from_manifest(_text_lines(requirements_text))
     elif pyproject_path is not None:

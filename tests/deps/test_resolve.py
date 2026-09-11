@@ -575,3 +575,63 @@ def test_hidden_imports_dedupe_with_static():
     deps = resolve_dependencies(_s(code), set(), hidden_imports=("requests.auth",))
     packages = [d.package for d in deps]
     assert packages.count("requests") == 1
+
+
+# --- B05: semantyka constraints i pierwszeństwo manifestów -------------------
+
+
+def test_constraint_does_not_install_package(tmp_path):
+    """B05: sam `-c constraints.txt` z pinem `numpy` NIE instaluje numpy —
+    tylko ogranicza wersję, jeśli numpy jest wymagany skądinąd."""
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("numpy==1.24.0\n", encoding="utf-8")
+    main = tmp_path / "requirements.txt"
+    main.write_text(f"-c {constraints.name}\nrequests\n", encoding="utf-8")
+    deps = resolve_dependencies(_s(""), set(), requirements_path=main)
+    assert _names(deps) == {"requests"}
+    # numpy NIE powinno być w zależnościach.
+    assert not any("numpy" in d.package for d in deps)
+
+
+def test_constraint_restricts_version_of_existing_requirement(tmp_path):
+    """B05: constraint ogranicza wersję paczki, która jest wymagana."""
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("requests<3.0\n", encoding="utf-8")
+    main = tmp_path / "requirements.txt"
+    main.write_text(f"-c {constraints.name}\nrequests>=2.0\n", encoding="utf-8")
+    deps = resolve_dependencies(_s(""), set(), requirements_path=main)
+    assert len(deps) == 1
+    # Specyfikator powinien zawierać OBA ograniczenia.
+    assert ">=2.0" in deps[0].package
+    assert "<3.0" in deps[0].package
+
+
+def test_root_requirements_wins_over_nested(tmp_path):
+    """B05: główny requirements.txt ma pierwszeństwo przed zagnieżdżonym."""
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "requirements.txt").write_text(
+        "requests==1.0.0\n", encoding="utf-8"
+    )
+    (tmp_path / "requirements.txt").write_text("requests>=2.28\n", encoding="utf-8")
+    (tmp_path / "main.py").write_text("import requests\n", encoding="utf-8")
+
+    from exelent.analysis.project import analyze_project
+
+    result = analyze_project(tmp_path)
+    dep = next(d for d in result.dependencies if "requests" in d.package)
+    # Manifest z korzenia (>=2.28) musi wygrać nad zagnieżdżonym (==1.0.0).
+    assert ">=2.28" in dep.package
+    assert "==1.0.0" not in dep.package
+
+
+def test_constraint_with_r_recursive_and_c(tmp_path):
+    """B05: `-r` rozwija jako wymagania, `-c` jako ograniczenia — obie
+    referencje mogą współistnieć."""
+    (tmp_path / "base.txt").write_text("flask\n", encoding="utf-8")
+    (tmp_path / "pins.txt").write_text("flask==2.3.0\n", encoding="utf-8")
+    main = tmp_path / "requirements.txt"
+    main.write_text("-r base.txt\n-c pins.txt\n", encoding="utf-8")
+    deps = resolve_dependencies(_s(""), set(), requirements_path=main)
+    assert len(deps) == 1
+    assert "flask" in deps[0].package.lower()
+    assert "==2.3.0" in deps[0].package

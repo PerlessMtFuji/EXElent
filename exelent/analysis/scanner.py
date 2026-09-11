@@ -257,7 +257,9 @@ def scan_directory(
             suffix = path.suffix.lower()
             if suffix in {".py", ".pyw"}:
                 py.append(path)
-            elif name.lower() == "requirements.txt":
+            elif name.lower() == "requirements.txt" and requirements is None:
+                # Pierwszy trafiony wygrywa; walk() idzie od korzenia, więc
+                # manifest projektu bije ten z podkatalogu (B05).
                 requirements = path
             elif name.lower() == "pyproject.toml" and pyproject is None:
                 # Pierwszy trafiony wygrywa; walk() idzie od korzenia, więc
