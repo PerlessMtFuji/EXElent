@@ -545,3 +545,33 @@ def test_import_fallback_keeps_the_primary_required():
     by_name = {d.package: d.optional for d in deps}
     assert by_name["orjson"] is False
     assert by_name["simplejson"] is True
+
+
+# --- B04: dynamiczne importy zasilają zależności -----------------------------
+
+
+def test_hidden_import_feeds_dependency_with_alias():
+    """B04: `importlib.import_module('PIL.Image')` musi dodać `pillow` do
+    paczek do instalacji, nie tylko do hidden imports."""
+    deps = resolve_dependencies(_s(""), set(), hidden_imports=("PIL.Image",))
+    assert _names(deps) == {"pillow"}
+
+
+def test_hidden_import_local_module_is_not_installed():
+    """Dynamiczny import lokalnego modułu nie powinien trafiać na PyPI."""
+    deps = resolve_dependencies(_s(""), {"mypkg"}, hidden_imports=("mypkg.sub",))
+    assert _names(deps) == set()
+
+
+def test_hidden_import_stdlib_is_not_installed():
+    """Dynamiczny import ze stdlib nie powinien trafiać na PyPI."""
+    deps = resolve_dependencies(_s(""), set(), hidden_imports=("json.decoder",))
+    assert _names(deps) == set()
+
+
+def test_hidden_imports_dedupe_with_static():
+    """Dynamiczny i statyczny import tego samego pakietu nie duplikują."""
+    code = "import requests\n"
+    deps = resolve_dependencies(_s(code), set(), hidden_imports=("requests.auth",))
+    packages = [d.package for d in deps]
+    assert packages.count("requests") == 1

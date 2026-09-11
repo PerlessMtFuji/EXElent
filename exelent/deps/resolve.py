@@ -504,6 +504,30 @@ def resolve_extra_modules(
     return tuple(hidden), deps
 
 
+def _deps_from_hidden_imports(
+    hidden: tuple[str, ...], local_modules: set[str]
+) -> tuple[Dependency, ...]:
+    """Zależności z dynamicznych importów (`importlib.import_module('PIL.Image')`).
+
+    Ukryte importy trafiają do `--hidden-import` PyInstallera, ale sam PyInstaller
+    ich NIE zainstaluje — musi to zrobić środowisko builda. Dotąd `PIL.Image` jako
+    hidden import nie zasilał listy paczek do instalacji, więc `Pillow` nie był
+    instalowany, chyba że pojawiał się osobno w manifestie lub zwykłym `import PIL`.
+    (B04: dynamiczne importy zasilają zarówno hidden imports, jak i zależności.)
+    """
+    stdlib = sys.stdlib_module_names
+    by_package: dict[str, Dependency] = {}
+    for name in hidden:
+        top = name.split(".")[0]
+        if not top or top in stdlib or top in local_modules or top.startswith("_"):
+            continue
+        package = ALIASES.get(top, top)
+        by_package.setdefault(
+            package, Dependency(import_name=top, package=package, heavy=is_heavy(package))
+        )
+    return tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
+
+
 def resolve_dependencies(
     sources: Mapping[Path, str],
     local_modules: set[str],
@@ -511,6 +535,7 @@ def resolve_dependencies(
     *,
     requirements_path: Path | None = None,
     pyproject_path: Path | None = None,
+    hidden_imports: tuple[str, ...] = (),
     issues: list[Issue] | None = None,
 ) -> tuple[Dependency, ...]:
     # `issues` to opcjonalny kanał diagnostyki (cykl/brak pliku manifestu,
@@ -530,7 +555,16 @@ def resolve_dependencies(
         # `None` stąd = pyproject nieautorytatywny (dynamic/Poetry/nieczytelny).
         manifest_deps = _deps_from_pyproject(pyproject_path, sink)
 
+    # Import statyczny + dynamiczny: oba zasilają listę zależności (B04).
     scanned = _deps_from_imports(sources, local_modules)
+    dynamic = _deps_from_hidden_imports(hidden_imports, local_modules)
+    # Scalenie: dynamiczne dopisują do statycznych, deduplikacja po pakiecie.
+    if dynamic:
+        by_package = {d.package.lower(): d for d in scanned}
+        for dep in dynamic:
+            by_package.setdefault(dep.package.lower(), dep)
+        scanned = tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
+
     if manifest_deps is None:
         return scanned
     return _supplement_with_detected(manifest_deps, scanned, sink)

@@ -410,3 +410,71 @@ def test_removed_fence_label_is_reported_to_the_user(tmp_path):
     assert len(notes) == 1
     assert notes[0].severity is Severity.INFO
     assert notes[0].data["file"] == "kod.txt"
+
+
+# --- B04: wspólny model importów i zależności ---------------------------------
+
+
+def test_src_layout_local_import_not_sent_to_pypi(tmp_path):
+    """B04 regresja: `src/demo/main.py` importuje `demo.helper` — analiza
+    dodawała `demo` do zewnętrznych paczek, bo `local_module_names` zwracała
+    `'src'` zamiast `'demo'`.
+    """
+    root = _make(
+        tmp_path,
+        {
+            "src/demo/__init__.py": "",
+            "src/demo/main.py": (
+                "from demo import helper\n"
+                "if __name__ == '__main__':\n"
+                "    print(helper.msg)\n"
+            ),
+            "src/demo/helper.py": "msg = 'hello'\n",
+        },
+    )
+    result = analyze_project(root)
+    # `demo` jest lokalnym pakietem — NIE powinno być wśród zależności do instalacji.
+    dep_packages = [d.package for d in result.dependencies]
+    assert "demo" not in dep_packages
+    # Punkt wejścia powinien być rozpoznany.
+    assert result.entry is not None
+
+
+def test_dynamic_import_feeds_dependency_installation(tmp_path):
+    """B04 regresja: `importlib.import_module('PIL.Image')` generował hidden
+    import, ale `Pillow` nie trafiał na listę paczek do instalacji.
+    """
+    root = _make(
+        tmp_path,
+        {
+            "main.py": (
+                "import importlib\n"
+                "img = importlib.import_module('PIL.Image')\n"
+                "print(img)\n"
+            ),
+        },
+    )
+    result = analyze_project(root)
+    # Hidden import powinien być obecny (to już działało).
+    assert "PIL.Image" in result.hidden_imports
+    # NOWE: paczka `pillow` (alias `PIL`) musi trafić do zależności.
+    dep_packages = [d.package for d in result.dependencies]
+    assert "pillow" in dep_packages
+
+
+def test_txt_single_file_import_closure_after_conversion(tmp_path):
+    """B04 regresja: pojedynczy TXT z `import helper` liczył domknięcie
+    importów PRZED konwersją, więc surowy tekst (z fences) nie parsował się
+    i lokalny `helper.py` nie był wciągany.
+    """
+    (tmp_path / "kod.txt").write_text(
+        "```python\nimport helper\nprint(helper.X)\n```\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "helper.py").write_text("X = 42\n", encoding="utf-8")
+
+    result = analyze_project(tmp_path / "kod.txt")
+
+    # `helper.py` powinien trafić do extra_sources po konwersji TXT.
+    extra_names = [p.name for p in result.extra_sources]
+    assert "helper.py" in extra_names

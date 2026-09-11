@@ -153,21 +153,29 @@ def _import_targets(
     level: int,
     module: str | None,
     names: tuple[str, ...],
+    extra_roots: tuple[Path, ...] = (),
 ) -> list[Path]:
     if level == 0:
-        base = root
+        # Szukamy w każdym korzeniu importów. Dla układu `src/` plik
+        # `src/demo/helper.py` jest osiągalny przez `import demo.helper`
+        # zarówno z `root/src/` (korzeń importów), jak i zwykle z `root/`
+        # (tylko gdy `root/demo/` istnieje). Sprawdzamy od najbardziej
+        # specyficznego (B04).
+        bases = [root, *extra_roots]
     else:
         found = _relative_base(current, root, level)
         if found is None:
             return []
-        base = found
+        bases = [found]
     parts = module.split(".") if module else []
-    targets = _resolve_module(base, parts) if parts else []
-    # `from X import a` — `a` bywa podmodułem `X` (a dla `from . import a` po
-    # prostu modułem w bieżącym pakiecie). Atrybuty (funkcje, klasy) nie
-    # rozwiążą się do pliku i po cichu wypadną.
-    for name in names:
-        targets += _resolve_module(base, [*parts, name])
+    targets: list[Path] = []
+    for base in bases:
+        resolved = _resolve_module(base, parts) if parts else []
+        for name in names:
+            resolved += _resolve_module(base, [*parts, name])
+        if resolved:
+            targets.extend(resolved)
+            break  # Pierwszy trafiony korzeń wygrywa.
     return targets
 
 
@@ -175,6 +183,9 @@ def local_import_closure(
     entry: Path,
     root: Path,
     limit: int = MAX_SINGLE_FILE_IMPORTS,
+    *,
+    extra_roots: tuple[Path, ...] = (),
+    initial_code: str | None = None,
 ) -> tuple[tuple[Path, ...], bool]:
     """Moduły lokalne, których potrzebuje `entry`, wraz z ich własnymi.
 
@@ -183,16 +194,26 @@ def local_import_closure(
     połowy łańcucha importów dałoby EXE, które wywala się u odbiorcy na
     brakującym module — czyli awarię gorszą i późniejszą niż uczciwe
     „nie dam rady, zostaje sam plik".
+
+    `extra_roots`: dodatkowe korzenie importów (np. `root/src/` dla układu
+    `src/`). `initial_code`: kod pliku głównego, gdy odczyt z dysku nie daje
+    prawidłowej treści — np. po konwersji TXT (B04).
     """
     seen: set[Path] = {entry}
     queue = [entry]
     found: list[Path] = []
+    first = True
 
     while queue:
         current = queue.pop(0)
-        code = _read_head(current, limit=1_000_000)
+        if first and initial_code is not None:
+            code = initial_code
+            first = False
+        else:
+            code = _read_head(current, limit=1_000_000)
+            first = False
         for level, module, names in _module_imports(code):
-            for target in _import_targets(current, root, level, module, names):
+            for target in _import_targets(current, root, level, module, names, extra_roots):
                 if target in seen:
                     continue
                 if len(found) >= limit:
@@ -295,7 +316,23 @@ def scan_single_file(path: Path) -> ScanResult:
     except OSError:
         size = 0
 
-    extra, truncated = local_import_closure(path, path.parent)
+    # Dla TXT konwertujemy PRZED liczeniem domknięcia importów (B04): surowy
+    # tekst z ogrodzeniami markdown nie parsuje się jako Python, więc
+    # `_module_imports` zwraca pustą listę i `import helper` w TXT nie znajduje
+    # sąsiedniego `helper.py`. Konwersja jest idempotentna i tania.
+    initial_code: str | None = None
+    if texts:
+        try:
+            raw = path.read_bytes()
+            result = convert_text_to_python(raw)
+            if result.ok and result.code is not None:
+                initial_code = result.code
+        except OSError:
+            pass
+
+    extra, truncated = local_import_closure(
+        path, path.parent, initial_code=initial_code,
+    )
     if py:
         py = (path, *extra)
     elif texts:
