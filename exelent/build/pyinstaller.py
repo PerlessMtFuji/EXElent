@@ -344,7 +344,7 @@ class PyInstallerBackend:
                 issues=(Issue("module_dropped", Severity.BLOCKER, {"file": dropped[0]}),),
             )
 
-        produced, issues = self._collect_artifact(plan, workspace)
+        produced, issues = self._collect_artifact(plan, workspace, cancel)
         if produced is None:
             return BuildResult(
                 ok=False,
@@ -371,12 +371,14 @@ class PyInstallerBackend:
         )
 
     def _collect_artifact(
-        self, plan: BuildPlan, workspace: Path
+        self, plan: BuildPlan, workspace: Path, cancel: CancelToken | None = None
     ) -> tuple[Path | None, tuple[Issue, ...]]:
         """Odbiera artefakt z `dist` i publikuje go w katalogu docelowym.
 
         Publikacja NIGDY nie nadpisuje istniejącej wersji ani danych, które
         uruchomiona aplikacja zapisała obok siebie — patrz `build/publish.py`.
+        B10: `cancel` przerywa kopiowanie do docelowego katalogu PRZED
+        finalizacją — staging jest sprzątany, poprzedni artefakt zostaje.
         """
         dist = workspace / "dist"
         is_onedir = plan.output_mode is OutputMode.ONEDIR
@@ -384,7 +386,9 @@ class PyInstallerBackend:
         if not source.exists():
             return None, (Issue("artifact_vanished", Severity.BLOCKER, {"name": plan.exe_name}),)
 
-        return publish_artifact(source, plan.dest_dir, plan.exe_name, is_onedir=is_onedir)
+        return publish_artifact(
+            source, plan.dest_dir, plan.exe_name, is_onedir=is_onedir, cancel=cancel
+        )
 
 
 def _tree_size(path: Path) -> int:

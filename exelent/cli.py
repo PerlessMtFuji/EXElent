@@ -231,7 +231,18 @@ def _build(
     cancel: CancelToken,
 ) -> BuildResult:
     """Wlasciwy build. Wolane wylacznie spod granicy wyjatkow w `execute_build`."""
-    workspace = materialize_workspace(plan)
+    # B10: anulowany token PRZED startem nie uruchamia żadnej pracy.
+    if cancel.cancelled:
+        return BuildResult(
+            ok=False, issues=(Issue("build_cancelled", Severity.INFO),)
+        )
+
+    workspace = materialize_workspace(plan, cancel=cancel)
+
+    # B10: sprawdzenie tokena między fazami. Każda faza sprawdza go wewnętrznie,
+    # ale luka MIĘDZY nimi (po materializacji, przed instalacją) też musi reagować.
+    if cancel.cancelled:
+        return BuildResult(ok=False, issues=(Issue("build_cancelled", Severity.INFO),))
 
     scale = _Progress(progress)
     env = create_build_env(

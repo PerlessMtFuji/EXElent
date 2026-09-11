@@ -67,7 +67,7 @@ def _unique_target(dest_dir: Path, stem: str, suffix: str, start_at: int = 1) ->
 
 
 def publish_artifact(
-    source: Path, dest_dir: Path, exe_name: str, *, is_onedir: bool
+    source: Path, dest_dir: Path, exe_name: str, *, is_onedir: bool, cancel=None
 ) -> tuple[Path | None, tuple[Issue, ...]]:
     """Kopiuje `source` do `dest_dir` pod wolną nazwą i zwraca ścieżkę wyniku.
 
@@ -75,6 +75,10 @@ def publish_artifact(
     Nigdy nie modyfikuje ani nie usuwa niczego, co już było w `dest_dir`.
     """
     suffix = "" if is_onedir else ".exe"
+
+    # B10: anulowanie PRZED kopiowaniem nie tworzy stagingu.
+    if cancel is not None and cancel.cancelled:
+        return None, (Issue("build_cancelled", Severity.INFO),)
 
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -90,6 +94,13 @@ def publish_artifact(
     except OSError as exc:
         _remove_quietly(staging)
         return None, _os_error_issues(exc, source)
+
+    # B10: anulowanie PO skopiowaniu, ale PRZED finalizacją — staging jest
+    # kompletny, ale nie opublikowany. Sprzątamy go; poprzedni artefakt
+    # zostaje nietknięty.
+    if cancel is not None and cancel.cancelled:
+        _remove_quietly(staging)
+        return None, (Issue("build_cancelled", Severity.INFO),)
 
     # Kompletność: staging musi mieć dokładnie tyle plików i bajtów co źródło,
     # a dla ONEDIR — mieć w środku plik EXE. Kopia obcięta w połowie (np. przez

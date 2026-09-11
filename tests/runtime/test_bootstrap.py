@@ -62,7 +62,7 @@ def test_ensure_uv_downloads_when_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     calls = []
 
-    def fake_download(url, dest, progress):
+    def fake_download(url, dest, progress, cancel=None):
         calls.append(url)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"pobrany uv")
@@ -87,7 +87,7 @@ def test_interrupted_download_leaves_no_partial_artifact(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     target = bootstrap.uv_path()
     payload = _fake_uv_zip_bytes()
-    monkeypatch.setattr(bootstrap, "_download", lambda url, progress: payload)
+    monkeypatch.setattr(bootstrap, "_download", lambda url, progress, cancel=None: payload)
 
     def failing_replace(_src, _dst):
         raise OSError("symulowane zerwanie polaczenia w polowie zapisu")
@@ -107,7 +107,7 @@ def test_ensure_uv_raises_typed_error_with_issue_code(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bootstrap,
         "_download",
-        lambda url, progress: (_ for _ in ()).throw(OSError("brak sieci")),
+        lambda url, progress, cancel=None: (_ for _ in ()).throw(OSError("brak sieci")),
     )
 
     with pytest.raises(bootstrap.UvDownloadError) as exc_info:
@@ -122,7 +122,7 @@ def test_ensure_uv_retries_download_after_prior_interruption(monkeypatch, tmp_pa
     payload = _fake_uv_zip_bytes()
     calls = {"n": 0}
 
-    def fake_download(url, progress):
+    def fake_download(url, progress, cancel=None):
         calls["n"] += 1
         return payload
 

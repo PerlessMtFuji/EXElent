@@ -16,10 +16,11 @@ PyInstallerem. Kompilacja, nie uruchomienie — nie wykonujemy kodu użytkownika
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 from exelent.models import Issue, Severity
-from exelent.runtime.procs import CREATE_NO_WINDOW
+from exelent.runtime.procs import CREATE_NO_WINDOW, kill_tree
 
 # Marker protokołu wypisywany przez checker przy błędzie składni. Jawny prefiks
 # zastępuje dawną heurystykę „pierwsza linia z tabulatorem" (B09): dowolny tab w
@@ -27,6 +28,14 @@ from exelent.runtime.procs import CREATE_NO_WINDOW
 # rozpoznajemy WYŁĄCZNIE po tej linii, a jej brak przy niezerowym kodzie znaczy
 # „walidacja niewykonana", nie „brak błędu".
 _ERROR_MARKER = "EXELENT_SYNTAX_ERROR"
+
+# B10: walidacja nie ma prawa wisieć w nieskończoność. Duży projekt kompiluje się
+# poniżej sekundy; 30 s to hojny margines, po którym uznajemy, że interpreter
+# się zawiesił (np. czeka na stdin po błędzie konfiguracji).
+_VALIDATE_TIMEOUT_SECONDS = 30
+
+# Ile czekamy na domknięcie potoków po kill_tree.
+_KILL_WAIT_SECONDS = 3.0
 
 # Kod checkera jest OSADZONY tutaj i przekazywany docelowemu interpreterowi
 # przez `-c`, a nie czytany z pliku `_targetcheck.py` obok modułu. W zamrożonym
@@ -104,28 +113,53 @@ def validate_target_syntax(
         return None
 
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [str(python), "-c", _CHECK_SOURCE, str(workspace)],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             creationflags=CREATE_NO_WINDOW,
-            check=False,
         )
     except OSError as exc:
         # Docelowy interpreter w ogóle nie wystartował — kontrola się nie odbyła.
         return _validation_failed(python_version, str(exc))
 
-    if completed.returncode == 0:
+    # B10: pętla sprawdzająca cancel token i timeout jednocześnie.
+    # Walidacja to kompilacja (nie uruchomienie) źródeł — szybka operacja.
+    # Timeout chroni przed zawieszonym interpreterem; cancel reaguje na
+    # zamknięcie okna lub przycisk „Przerwij".
+    deadline = time.monotonic() + _VALIDATE_TIMEOUT_SECONDS
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            if cancel is not None and cancel.cancelled:
+                kill_tree(process.pid)
+                try:
+                    process.communicate(timeout=_KILL_WAIT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    pass
+                return None  # anulowano — build kończy się jako przerwany dalej
+            if time.monotonic() > deadline:
+                kill_tree(process.pid)
+                try:
+                    process.communicate(timeout=_KILL_WAIT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    pass
+                return _validation_failed(python_version, "timeout after 30s")
+
+    if process.returncode == 0:
         return None
 
     prefix = _ERROR_MARKER + "\t"
-    line = next((ln for ln in completed.stdout.splitlines() if ln.startswith(prefix)), None)
+    line = next((ln for ln in stdout.splitlines() if ln.startswith(prefix)), None)
     if line is None:
         # Niezerowy kod bez markera protokołu: checker nie doszedł do kontroli
         # albo się wywrócił. To awaria walidacji, nie „brak błędu".
-        detail = (completed.stderr or completed.stdout or "").strip().replace("\n", " ")
+        detail = (stderr or stdout or "").strip().replace("\n", " ")
         return _validation_failed(python_version, detail)
 
     _marker, file, lineno, detail = (line.split("\t", 3) + ["", "", "", ""])[:4]

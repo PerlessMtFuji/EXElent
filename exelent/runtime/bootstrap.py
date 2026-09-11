@@ -21,6 +21,14 @@ from exelent.models import Issue, IssueError, Severity
 from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.paths import state_dir, tools_dir
 
+# Timeout na odczyt pojedynczej porcji danych z serwera. Cała operacja może
+# trwać dłużej (wiele porcji), ale ŻADNA porcja nie ma prawa wisieć w
+# nieskończoność — inaczej zamknięcie okna czeka, aż serwer łaskawie odpowie.
+_DOWNLOAD_READ_TIMEOUT = 30
+
+# Jak często sprawdzamy token anulowania w trakcie pobierania.
+_CANCEL_CHECK_BYTES = 256 * 1024
+
 UV_URL = (
     f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-pc-windows-msvc.zip"
 )
@@ -69,21 +77,28 @@ def check_preconditions(*, need_network: bool) -> tuple[Issue, ...]:
     return tuple(issues)
 
 
-def _download(url: str, progress: ProgressFn) -> bytes:
+def _download(url: str, progress: ProgressFn, cancel=None) -> bytes:
     """Pobiera `url` w całości, meldując po każdej porcji.
 
     Bajty są tu DOKŁADNE, nie zgadywane: `Content-Length` podaje sumę, a
     czytanie porcjami daje licznik. To jedyne pobranie w programie, które
     wie o sobie wszystko — instalacja paczek musi tę wiedzę składać z linii uv.
+
+    `cancel` (cokolwiek z własnością `cancelled`) przerywa pobranie między
+    porcjami (B10). Timeout na poziomie pojedynczego `read` chroni przed
+    wisząca sesją: serwer, który nie odpowiada, nie ma prawa zablokować
+    zamknięcia okna na czas nieokreślony.
     """
     buffer = io.BytesIO()
     started = time.monotonic()
-    with urllib.request.urlopen(url, timeout=60) as response:
+    with urllib.request.urlopen(url, timeout=_DOWNLOAD_READ_TIMEOUT) as response:
         total = int(response.headers.get("Content-Length") or 0)
         read = 0
+        since_check = 0
         while chunk := response.read(64 * 1024):
             buffer.write(chunk)
             read += len(chunk)
+            since_check += len(chunk)
             elapsed = time.monotonic() - started
             speed = read / elapsed if elapsed > 0 else 0.0
             remaining = max(total - read, 0)
@@ -97,6 +112,10 @@ def _download(url: str, progress: ProgressFn) -> bytes:
                     eta_s=remaining / speed if speed > 0 and total else None,
                 )
             )
+            if cancel is not None and since_check >= _CANCEL_CHECK_BYTES:
+                since_check = 0
+                if cancel.cancelled:
+                    raise IssueError(Issue("build_cancelled", Severity.INFO))
     return buffer.getvalue()
 
 
@@ -124,8 +143,8 @@ def _atomic_write(dest: Path, data: bytes) -> None:
         raise
 
 
-def _download_and_extract_uv(url: str, dest: Path, progress: ProgressFn) -> None:
-    payload = _download(url, progress)
+def _download_and_extract_uv(url: str, dest: Path, progress: ProgressFn, cancel=None) -> None:
+    payload = _download(url, progress, cancel=cancel)
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         for name in archive.namelist():
             if name.endswith("uv.exe"):
@@ -136,12 +155,20 @@ def _download_and_extract_uv(url: str, dest: Path, progress: ProgressFn) -> None
     _atomic_write(dest, data)
 
 
-def ensure_uv(progress: ProgressFn) -> Path:
+def ensure_uv(progress: ProgressFn, cancel=None) -> Path:
+    """Zapewnia uv na dysku. `cancel` przerywa pobieranie (B10).
+
+    Anulowany token PRZED startem nie uruchamia pobierania — wcześniejsze
+    fazy mogły już ustawić token, a ściąganie 15 MB bez potrzeby to strata
+    czasu i łącza.
+    """
+    if cancel is not None and cancel.cancelled:
+        raise IssueError(Issue("build_cancelled", Severity.INFO))
     target = uv_path()
     if target.exists():
         return target
     try:
-        _download_and_extract_uv(UV_URL, target, progress)
+        _download_and_extract_uv(UV_URL, target, progress, cancel=cancel)
     except (urllib.error.URLError, OSError, zipfile.BadZipFile, FileNotFoundError) as exc:
         raise UvDownloadError(Issue("uv_download_failed", Severity.BLOCKER), exc) from exc
     return target
