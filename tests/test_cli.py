@@ -946,3 +946,30 @@ def test_failed_build_is_still_diagnosed_from_its_log(tmp_path, monkeypatch, stu
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
     assert "module_not_found" in [i.code for i in result.issues]
+
+
+# --- B06: rozstrzygnięte wersje w raporcie ---
+
+
+def test_resolved_versions_are_included_in_json_report(tmp_path, monkeypatch, stub_build):
+    """B06: raport JSON zawiera rozstrzygnięte wersje paczek."""
+    import json
+
+    monkeypatch.setattr(
+        service,
+        "create_build_env",
+        lambda source, packages, progress, **_kw: BuildEnv(
+            uv=Path("uv.exe"),
+            venv=Path("venv"),
+            python=Path("python.exe"),
+            resolved_versions=(("numpy", "1.26.4"), ("requests", "2.31.0")),
+        ),
+    )
+    root = _project(tmp_path, {"main.py": "print(1)"})
+    report = tmp_path / "report.json"
+
+    code = cli.main([str(root), "--report", str(report)])
+
+    assert code == 0
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["resolved_versions"] == {"numpy": "1.26.4", "requests": "2.31.0"}

@@ -178,6 +178,8 @@ def _build(
         return BuildResult(ok=False, issues=(syntax_issue,))
 
     result = backend.build(plan, env, scale.stage(ENV_PROGRESS_SHARE, 1.0), cancel)
+    # B06: utrwalenie rozstrzygniętych wersji w wyniku builda.
+    result = replace(result, resolved_versions=env.resolved_versions)
 
     if _was_cancelled(result):
         return result

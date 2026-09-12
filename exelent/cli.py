@@ -103,6 +103,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 {"code": i.code, "severity": i.severity.value, "data": dict(i.data)}
                 for i in result.issues
             ],
+            # B06: rozstrzygnięte wersje paczek — umożliwiają odtworzenie środowiska.
+            "resolved_versions": {name: version for name, version in result.resolved_versions},
         }
         try:
             args.report.write_text(
