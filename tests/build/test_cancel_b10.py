@@ -25,7 +25,6 @@ from exelent.models import (
 from exelent.runtime import noop_progress
 from exelent.runtime.bootstrap import ensure_uv
 
-
 # --- helpers ---
 
 
@@ -48,7 +47,7 @@ def _plan_with_inventory(tmp_path: Path, n_files: int = 5) -> BuildPlan:
     # dodaj entry do inwentarza
     import hashlib
 
-    eh = hashlib.sha256("print('ok')\n".encode()).hexdigest()
+    eh = hashlib.sha256(b"print('ok')\n").hexdigest()
     inventory.append(SourceEntry(rel_path="main.py", sha256=eh))
 
     return BuildPlan(
@@ -107,9 +106,8 @@ def test_cancel_during_materialize_stops_copying(tmp_path, monkeypatch):
             token.cancel()
         return original_copy(src, dst, **kwargs)
 
-    with patch("shutil.copy2", side_effect=tracking_copy):
-        with pytest.raises(IssueError) as exc_info:
-            materialize_workspace(plan, cancel=token)
+    with patch("shutil.copy2", side_effect=tracking_copy), pytest.raises(IssueError) as exc_info:
+        materialize_workspace(plan, cancel=token)
 
     assert exc_info.value.issue.code == "build_cancelled"
     # Nie skopiowaliśmy wszystkich 11 plików (10 modułów + main.py)
@@ -169,9 +167,9 @@ def test_cancel_after_copy_before_rename_cleans_staging(tmp_path):
 
 def test_precancelled_build_returns_immediately(tmp_path, monkeypatch):
     """Token anulowany PRZED startem nie uruchamia żadnej pracy (B10)."""
-    from exelent import cli
+    from exelent.build import service
 
-    monkeypatch.setattr(cli, "check_preconditions", lambda **_kw: ())
+    monkeypatch.setattr(service, "check_preconditions", lambda **_kw: ())
 
     root = tmp_path / "proj"
     root.mkdir()
@@ -180,12 +178,12 @@ def test_precancelled_build_returns_immediately(tmp_path, monkeypatch):
     def _should_not_run(plan, cancel=None):
         raise RuntimeError("nie powinno zostac wywolane")
 
-    monkeypatch.setattr(cli, "materialize_workspace", _should_not_run)
+    monkeypatch.setattr(service, "materialize_workspace", _should_not_run)
 
     token = CancelToken()
     token.cancel()
 
-    result = cli.execute_build(
+    result = service.execute_build(
         BuildPlan(
             root=root,
             entry=root / "main.py",

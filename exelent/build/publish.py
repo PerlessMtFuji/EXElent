@@ -102,11 +102,13 @@ def publish_artifact(
         _remove_quietly(staging)
         return None, (Issue("build_cancelled", Severity.INFO),)
 
-    # Kompletność: staging musi mieć dokładnie tyle plików i bajtów co źródło,
-    # a dla ONEDIR — mieć w środku plik EXE. Kopia obcięta w połowie (np. przez
-    # antywirusa albo brak miejsca, który nie rzucił wyjątkiem) nie może zostać
-    # sfinalizowana jako gotowy program.
-    if not _is_complete(source, staging, exe_name, is_onedir):
+    try:
+        complete = _is_complete(source, staging, exe_name, is_onedir)
+    except OSError:
+        _remove_quietly(staging)
+        return None, (Issue("publish_incomplete", Severity.BLOCKER, {"name": exe_name}),)
+
+    if not complete:
         _remove_quietly(staging)
         return None, (Issue("publish_incomplete", Severity.BLOCKER, {"name": exe_name}),)
 
@@ -119,9 +121,6 @@ def publish_artifact(
             staging.rename(target)
             return target, ()
         except FileExistsError:
-            # Ktoś (druga sesja, Eksplorator) zajął tę nazwę między naszym
-            # sprawdzeniem a zmianą nazwy. Bierzemy następną wolną, licząc od
-            # miejsca, w którym przegraliśmy wyścig.
             start_at = _next_index(target, exe_name, suffix) + 1
             continue
         except OSError as exc:
