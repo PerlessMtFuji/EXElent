@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from exelent import cli
+from exelent.build import service
 from exelent.models import (
     AppKind,
     BuildResult,
@@ -50,23 +51,20 @@ class _FakeBackend:
 @pytest.fixture
 def stub_build(monkeypatch, tmp_path):
     """Wycina z `run_build` wszystko, co dotyka sieci i dysku systemowego."""
-    monkeypatch.setattr(cli, "check_preconditions", lambda **_kw: ())
-    monkeypatch.setattr(cli, "materialize_workspace", lambda plan, cancel=None: tmp_path / "ws")
+    monkeypatch.setattr(service, "check_preconditions", lambda **_kw: ())
+    monkeypatch.setattr(service, "materialize_workspace", lambda plan, cancel=None: tmp_path / "ws")
     monkeypatch.setattr(
-        cli,
+        service,
         "create_build_env",
         lambda source, packages, progress, **_kw: BuildEnv(
             uv=Path("uv.exe"), venv=Path("venv"), python=Path("python.exe")
         ),
     )
-    # Walidacja docelowym interpreterem odpala podproces na prawdziwym
-    # Pythonie — tu `create_build_env` oddaje atrape `python.exe`, wiec
-    # zaslepiamy ja na "brak bledu". Jej wlasne testy zyja w test_validate.py.
-    monkeypatch.setattr(cli, "validate_target_syntax", lambda *_a, **_kw: None)
+    monkeypatch.setattr(service, "validate_target_syntax", lambda *_a, **_kw: None)
     backend = _FakeBackend
     backend.result = BuildResult(ok=True, artifact=tmp_path / "x.exe", size_bytes=1024)
     backend.seen = None
-    monkeypatch.setattr(cli, "PyInstallerBackend", backend)
+    monkeypatch.setattr(service, "PyInstallerBackend", backend)
     return backend
 
 
@@ -85,8 +83,8 @@ def test_uv_download_failure_becomes_an_issue_not_a_traceback(tmp_path, monkeypa
     def _boom(_progress, cancel=None):
         raise UvDownloadError(issue, OSError("brak polaczenia"))
 
-    monkeypatch.setattr(cli, "check_preconditions", lambda **_kw: ())
-    monkeypatch.setattr(cli, "materialize_workspace", lambda plan, cancel=None: tmp_path / "ws")
+    monkeypatch.setattr(service, "check_preconditions",lambda **_kw: ())
+    monkeypatch.setattr(service, "materialize_workspace",lambda plan, cancel=None: tmp_path / "ws")
     monkeypatch.setattr("exelent.runtime.env.ensure_uv", _boom)
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
@@ -104,7 +102,7 @@ def test_failed_required_package_stops_the_build(tmp_path, monkeypatch, stub_bui
     sukcesu. EXE bez wymaganej biblioteki padlby u odbiorcy."""
     root = _project(tmp_path, {"main.py": "import requests\nprint(1)"})
     monkeypatch.setattr(
-        cli,
+        service,
         "create_build_env",
         lambda source, packages, progress, **_kw: BuildEnv(
             uv=Path("uv.exe"),
@@ -136,13 +134,13 @@ def test_target_syntax_error_stops_before_the_backend(tmp_path, monkeypatch, stu
         Severity.BLOCKER,
         {"file": "main.py", "line": "1", "detail": "invalid syntax", "version": "3.12"},
     )
-    monkeypatch.setattr(cli, "validate_target_syntax", lambda *a, **kw: issue)
+    monkeypatch.setattr(service, "validate_target_syntax", lambda *a, **kw: issue)
 
     class _Exploding:
         def build(self, plan, env, progress, cancel):
             raise RuntimeError("bum")
 
-    monkeypatch.setattr(cli, "PyInstallerBackend", _Exploding)
+    monkeypatch.setattr(service, "PyInstallerBackend",_Exploding)
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
@@ -160,7 +158,7 @@ def test_target_python_version_from_the_plan_reaches_the_env(tmp_path, monkeypat
         seen["python_version"] = kwargs.get("python_version")
         return BuildEnv(uv=Path("uv.exe"), venv=Path("venv"), python=Path("python.exe"))
 
-    monkeypatch.setattr(cli, "create_build_env", fake_env)
+    monkeypatch.setattr(service, "create_build_env",fake_env)
     root = _project(tmp_path, {"main.py": "print(1)"})
     cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert seen["python_version"] == "3.12"
@@ -180,7 +178,7 @@ def test_required_package_failure_carries_analysis_warnings(tmp_path, monkeypatc
     """Zatrzymanie na wymaganej paczce nie moze zgubic ostrzezen z wczesniej
     (np. sekret w kodzie): wynik niesie i blokade, i wczesniejsze ostrzezenia."""
     monkeypatch.setattr(
-        cli,
+        service,
         "create_build_env",
         lambda source, packages, progress, **_kw: BuildEnv(
             uv=Path("uv.exe"),
@@ -278,7 +276,7 @@ def test_overrides_reach_the_plan(tmp_path, stub_build):
 def test_precondition_failure_short_circuits(tmp_path, monkeypatch, stub_build):
     root = _project(tmp_path, {"main.py": "print(1)"})
     monkeypatch.setattr(
-        cli, "check_preconditions", lambda **_kw: (Issue("no_network", Severity.BLOCKER),)
+        service, "check_preconditions", lambda **_kw: (Issue("no_network", Severity.BLOCKER),)
     )
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
     assert result.ok is False
@@ -354,7 +352,7 @@ def test_workspace_copy_failure_becomes_an_issue_not_a_traceback(tmp_path, monke
     def _boom(_plan, cancel=None):
         raise FileExistsError(17, "Cannot create a file when that file already exists")
 
-    monkeypatch.setattr(cli, "materialize_workspace", _boom)
+    monkeypatch.setattr(service, "materialize_workspace",_boom)
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
@@ -370,7 +368,7 @@ def test_a_locked_source_file_is_diagnosed_by_its_windows_error(tmp_path, monkey
     def _boom(_plan, cancel=None):
         raise PermissionError(13, "Access is denied", str(root / "main.py"), 32)
 
-    monkeypatch.setattr(cli, "materialize_workspace", _boom)
+    monkeypatch.setattr(service, "materialize_workspace",_boom)
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
@@ -385,7 +383,7 @@ def test_env_setup_failure_reaches_the_user_as_an_issue(tmp_path, monkeypatch, s
     def _boom(_source, _packages, _progress, **_kw):
         raise BuildEnvError(issue, RuntimeError("uv venv padlo"))
 
-    monkeypatch.setattr(cli, "create_build_env", _boom)
+    monkeypatch.setattr(service, "create_build_env",_boom)
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
@@ -402,7 +400,7 @@ def test_an_unexpected_backend_failure_is_reported_not_raised(tmp_path, monkeypa
         def build(self, plan, env, progress, cancel):
             raise RuntimeError("cos, czego nikt nie przewidzial")
 
-    monkeypatch.setattr(cli, "PyInstallerBackend", _Exploding)
+    monkeypatch.setattr(service, "PyInstallerBackend",_Exploding)
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
@@ -415,7 +413,7 @@ def test_required_package_failure_stops_before_the_backend_runs(tmp_path, monkey
     backend, ktory by tu wybuchl, nie jest w ogole wolany."""
     root = _project(tmp_path, {"main.py": "print(1)"})
     monkeypatch.setattr(
-        cli,
+        service,
         "create_build_env",
         lambda source, packages, progress, **_kw: BuildEnv(
             uv=Path("uv.exe"),
@@ -429,7 +427,7 @@ def test_required_package_failure_stops_before_the_backend_runs(tmp_path, monkey
         def build(self, plan, env, progress, cancel):
             raise RuntimeError("bum")
 
-    monkeypatch.setattr(cli, "PyInstallerBackend", _Exploding)
+    monkeypatch.setattr(service, "PyInstallerBackend", _Exploding)
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
@@ -503,7 +501,7 @@ def test_a_failing_precondition_probe_is_reported_not_raised(tmp_path, monkeypat
     def _boom(**_kw):
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(cli, "check_preconditions", _boom)
+    monkeypatch.setattr(service, "check_preconditions",_boom)
 
     result = cli.run_build(root, noop_progress, dest_dir=tmp_path / "out")
 
@@ -572,7 +570,7 @@ def test_the_log_path_survives_a_crash_after_the_log_was_written(tmp_path, monke
             log.write_text("PyInstaller: cokolwiek\n", encoding="utf-8")
             raise RuntimeError("bum juz po zapisaniu logu")
 
-    monkeypatch.setattr(cli, "PyInstallerBackend", _WritesLogThenExplodes)
+    monkeypatch.setattr(service, "PyInstallerBackend",_WritesLogThenExplodes)
 
     result = cli.run_build(root, noop_progress, exe_name="p", dest_dir=tmp_path / "out")
 
@@ -603,7 +601,7 @@ def test_a_log_from_a_previous_build_is_never_passed_off_as_this_one(
         def build(self, plan, env, progress, cancel):
             raise RuntimeError("bum przed zapisaniem czegokolwiek")
 
-    monkeypatch.setattr(cli, "PyInstallerBackend", _Exploding)
+    monkeypatch.setattr(service, "PyInstallerBackend",_Exploding)
 
     result = cli.run_build(root, noop_progress, exe_name="p", dest_dir=tmp_path / "out")
 
@@ -697,7 +695,7 @@ def test_a_precondition_failure_leaves_the_previous_log_alone(tmp_path, monkeypa
     previous.write_text("log poprzedniego przebiegu", encoding="utf-8")
 
     monkeypatch.setattr(
-        cli, "check_preconditions", lambda **_kw: (Issue("no_network", Severity.BLOCKER),)
+        service, "check_preconditions", lambda **_kw: (Issue("no_network", Severity.BLOCKER),)
     )
 
     result = cli.run_build(root, noop_progress, **overrides)
@@ -786,7 +784,7 @@ def test_a_precondition_failure_does_not_hand_over_the_previous_log(
     previous.write_text("log poprzedniej, zupelnie innej awarii", encoding="utf-8")
 
     monkeypatch.setattr(
-        cli, "check_preconditions", lambda **_kw: (Issue("no_network", Severity.BLOCKER),)
+        service, "check_preconditions", lambda **_kw: (Issue("no_network", Severity.BLOCKER),)
     )
 
     result = cli.run_build(root, noop_progress, **overrides)
@@ -822,7 +820,7 @@ def test_the_safety_net_survives_an_exception_with_a_non_text_filename(
 def _progress_through_run_build(tmp_path, monkeypatch, stub_build, env_steps, build_steps):
     """Zbiera wartosci postepu, ktore `run_build` wypuszcza na zewnatrz."""
     monkeypatch.setattr(
-        cli,
+        service,
         "create_build_env",
         lambda source, packages, progress, **_kw: (
             [progress(Progress(phase=phase, fraction=value)) for phase, value in env_steps],
@@ -836,7 +834,7 @@ def _progress_through_run_build(tmp_path, monkeypatch, stub_build, env_steps, bu
                 progress(Progress(phase=phase, fraction=value))
             return type(self).result
 
-    monkeypatch.setattr(cli, "PyInstallerBackend", _Reporting)
+    monkeypatch.setattr(service, "PyInstallerBackend",_Reporting)
 
     widziane: list[tuple[str, float]] = []
     cli.run_build(
@@ -871,7 +869,7 @@ def test_the_environment_stage_does_not_fill_the_whole_bar(tmp_path, monkeypatch
         env_steps=[("install_packages", 1.0)],
         build_steps=[],
     )
-    assert widziane == [("install_packages", cli.ENV_PROGRESS_SHARE)]
+    assert widziane == [("install_packages", service.ENV_PROGRESS_SHARE)]
 
 
 def test_the_finished_build_fills_the_bar(tmp_path, monkeypatch, stub_build):
@@ -909,7 +907,7 @@ def test_the_build_stage_starts_where_the_environment_finished(tmp_path, monkeyp
         env_steps=[("install_packages", 1.0)],
         build_steps=[("build_start", 0.2)],
     )
-    assert widziane[-1][1] > cli.ENV_PROGRESS_SHARE
+    assert widziane[-1][1] > service.ENV_PROGRESS_SHARE
 
 
 # --- odrocze minor M2 (Task 15): anulowanie to nie material na diagnoze ---

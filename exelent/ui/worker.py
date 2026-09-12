@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from PySide6.QtCore import QObject, QThread, Signal
 
 from exelent.build.backend import CancelToken
-from exelent.cli import execute_build
+from exelent.build.service import execute_build
 from exelent.models import BuildPlan, BuildResult, Issue, Severity
 
 # Ile czekamy na zamknięcie wątku po zakończeniu budowania. Wątek w tym

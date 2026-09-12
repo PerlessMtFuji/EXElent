@@ -19,7 +19,7 @@ from exelent.constants import APP_NAME
 from exelent.deps.sizes import estimate_exe_size
 from exelent.i18n import set_language, system_language
 from exelent.models import Issue, Severity
-from exelent.runtime.paths import clean_current_session
+from exelent.runtime.paths import clean_current_session, clean_stale_sessions, register_session
 from exelent.runtime.procs import kill_tree
 from exelent.settings import load_settings, save_settings
 from exelent.ui.analysis_worker import AnalysisWorker
@@ -272,6 +272,8 @@ class MainWindow(QMainWindow):
 
 
 def run_gui(argv: list[str]) -> int:
+    register_session()
+    clean_stale_sessions()
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     window = MainWindow()
