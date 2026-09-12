@@ -190,6 +190,7 @@ CATALOG: dict[str, str] = {
     "recursion_limit": "The build hit a very complex code structure and stopped analysing it.",
     "script_failed": "The program that was built did not start correctly.",
     "encoding_problem": "One of the files uses an unusual character encoding.",
+    "file_read_error": "Cannot read {file} — skipping it.",
     "unexpected_error": (
         "Something went wrong and I cannot name it ({error}). "
         "Attach the report to your issue — with it this can be fixed."
@@ -230,6 +231,7 @@ CATALOG: dict[str, str] = {
     "settings_language_system": "Same as system",
     # screen 1 - picking the folder
     "drop_headline": "Drag a folder or a file with your code here",
+    "drop_analyzing": "Analysing your code…",
     "drop_browse": "Choose…",
     "drop_recent": "Recent",
     # screen 2 - what I understood

@@ -164,6 +164,18 @@ class DropScreen(QWidget):
         if chosen is not None:
             self._choose(chosen)
 
+    def set_analyzing(self, analyzing: bool) -> None:
+        """B11: stan ładowania — pętla Qt obsługuje zdarzenia, a użytkownik
+        widzi, że analiza trwa, zamiast zamrożonego okna."""
+        if analyzing:
+            self.headline.setText(t("drop_analyzing"))
+            self.browse.setEnabled(False)
+            self.setAcceptDrops(False)
+        else:
+            self.headline.setText(t("drop_headline"))
+            self.browse.setEnabled(True)
+            self.setAcceptDrops(True)
+
     def _choose(self, path: Path) -> None:
         recent.remember(path)
         self.folder_chosen.emit(path)

@@ -15,7 +15,6 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QStackedWidget
 
-from exelent.analysis.project import analyze_project
 from exelent.constants import APP_NAME
 from exelent.deps.sizes import estimate_exe_size
 from exelent.i18n import set_language, system_language
@@ -23,6 +22,7 @@ from exelent.models import Issue, Severity
 from exelent.runtime.paths import clean_current_session
 from exelent.runtime.procs import kill_tree
 from exelent.settings import load_settings, save_settings
+from exelent.ui.analysis_worker import AnalysisWorker
 from exelent.ui.dialog_download import DownloadDialog, should_ask, should_ask_offline
 from exelent.ui.dialog_settings import SettingsDialog
 from exelent.ui.preflight import PreflightWorker
@@ -101,6 +101,11 @@ class MainWindow(QMainWindow):
         # ekranu wyniku.
         self._carried: tuple[Issue, ...] = ()
 
+        # B11: analiza w tle — pętla Qt nie zamraża się przy dużych projektach.
+        # Jeden worker na całe życie okna, jak BuildWorker.
+        self._analysis_worker = AnalysisWorker()
+        self._analysis_worker.finished.connect(self._on_analysis_done)
+
         # Rozmiar pobierania liczy sie w tle ekranu 2. Nigdy nie blokuje
         # budowania: pusty wynik znaczy tylko tyle, ze liczba sie nie policzyla.
         self.preflight = PreflightWorker()
@@ -143,14 +148,18 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
 
     def _on_folder_chosen(self, folder: Path) -> None:
-        """Analiza i przejście na ekran 2.
+        """B11: analiza w tle — pętla Qt nie zamraża się przy dużych projektach.
 
-        Analiza czyta AST plików z dysku, nie sieć, a skan ma twarde limity
-        (`MAX_SCAN_FILES`/`MAX_SCAN_BYTES`), więc mieści się w wątku głównym.
-        Katalog, którego nie da się przeczytać, nie jest awarią: analiza wraca
-        wtedy z blokadą, którą ekran 2 pokazuje zdaniem.
+        Ekran 1 pokazuje stan ładowania, a wynik przychodzi przez sygnał
+        `_on_analysis_done`. Jeśli użytkownik wybierze nowy folder w trakcie,
+        worker automatycznie odrzuci spóźniony wynik poprzedniego żądania.
         """
-        analysis = analyze_project(folder)
+        self.screen_drop.set_analyzing(True)
+        self._analysis_worker.start(folder)
+
+    def _on_analysis_done(self, analysis) -> None:
+        """Wynik analizy w tle — przejście na ekran 2."""
+        self.screen_drop.set_analyzing(False)
         self._carried = tuple(i for i in analysis.issues if i.severity is not Severity.BLOCKER)
         self.screen_review.load(analysis)
         self.preflight.start([d.package for d in analysis.dependencies if not d.optional])
@@ -200,7 +209,9 @@ class MainWindow(QMainWindow):
         """
         if self.worker.is_running():
             return
+        self._analysis_worker.stop()
         self.preflight.stop()
+        self.screen_drop.set_analyzing(False)
         self.screen_drop.refresh_recent()
         self.go_to(SCREEN_DROP)
 
@@ -242,10 +253,11 @@ class MainWindow(QMainWindow):
         gdzie tego pokazać: użytkownik zamyka okno i zostaje z procesem, który
         dalej siedzi w tle.
         """
+        stopped_analysis = self._analysis_worker.stop()
         stopped_preflight = self.preflight.stop()
         stopped_build = self.worker.shutdown()
         super().closeEvent(event)
-        if not (stopped_preflight and stopped_build):
+        if not (stopped_analysis and stopped_preflight and stopped_build):
             self.hard_exit()
             return
         # Grzeczne zamkniecie: watki wyszly, wiec zaden proces nie trzyma juz

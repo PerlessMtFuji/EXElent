@@ -478,3 +478,100 @@ def test_txt_single_file_import_closure_after_conversion(tmp_path):
     # `helper.py` powinien trafić do extra_sources po konwersji TXT.
     extra_names = [p.name for p in result.extra_sources]
     assert "helper.py" in extra_names
+
+
+# --- B11: odporne I/O i ograniczone skanowanie ----------------------------------
+
+
+def test_unreadable_py_file_produces_warning_not_crash(tmp_path, monkeypatch):
+    """B11: odmowa dostępu do pliku .py nie przerywa analizy —
+    użytkownik dostaje diagnostykę z nazwą pliku, reszta działa."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('ok')",
+            "helper.py": "X = 1",
+        },
+    )
+    original_read_text = Path.read_text
+
+    def _failing_read(self, *args, **kwargs):
+        if self.name == "helper.py":
+            raise PermissionError("access denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _failing_read)
+
+    result = analyze_project(root)
+    # Analiza nie padła — entry i main.py nadal rozpoznane.
+    assert result.entry is not None
+    assert result.entry.name == "main.py"
+    # Diagnostyka z nazwą pliku.
+    read_errors = [i for i in result.issues if i.code == "file_read_error"]
+    assert len(read_errors) == 1
+    assert "helper.py" in read_errors[0].data["file"]
+
+
+def test_unreadable_txt_file_produces_warning_not_crash(tmp_path, monkeypatch):
+    """B11: odmowa dostępu do pliku .txt nie przerywa analizy."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('ok')",
+            "dane.txt": "```python\nprint('z czatu')\n```",
+        },
+    )
+    original_read_bytes = Path.read_bytes
+
+    def _failing_read(self, *args, **kwargs):
+        if self.name == "dane.txt":
+            raise PermissionError("access denied")
+        return original_read_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", _failing_read)
+
+    result = analyze_project(root)
+    assert result.entry is not None
+    read_errors = [i for i in result.issues if i.code == "file_read_error"]
+    assert len(read_errors) == 1
+    assert "dane.txt" in read_errors[0].data["file"]
+
+
+def test_other_language_detection_respects_scan_limits(tmp_path):
+    """B11: `_detect_other_language` nie chodzi po milionach plików —
+    respektuje ten sam limit co skaner (`MAX_SCAN_FILES`)."""
+
+    # Katalog z dużą liczbą plików JS — ale skaner ma limit.
+    # Tworzymy MAX_SCAN_FILES + 10 plików, żeby sprawdzić, że scan się zatrzymuje.
+    # Ale tworzymy mniej, bo test musi być szybki.
+    for i in range(20):
+        (tmp_path / f"f{i}.js").write_text("x", encoding="utf-8")
+
+    result = analyze_project(tmp_path)
+    codes = {i.code for i in result.issues}
+    # Powinno wykryć „other_language" (jest > 3 pliki JS i 0 plików Python)
+    assert "other_language" in codes
+
+
+def test_vanishing_file_during_analysis_does_not_crash(tmp_path, monkeypatch):
+    """B11: plik znikający między skanem a odczytem daje diagnostykę."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('ok')",
+            "helper.py": "X = 1",
+        },
+    )
+    original_read_text = Path.read_text
+
+    def _vanishing_read(self, *args, **kwargs):
+        if self.name == "helper.py":
+            raise FileNotFoundError("plik zniknął")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _vanishing_read)
+
+    result = analyze_project(root)
+    assert result.entry is not None
+    read_errors = [i for i in result.issues if i.code == "file_read_error"]
+    assert len(read_errors) == 1

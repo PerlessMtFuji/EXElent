@@ -22,6 +22,7 @@ from exelent.analysis.entrypoint import (
 )
 from exelent.analysis.scanner import scan_directory, scan_single_file
 from exelent.analysis.textconv import NO_CODE, convert_text_to_python
+from exelent.constants import EXCLUDED_DIRS, MAX_SCAN_FILES
 from exelent.deps.resolve import resolve_dependencies
 from exelent.deps.sizes import LARGE_WARNING_MB, estimate_exe_size
 from exelent.models import Issue, OutputMode, ProjectAnalysis, ScanResult, Severity
@@ -29,8 +30,17 @@ from exelent.models import Issue, OutputMode, ProjectAnalysis, ScanResult, Sever
 OTHER_LANGUAGE_SUFFIXES = {".js", ".ts", ".java", ".cs", ".cpp", ".c", ".go", ".rb", ".php"}
 
 
-def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+def _read(path: Path) -> str | None:
+    """Czyta plik źródłowy. Zwraca `None` przy błędzie I/O (B11).
+
+    Odmowa dostępu, znikający plik i uszkodzone kodowanie NIE są powodem do
+    przerwania całej analizy: użytkownik ma zobaczyć diagnostykę z nazwą pliku,
+    a pozostałe pliki mają być nadal widoczne.
+    """
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
 
 
 def _module_name_collisions(py_files: tuple[Path, ...], root: Path) -> list[tuple[str, list[Path]]]:
@@ -70,14 +80,29 @@ def _detect_other_language(scan: ScanResult) -> str | None:
     szkoda, ktora zadanie 7 mialo usunac: pojedynczy dropniety plik nie moze
     uruchamiac skanu calego sasiedztwa. Sygnal jednoplikowy jest wiec wziety
     wylacznie z sufiksu dropnietego pliku, bez zadnego chodzenia po dysku.
+
+    B11: używamy `scan.root.walk()` z TYMI SAMYMI wykluczeniami i limitem co
+    skaner, zamiast nieograniczonego `rglob`. Bez tego projekt w folderze z
+    `node_modules` mógł chodzić po milionach plików.
     """
     if scan.single_file is not None:
         suffix = scan.single_file.suffix.lower()
         return suffix if suffix in OTHER_LANGUAGE_SUFFIXES else None
     counts: Counter[str] = Counter()
-    for path in scan.root.rglob("*"):
-        if path.suffix.lower() in OTHER_LANGUAGE_SUFFIXES:
-            counts[path.suffix.lower()] += 1
+    seen = 0
+    for dirpath, dirnames, filenames in scan.root.walk():
+        dirnames[:] = [
+            d for d in dirnames if d not in EXCLUDED_DIRS and not d.startswith(".")
+        ]
+        for name in filenames:
+            suffix = Path(name).suffix.lower()
+            if suffix in OTHER_LANGUAGE_SUFFIXES:
+                counts[suffix] += 1
+            seen += 1
+            if seen >= MAX_SCAN_FILES:
+                break
+        if seen >= MAX_SCAN_FILES:
+            break
     if not counts or scan.py_files:
         return None
     suffix, count = counts.most_common(1)[0]
@@ -101,7 +126,21 @@ def analyze_project(root: Path) -> ProjectAnalysis:
                 Issue("scan_truncated", Severity.WARNING, {"files": str(scan.file_count)})
             )
 
-    sources: dict[Path, str] = {p: _read(p) for p in scan.py_files}
+    # B11: pliki niedostępne (odmowa ACL, znikający plik) nie przerywają analizy.
+    # Użytkownik dostaje diagnostykę z nazwą pliku; pozostałe pliki działają.
+    sources: dict[Path, str] = {}
+    for p in scan.py_files:
+        text = _read(p)
+        if text is None:
+            issues.append(
+                Issue(
+                    "file_read_error",
+                    Severity.WARNING,
+                    {"file": p.relative_to(root).as_posix()},
+                )
+            )
+            continue
+        sources[p] = text
     converted: dict[str, str] = {}
     conversion_failures: list[dict[str, str]] = []
 
@@ -111,7 +150,18 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     taken: dict[str, Path] = {p: p for p in (_rel_key(root, s) for s in scan.py_files)}
 
     for txt in scan.text_candidates:
-        result = convert_text_to_python(txt.read_bytes())
+        try:
+            raw_bytes = txt.read_bytes()
+        except OSError:
+            issues.append(
+                Issue(
+                    "file_read_error",
+                    Severity.WARNING,
+                    {"file": txt.relative_to(root).as_posix()},
+                )
+            )
+            continue
+        result = convert_text_to_python(raw_bytes)
         if result.ok and result.code is not None:
             virtual = txt.with_suffix(".py")
             rel = virtual.relative_to(root).as_posix()
@@ -164,6 +214,8 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     # (build zglaszal "sukces"). Konwersje TXT sa juz sprawdzone przez
     # convert_text_to_python, wiec walidujemy tylko oryginalne pliki .py.
     for py in scan.py_files:
+        if py not in sources:
+            continue  # B11: plik nieodczytany — diagnostyka już dodana
         try:
             ast.parse(sources[py])
         except SyntaxError as exc:

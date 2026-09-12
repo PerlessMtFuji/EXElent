@@ -84,10 +84,16 @@ def test_the_first_screen_is_the_drop_screen(window):
     assert isinstance(window.stack.widget(0), DropScreen)
 
 
-def test_choosing_a_folder_moves_to_the_second_screen(window, tmp_path):
+def _choose_folder_and_wait(window, qtbot, folder):
+    """B11: analiza jest teraz asynchroniczna — czekamy na sygnał workera."""
+    with qtbot.waitSignal(window._analysis_worker.finished, timeout=10_000):
+        window.screen_drop.folder_chosen.emit(folder)
+
+
+def test_choosing_a_folder_moves_to_the_second_screen(window, tmp_path, qtbot):
     """Sygnal ekranu ma byc PODPIETY: bez tego upuszczenie folderu wyglada
     jak brak reakcji programu."""
-    window.screen_drop.folder_chosen.emit(tmp_path)
+    _choose_folder_and_wait(window, qtbot, tmp_path)
     assert window.stack.currentIndex() == SCREEN_REVIEW
 
 
@@ -95,18 +101,18 @@ def test_the_second_screen_is_the_review_screen(window):
     assert isinstance(window.stack.widget(SCREEN_REVIEW), ReviewScreen)
 
 
-def test_choosing_a_folder_shows_its_analysis(window, tmp_path):
+def test_choosing_a_folder_shows_its_analysis(window, tmp_path, qtbot):
     """Sama zmiana ekranu to za malo: bez wywolania analizy uzytkownik dostaje
     ekran 2 z poprzednim projektem albo z pustka."""
     (tmp_path / "main.py").write_text("print(1)", encoding="utf-8")
-    window.screen_drop.folder_chosen.emit(tmp_path)
+    _choose_folder_and_wait(window, qtbot, tmp_path)
     assert "main.py" in window.screen_review.row_entry.value_text()
 
 
-def test_an_unreadable_folder_does_not_crash_the_window(window, tmp_path):
+def test_an_unreadable_folder_does_not_crash_the_window(window, tmp_path, qtbot):
     """Katalog moze zniknac miedzy upuszczeniem a analiza. Rdzen wraca wtedy
     z blokada, wiec okno ma pokazac zdanie, a nie traceback."""
-    window.screen_drop.folder_chosen.emit(tmp_path / "nie-ma-takiego")
+    _choose_folder_and_wait(window, qtbot, tmp_path / "nie-ma-takiego")
     assert window.stack.currentIndex() == SCREEN_REVIEW
     assert window.screen_review.build_button.isEnabled() is False
     assert window.screen_review.warnings_label.text() != ""
@@ -253,7 +259,7 @@ def test_back_from_review_returns_to_the_drop_screen(qtbot, tmp_path):
 
     window = MainWindow()
     qtbot.addWidget(window)
-    window.screen_drop.folder_chosen.emit(project)
+    _choose_folder_and_wait(window, qtbot, project)
     assert window.stack.currentIndex() == SCREEN_REVIEW
 
     window.screen_review.back_button.click()
