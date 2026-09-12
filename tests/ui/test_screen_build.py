@@ -350,9 +350,7 @@ def test_run_button_launches_the_exe_inside_a_onedir(screen, monkeypatch, tmp_pa
     folder.mkdir()
     exe = folder / "Program.exe"
     exe.write_bytes(b"exe")
-    screen.on_finished(
-        BuildResult(ok=True, artifact=folder, executable_path=exe, size_bytes=2048)
-    )
+    screen.on_finished(BuildResult(ok=True, artifact=folder, executable_path=exe, size_bytes=2048))
     screen.run_button.click()
     assert uruchomione == [([str(exe)],)]
 
@@ -366,9 +364,7 @@ def test_a_onedir_result_opens_the_folder_and_selects_the_exe(screen, monkeypatc
     folder.mkdir()
     exe = folder / "Program.exe"
     exe.write_bytes(b"exe")
-    screen.on_finished(
-        BuildResult(ok=True, artifact=folder, executable_path=exe, size_bytes=2048)
-    )
+    screen.on_finished(BuildResult(ok=True, artifact=folder, executable_path=exe, size_bytes=2048))
     screen.open_folder_button.click()
     assert str(exe) in " ".join(wywolania[0][0])
 
@@ -541,7 +537,11 @@ def test_success_with_issues_shows_them(screen, tmp_path):
     sukcesie pakowania — sam przycisk „Uruchom" nie jest dowodem poprawności."""
     issues = (
         Issue("dependency_not_declared", Severity.WARNING, {"package": "requests"}),
-        Issue("size_estimate_large", Severity.WARNING, {"packages": "torch", "low": "200", "high": "600"}),
+        Issue(
+            "size_estimate_large",
+            Severity.WARNING,
+            {"packages": "torch", "low": "200", "high": "600"},
+        ),
     )
     screen.on_finished(
         BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048, issues=issues)
@@ -555,9 +555,7 @@ def test_success_with_issues_shows_them(screen, tmp_path):
 
 def test_success_without_issues_hides_the_label(screen, tmp_path):
     """Pusty blok nie powinien się pojawiać, gdy nie ma ostrzeżeń."""
-    screen.on_finished(
-        BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048)
-    )
+    screen.on_finished(BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048))
     assert _visible(screen.issues_label, screen) is False
 
 

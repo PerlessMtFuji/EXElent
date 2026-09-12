@@ -2,7 +2,7 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  test:
+  lint:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,4 +12,17 @@ jobs:
       - run: pip install -e .[dev]
       - run: ruff check .
       - run: ruff format --check .
+
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .[dev]
       - run: pytest -m "not slow" -v
+
+  self-build:
+    needs: [lint, test]
+    uses: ./.github/workflows/product.yml

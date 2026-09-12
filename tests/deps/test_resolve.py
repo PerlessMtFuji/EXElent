@@ -329,10 +329,10 @@ def test_poetry_path_dependency_is_skipped(tmp_path):
 def test_poetry_multiple_constraints_pick_matching_python(tmp_path):
     pp = _poetry(
         tmp_path,
-        'django = [\n'
+        "django = [\n"
         '    {version = "^4.0", python = ">=3.8"},\n'
         '    {version = "^3.0", python = "<3.8"},\n'
-        ']\n',
+        "]\n",
     )
     deps = resolve_dependencies(_s(""), set(), pyproject_path=pp)
     assert _names(deps) == {"django<5.0.0,>=4.0"}
@@ -535,12 +535,7 @@ def test_import_fallback_keeps_the_primary_required():
     """`try: import orjson / except ImportError: import simplejson` — przynajmniej
     jedna galaz musi byc zainstalowana. orjson (podstawowy) zostaje wymagany,
     simplejson jest opcjonalnym fallbackiem (A07)."""
-    code = (
-        "try:\n"
-        "    import orjson\n"
-        "except ImportError:\n"
-        "    import simplejson\n"
-    )
+    code = "try:\n    import orjson\nexcept ImportError:\n    import simplejson\n"
     deps = resolve_dependencies(_s(code), set())
     by_name = {d.package: d.optional for d in deps}
     assert by_name["orjson"] is False
@@ -609,9 +604,7 @@ def test_constraint_restricts_version_of_existing_requirement(tmp_path):
 def test_root_requirements_wins_over_nested(tmp_path):
     """B05: główny requirements.txt ma pierwszeństwo przed zagnieżdżonym."""
     (tmp_path / "examples").mkdir()
-    (tmp_path / "examples" / "requirements.txt").write_text(
-        "requests==1.0.0\n", encoding="utf-8"
-    )
+    (tmp_path / "examples" / "requirements.txt").write_text("requests==1.0.0\n", encoding="utf-8")
     (tmp_path / "requirements.txt").write_text("requests>=2.28\n", encoding="utf-8")
     (tmp_path / "main.py").write_text("import requests\n", encoding="utf-8")
 

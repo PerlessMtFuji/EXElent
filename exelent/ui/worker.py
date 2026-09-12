@@ -29,9 +29,7 @@ class _Job(QObject):
     progress = Signal(object)
     finished = Signal(object)
 
-    def __init__(
-        self, plan: BuildPlan, cancel: CancelToken, carried: Sequence[Issue] = ()
-    ) -> None:
+    def __init__(self, plan: BuildPlan, cancel: CancelToken, carried: Sequence[Issue] = ()) -> None:
         super().__init__()
         self._plan = plan
         self._cancel = cancel

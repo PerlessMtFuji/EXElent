@@ -516,9 +516,7 @@ def test_root_dunder_main_runs_as_main_and_exits_cleanly(tmp_path, shared_state)
             ),
         },
     )
-    result = run_build(
-        root, noop_progress, entry=root / "__main__.py", dest_dir=tmp_path / "out"
-    )
+    result = run_build(root, noop_progress, entry=root / "__main__.py", dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
     run = run_bounded([_exe_of(result)], timeout=180)
@@ -576,17 +574,13 @@ def test_nested_txt_module_is_converted_in_place_and_imported(tmp_path, shared_s
             "pkg/pomoc.txt": "WITAJ = 'TXT-Z-PAKIETU'\n",
         },
     )
-    result = run_build(
-        root, noop_progress, entry=root / "main.py", dest_dir=tmp_path / "out"
-    )
+    result = run_build(root, noop_progress, entry=root / "main.py", dest_dir=tmp_path / "out")
     assert result.ok, [i.code for i in result.issues]
 
     run = run_bounded([_exe_of(result)], timeout=180)
     assert "TXT-Z-PAKIETU" in run.stdout
     # Katalog zrodlowy nietkniety: konwersja zyje w kopii roboczej.
-    _assert_source_untouched(
-        root, {"main.py", "pkg", "pkg/__init__.py", "pkg/pomoc.txt"}
-    )
+    _assert_source_untouched(root, {"main.py", "pkg", "pkg/__init__.py", "pkg/pomoc.txt"})
 
 
 # --- A07: import pominiety w requirements.txt trafia do EXE mimo to ---
@@ -691,9 +685,7 @@ def test_manually_added_hidden_import_reaches_the_exe(tmp_path, shared_state):
             "pkg/plugin.py": "WARTOSC = 'MODUL-DOPISANY-RECZNIE'\n",
         },
     )
-    result = run_build(
-        root, noop_progress, dest_dir=tmp_path / "out", extra_modules=["pkg.plugin"]
-    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out", extra_modules=["pkg.plugin"])
     assert result.ok, [i.code for i in result.issues]
 
     run = run_bounded([_exe_of(result)], timeout=180)
@@ -781,9 +773,7 @@ def test_package_dunder_main_runs_as_module(tmp_path, shared_state):
     run = run_bounded([_exe_of(result)], timeout=180)
     assert "PKG-MAIN-OK 1.0" in run.stdout
     assert "NAME __main__" in run.stdout
-    _assert_source_untouched(
-        root, {"mypkg", "mypkg/__init__.py", "mypkg/__main__.py"}
-    )
+    _assert_source_untouched(root, {"mypkg", "mypkg/__init__.py", "mypkg/__main__.py"})
 
 
 def test_pyw_file_builds_as_windowed_and_runs(tmp_path, shared_state):
@@ -813,3 +803,218 @@ def test_pyw_file_builds_as_windowed_and_runs(tmp_path, shared_state):
     assert (exe.parent / "dowod.txt").read_text(encoding="utf-8") == "PYW-DZIALA"
     assert _pe_subsystem(exe) == SUBSYSTEM_GUI, "pyw powinno mieć podsystem GUI"
     _assert_source_untouched(root, {"main.pyw"})
+
+
+# --- B15 macierz regresji: importy -------------------------------------------
+
+
+def test_relative_import_inside_package(tmp_path, shared_state):
+    """B15/importy: import wzgledny `from . import helper` musi dzialac w EXE.
+    PyInstaller inaczej traktuje wzgledne importy niz CPython — ten test
+    dowodzi, ze launcher ustawia __package__ poprawnie."""
+    root = _project(
+        tmp_path,
+        "import-wzgledny",
+        {
+            "mypkg/__init__.py": "",
+            "mypkg/main.py": ("from . import helper\nprint('WZGLEDNY-OK', helper.ODPOWIEDZ)\n"),
+            "mypkg/helper.py": "ODPOWIEDZ = 42\n",
+        },
+    )
+    result = run_build(
+        root, noop_progress, entry=root / "mypkg" / "main.py", dest_dir=tmp_path / "out"
+    )
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([_exe_of(result)], timeout=180)
+    assert run.returncode == 0, run.stderr
+    assert "WZGLEDNY-OK 42" in run.stdout
+    _assert_source_untouched(
+        root, {"mypkg", "mypkg/__init__.py", "mypkg/main.py", "mypkg/helper.py"}
+    )
+
+
+# --- B15 macierz regresji: TXT ------------------------------------------------
+
+
+def test_utf16_txt_source_is_converted_and_built(tmp_path, shared_state):
+    """B15/TXT: plik TXT zapisany w UTF-16 (typowy zapis z Notatnika Windows
+    w starszych wersjach) musi byc poprawnie zdekodowany, skonwertowany i
+    zbudowany do dzialajacego EXE."""
+    root = tmp_path / "utf16-projekt"
+    root.mkdir()
+    (root / "program.txt").write_bytes("```python\nprint('UTF16-TXT-OK')\n```\n".encode("utf-16"))
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+    _assert_source_untouched(root, {"program.txt"})
+
+    run = run_bounded([_exe_of(result)], timeout=120)
+    assert run.returncode == 0, run.stderr
+    assert "UTF16-TXT-OK" in run.stdout
+
+
+# --- B15 macierz regresji: dane i zasoby --------------------------------------
+
+
+def test_logo_used_as_icon_is_still_readable_as_runtime_resource(tmp_path, shared_state):
+    """B15/dane: B07 naprawil problem, w ktorym wybor pliku jako ikony
+    aplikacji powodowal usuniecie go z danych runtime. Logo musi byc
+    dostepne dla programu ORAZ sluzyc jako ikona EXE."""
+    root = _project(
+        tmp_path,
+        "logo-ikona",
+        {
+            "main.py": (
+                "from pathlib import Path\n"
+                "dane = Path('logo.png').read_bytes()\n"
+                "print('LOGO-ROZMIAR', len(dane))\n"
+            ),
+            # Minimalny poprawny PNG (1x1 piksel, 8-bit RGBA).
+            "logo.png": "",
+        },
+    )
+    # Zapisz minimalny PNG binarnie.
+    _write_tiny_png(root / "logo.png")
+
+    result = run_build(root, noop_progress, icon=root / "logo.png", dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    exe = _exe_of(result)
+    run = run_bounded([exe], timeout=180, cwd=tmp_path)
+    assert run.returncode == 0, run.stderr
+    assert "LOGO-ROZMIAR" in run.stdout
+    rozmiar = int(run.stdout.split("LOGO-ROZMIAR")[1].strip())
+    assert rozmiar == (root / "logo.png").stat().st_size
+
+
+def _write_tiny_png(path: Path) -> None:
+    """Zapisuje minimalny poprawny PNG 1x1 RGBA."""
+    import struct
+    import zlib
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    raw_row = b"\x00\xff\x00\x00\xff"
+    idat = zlib.compress(raw_row)
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+    )
+
+
+def test_toml_and_html_resources_are_readable_in_exe(tmp_path, shared_state):
+    """B15/dane: B07 wymaga obslugi .toml, .html i wlasnych formatow.
+    Program czyta config.toml i templates/index.html — oba musza trafic
+    do paczki i byc dostepne w runtime."""
+    root = _project(
+        tmp_path,
+        "zasoby-toml-html",
+        {
+            "main.py": (
+                "from pathlib import Path\n"
+                "toml = Path('config.toml').read_text(encoding='utf-8')\n"
+                "html = Path('templates/index.html').read_text(encoding='utf-8')\n"
+                "print('TOML', 'klucz' in toml)\n"
+                "print('HTML', '<h1>' in html)\n"
+            ),
+            "config.toml": '[app]\nklucz = "wartosc"\n',
+            "templates/index.html": "<h1>Witaj</h1>\n",
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    exe = _exe_of(result)
+    run = run_bounded([exe], timeout=180, cwd=tmp_path)
+    assert run.returncode == 0, run.stderr
+    assert "TOML True" in run.stdout
+    assert "HTML True" in run.stdout
+
+
+# --- B15 macierz regresji: wymagania -----------------------------------------
+
+
+def test_root_requirements_wins_over_nested_in_real_build(tmp_path, shared_state):
+    """B15/wymagania: B05 naprawil pierwszenstwo manifestow. Glowny
+    requirements.txt musi wygrac nad zagniezdzonymi — tu dowodem jest
+    dzialajace EXE z poprawna wersja paczki."""
+    root = _project(
+        tmp_path,
+        "manifest-priorytet",
+        {
+            "requirements.txt": "six\n",
+            "examples/requirements.txt": "six==99.99.99\n",
+            "main.py": "import six\nprint('MANIFEST-OK', six.__name__)\n",
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([_exe_of(result)], timeout=180)
+    assert run.returncode == 0, run.stderr
+    assert "MANIFEST-OK six" in run.stdout
+    _assert_source_untouched(
+        root,
+        {"main.py", "requirements.txt", "examples", "examples/requirements.txt"},
+    )
+
+
+def test_dependency_conflict_blocks_build(tmp_path, shared_state):
+    """B15/wymagania: B06 wymaga, ze konflikt wersji blokuje build.
+    Dwa sprzeczne piny nie moga przejsc do PyInstallera."""
+    root = _project(
+        tmp_path,
+        "konflikt-dep",
+        {
+            "requirements.txt": "six==1.16.0\nsix==1.10.0\n",
+            "main.py": "import six\nprint(six.__name__)\n",
+        },
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "out")
+    assert not result.ok, "sprzeczne piny powinny zablokowac build"
+    codes = {i.code for i in result.issues}
+    assert "requirements_conflict" in codes, codes
+    assert result.artifact is None
+    assert result.log_path is None, "PyInstaller nie powinien się uruchomić"
+
+
+# --- B15 macierz regresji: odpornosc ------------------------------------------
+
+
+def test_polish_characters_in_project_path(tmp_path, shared_state):
+    """B15/odpornosc: sciezka z polskimi znakami nie moze zlamac builda.
+    Windows obsluguje Unicode w sciezkach, ale narzedzia builda (uv, PyInstaller)
+    potrafily sie na nich potknac."""
+    root = _project(
+        tmp_path,
+        "zażółć-gęślą",
+        {"main.py": "print('POLSKIE-ZNAKI-OK')\n"},
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "wyjście")
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([_exe_of(result)], timeout=120)
+    assert run.returncode == 0, run.stderr
+    assert "POLSKIE-ZNAKI-OK" in run.stdout
+
+
+def test_spaces_in_project_path(tmp_path, shared_state):
+    """B15/odpornosc: spacje w sciezce to klasyczny problem na Windows.
+    Kazdy program uzytkownika moze lezec w 'Moje Dokumenty'."""
+    root = _project(
+        tmp_path,
+        "Moje Dokumenty",
+        {"main.py": "print('SPACJE-OK')\n"},
+    )
+    result = run_build(root, noop_progress, dest_dir=tmp_path / "moj wynik")
+    assert result.ok, [i.code for i in result.issues]
+
+    run = run_bounded([_exe_of(result)], timeout=120)
+    assert run.returncode == 0, run.stderr
+    assert "SPACJE-OK" in run.stdout

@@ -317,10 +317,7 @@ def test_error_line_maps_through_the_second_of_several_fences():
     """Kilka bloków łączonych w jeden kod. Błąd w DRUGIM bloku ma wskazać jego
     linię w oryginale (tu 7), a nie przesunięcie liczone od pierwszego bloku —
     mapa jest budowana per-blok (A05)."""
-    raw = (
-        "Blok 1:\n```python\nimport sys\n```\n"
-        "teraz drugi:\n```python\ndef g(:\n```\n"
-    )
+    raw = "Blok 1:\n```python\nimport sys\n```\nteraz drugi:\n```python\ndef g(:\n```\n"
     result = convert_text_to_python(raw.encode())
     assert result.ok is False
     assert result.error_line == 7

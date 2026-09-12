@@ -266,9 +266,7 @@ class BuildScreen(QWidget):
         # B13: ostrzeżenia analizy i backendu widoczne RÓWNIEŻ po sukcesie.
         # Sam przycisk „Uruchom" nie jest dowodem poprawności aplikacji.
         if result.issues:
-            self.issues_label.setText(
-                "\n".join(describe(i) for i in result.issues)
-            )
+            self.issues_label.setText("\n".join(describe(i) for i in result.issues))
             self.issues_label.setVisible(True)
         self.antivirus_label.setVisible(True)
         self.open_folder_button.setVisible(True)
