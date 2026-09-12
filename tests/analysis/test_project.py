@@ -425,9 +425,7 @@ def test_src_layout_local_import_not_sent_to_pypi(tmp_path):
         {
             "src/demo/__init__.py": "",
             "src/demo/main.py": (
-                "from demo import helper\n"
-                "if __name__ == '__main__':\n"
-                "    print(helper.msg)\n"
+                "from demo import helper\nif __name__ == '__main__':\n    print(helper.msg)\n"
             ),
             "src/demo/helper.py": "msg = 'hello'\n",
         },
@@ -448,9 +446,7 @@ def test_dynamic_import_feeds_dependency_installation(tmp_path):
         tmp_path,
         {
             "main.py": (
-                "import importlib\n"
-                "img = importlib.import_module('PIL.Image')\n"
-                "print(img)\n"
+                "import importlib\nimg = importlib.import_module('PIL.Image')\nprint(img)\n"
             ),
         },
     )

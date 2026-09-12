@@ -1,0 +1,20 @@
+name: Packaged product
+on:
+  workflow_call:
+
+jobs:
+  product:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .[dev] pyinstaller==6.16.0
+      - name: Build EXElent.exe
+        run: python build_exelent.py
+      - name: Frozen validator, cold bootstrap and repeat build
+        env:
+          EXELENT_TEST_EXE: ${{ github.workspace }}\dist\EXElent.exe
+        run: pytest tests/test_product_smoke.py -v -m slow --basetemp=build/product-smoke --junitxml=build/product-smoke.xml

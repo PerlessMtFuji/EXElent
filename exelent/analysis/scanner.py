@@ -34,6 +34,9 @@ DATA_SUFFIXES = frozenset(
         ".ttf",
         ".otf",
         ".md",
+        ".toml",
+        ".html",
+        ".htm",
     }
 )
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".ico", ".bmp", ".gif"})
@@ -335,7 +338,9 @@ def scan_single_file(path: Path) -> ScanResult:
             pass
 
     extra, truncated = local_import_closure(
-        path, path.parent, initial_code=initial_code,
+        path,
+        path.parent,
+        initial_code=initial_code,
     )
     if py:
         py = (path, *extra)

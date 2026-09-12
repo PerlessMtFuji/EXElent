@@ -15,6 +15,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from exelent.build.service import execute_build
 from exelent.models import BuildPlan, BuildResult, OutputMode
 from exelent.runtime import noop_progress
@@ -154,6 +156,30 @@ def test_clean_stale_sessions_preserves_alive_session(tmp_path, monkeypatch):
 
     assert work.exists(), "katalog żywej sesji nie powinien być usunięty"
     assert (base / f".pid-{alive_sid}").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows uses process handles, not signals")
+def test_windows_pid_probe_never_sends_a_signal(monkeypatch):
+    from exelent.runtime import paths
+
+    def forbidden(*args):
+        pytest.fail("Sprawdzenie PID nie może wysyłać sygnału")
+
+    monkeypatch.setattr(os, "kill", forbidden)
+    assert paths._is_pid_alive(os.getpid())
+    assert not paths._is_pid_alive(999999999)
+
+
+def test_damaged_pid_record_does_not_authorize_cleanup(tmp_path, monkeypatch):
+    from exelent.runtime import paths
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    base = paths.state_dir() / "b"
+    work = base / "abc12345-damaged"
+    work.mkdir(parents=True)
+    (base / ".pid-damaged").write_text("not a pid", encoding="utf-8")
+    paths.clean_stale_sessions()
+    assert work.is_dir()
 
 
 def test_clean_stale_sessions_skips_current_session(tmp_path, monkeypatch):

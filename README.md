@@ -3,8 +3,9 @@
 **Turn a folder of Python code into a Windows program you can hand to anyone.**
 
 You point EXElent at a folder. It reads the code, works out how to start it,
-and produces a single `.exe` file. The person you give that file to just
-double-clicks it — they do not install Python, they do not open a terminal,
+and produces a Windows application. By default, the result is a folder:
+share the **whole folder**, including its libraries and data. The recipient
+double-clicks the `.exe` inside — they do not install Python or open a terminal,
 they do not have to know what any of this is.
 
 ![EXElent](docs/screenshot.png)
@@ -30,22 +31,12 @@ over email or chat, and EXElent handles it without you renaming anything.
 2. Download `EXElent.exe`.
 3. Double-click it. There is nothing to install.
 
-### Windows will probably warn you the first time
+### Windows and antivirus warnings
 
-You will likely see a blue **"Windows protected your PC"** box. This happens
-to every program that is not signed with a paid certificate, including this
-one. Click **More info**, then **Run anyway**.
-
-### Your antivirus may complain — about EXElent, or about what it makes
-
-Antivirus software is suspicious of programs that bundle a Python interpreter
-inside themselves, because some malware does the same thing. It is a guess
-based on shape, not a detection of anything harmful, and it is a well-known
-nuisance for every tool of this kind.
-
-If it happens, you can add the file to your antivirus exceptions. EXElent does
-not compress the programs it builds, specifically because compression makes
-those false alarms more likely.
+EXElent is unsigned. If Windows or your antivirus warns about a download,
+check where the file came from and what the alert says before running it.
+EXElent cannot establish that an alert is a false positive or that the input
+program is safe. Packaging succeeds independently of that assessment.
 
 ## What EXElent does to your folder
 
@@ -53,6 +44,40 @@ Nothing. It copies your code somewhere else and works on the copy, so the
 folder you point it at is exactly as you left it — no new files, no `build`
 or `dist` directories, nothing moved. The finished `.exe` is placed in a new
 folder next to your project, or on your Desktop.
+
+The build copies the plan's file inventory and checks content hashes. A changed
+or missing inventoried file blocks the build; analyze again after editing.
+Later builds use a free output name, keeping the previous application and its data.
+
+## Output, data and supported input
+
+The recommended **folder (ONEDIR)** mode keeps relative reads and writes next
+to the executable. Run it from a location where you have write permission.
+**Single file (ONEFILE)** is an explicit choice: relative writes also use the
+EXE directory, but bundled resources are extracted elsewhere. Programs that
+read bundled data through relative paths should use folder mode. Code that
+explicitly writes into an extraction directory can still lose those files.
+
+EXElent accepts Python scripts, `.pyw`, ordinary packages (including
+`__main__.py` and supported `src/` layouts), and Python code in TXT, including
+UTF-16. Correct Python is preserved before attempting text cleanup.
+Review ambiguous text conversions, the entry point and detected dependencies.
+Static analysis cannot discover every computed import, plugin or runtime path;
+manual module selection may be needed. Resource discovery uses recognized
+extensions, including images, JSON, TOML and HTML; arbitrary custom formats
+and resource selection still need further work.
+
+A successful build means **the application was packaged**, with any warnings
+still relevant. EXElent checks syntax with the target Python before packaging;
+it does not automatically run your program to verify its behavior. Test the
+result yourself before sharing it.
+
+## Network and cache
+
+Builds target Windows with Python 3.12. EXElent downloads uv, a managed Python
+and required packages. Subsequent builds can reuse downloaded files, although
+they create isolated build environments. The current preflight still requires
+access to PyPI; a fully offline build is not yet supported or guaranteed.
 
 ## Building it yourself
 
@@ -78,6 +103,17 @@ the window — it is a developer tool and speaks in error codes, not sentences:
 python -m exelent.cli <folder>
 ```
 
+The packaged application exposes the same adapter. Since it is a windowed
+executable, use a report file to receive the result (including warnings):
+
+```powershell
+$job = Start-Process .\EXElent.exe -ArgumentList '--cli "C:\My project" --report "C:\result.json"' -Wait -PassThru
+$job.ExitCode
+```
+
+The report parent directory must already exist. `artifact` identifies what to
+share, and `executable_path` identifies the program to run.
+
 To run the tests:
 
 ```
@@ -85,6 +121,18 @@ pytest -m "not slow"
 ```
 
 The tests marked `slow` build real `.exe` files and take minutes.
+
+```powershell
+pytest tests/test_golden_builds.py tests/test_local_resolver.py -m slow -v
+$env:EXELENT_TEST_EXE = (Resolve-Path dist/EXElent.exe).Path
+pytest tests/test_product_smoke.py -m slow -v --basetemp=build/product-smoke
+```
+
+The product smoke test uses fresh EXElent state, uv cache and managed Python
+directories, rejects invalid code through the frozen validator, then builds
+and runs a Python 3.12 program twice. Cache locations follow the
+[uv environment-variable contract](https://docs.astral.sh/uv/reference/environment/).
+This verifies controlled fixtures; it does not replace manual GUI review.
 
 ## When something goes wrong
 

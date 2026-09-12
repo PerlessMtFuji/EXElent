@@ -1,34 +1,28 @@
-name: Golden builds
-
-# UWAGA O `schedule` I `workflow_dispatch`: GitHub czyta te dwa wyzwalacze
-# WYLACZNIE z galezi domyslnej. Dopoki ten plik zyje na galezi funkcyjnej,
-# nocny przebieg po prostu nie istnieje — a przebieg, ktory nigdy nie
-# wystartowal, wyglada w interfejsie tak samo jak przebieg zielony. Zaden
-# zapis w tym pliku tego nie naprawi; naprawia to dopiero scalenie do
-# galezi domyslnej.
-#
-# Dlatego doszedl `pull_request` ograniczony sciezkami: dzieki niemu workflow
-# jest sprawdzony z galezi, ZANIM zacznie byc czyms, czemu ufamy po nocach.
-# Filtr sciezek odwzorowuje regule, ktora ten projekt stosuje lokalnie: golden
-# uruchamiamy wtedy, gdy zmienia sie sciezka builda.
+﻿name: Golden builds
 on:
+  workflow_call:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
   pull_request:
     paths:
       - "exelent/**"
-      - "tests/test_golden_builds.py"
-      - ".github/workflows/golden.yml"
+      - "tests/**"
+      - "build_exelent.py"
+      - "pyproject.toml"
+      - ".github/workflows/**"
 
 jobs:
   golden:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e .[dev]
-      - run: pytest tests/test_golden_builds.py -v -m slow
+      - run: pytest tests/test_golden_builds.py tests/test_local_resolver.py -v -m slow --basetemp=build/golden --junitxml=build/golden.xml
+
+  self-build-as-tool:
+    uses: ./.github/workflows/product.yml

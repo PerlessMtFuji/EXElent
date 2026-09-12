@@ -196,9 +196,7 @@ def _dep_from_requirement_line(line: str) -> Dependency | None:
     return Dependency(import_name=req.name, package=spec, heavy=is_heavy(req.name))
 
 
-def _apply_constraints(
-    deps: dict[str, Dependency], constraint_lines: list[str]
-) -> None:
+def _apply_constraints(deps: dict[str, Dependency], constraint_lines: list[str]) -> None:
     """Nakłada ograniczenia wersji na istniejące wymagania (B05).
 
     Constraint ogranicza wersję paczki, która JUŻ jest wymagana — sam nie
@@ -627,9 +625,7 @@ def resolve_dependencies(
     manifest_deps: tuple[Dependency, ...] | None = None
     if requirements_path is not None:
         constraints: list[str] = []
-        req_lines = _manifest_lines(
-            requirements_path, set(), [], 0, sink, constraints=constraints
-        )
+        req_lines = _manifest_lines(requirements_path, set(), [], 0, sink, constraints=constraints)
         manifest_deps = _deps_from_manifest(req_lines, constraints or None)
     elif requirements_text is not None:
         manifest_deps = _deps_from_manifest(_text_lines(requirements_text))

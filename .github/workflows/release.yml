@@ -6,6 +6,7 @@ on:
 jobs:
   release:
     runs-on: windows-latest
+    timeout-minutes: 120
     permissions:
       contents: write
     steps:
@@ -18,13 +19,21 @@ jobs:
       # którą program instaluje użytkownikowi — pilnuje tego test w
       # `tests/test_self_build.py`.
       - run: pip install -e .[dev] pyinstaller==6.16.0
+      - run: ruff check .
+      - run: ruff format --check .
       - run: pytest -m "not slow"
+      - run: pytest tests/test_golden_builds.py tests/test_local_resolver.py -v -m slow --basetemp=build/golden --junitxml=build/golden.xml
       - run: python build_exelent.py
+      - name: Verify the exact packaged product before release
+        env:
+          EXELENT_TEST_EXE: ${{ github.workspace }}\dist\EXElent.exe
+        run: pytest tests/test_product_smoke.py -v -m slow --basetemp=build/product-smoke --junitxml=build/product-smoke.xml
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/EXElent.exe
           body: |
             Pobierz EXElent.exe i uruchom — nic nie trzeba instalować.
 
-            Windows może pokazać ostrzeżenie SmartScreen, bo plik nie jest
-            podpisany certyfikatem. Kliknij "Więcej informacji" → "Uruchom mimo to".
+            Plik nie jest podpisany certyfikatem. Jeśli SmartScreen lub antywirus
+            zgłosi ostrzeżenie, sprawdź źródło pliku i treść alertu przed
+            uruchomieniem. Samo pakowanie nie potwierdza bezpieczeństwa programu.

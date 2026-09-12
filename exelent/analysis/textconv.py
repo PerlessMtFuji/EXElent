@@ -44,7 +44,7 @@ _FENCE_LABEL = re.compile(r"^[ \t]*(?:python3?|py)[ \t]*\n", re.IGNORECASE)
 # Numer linii: opcjonalne wciecie, cyfry, opcjonalny separator, a potem
 # odstep i kod. Grupa 1 to WLASNIE ten pelny odstep — z jego najmniejszej
 # szerokosci w calym pliku wyliczamy separator, zeby nie zjesc wciecia kodu
-#. Bez chciwego `[ \t]*` przed separatorem, inaczej odstep uciekalby do
+# . Bez chciwego `[ \t]*` przed separatorem, inaczej odstep uciekalby do
 # niego i grupa mierzylaby zawsze 1.
 _LINE_NUMBER = re.compile(r"^[ \t]*\d+[:|.]?([ \t]+)(?=\S)")
 _PROMPT = re.compile(r"^(?:>>>|\.\.\.) ?")
@@ -176,7 +176,8 @@ def _mixes_tabs_and_spaces(text: str) -> bool:
 # f-stringow. FSTRING_MIDDLE istnieje od 3.12 — chronimy je, bo `{wyrazenie}`
 # wewnatrz f-stringa to zwykly kod (osobne tokeny) i tam podmiana jest w porzadku.
 _PROTECTED_TOKENS = frozenset(
-    {tokenize.STRING} | ({tokenize.FSTRING_MIDDLE} if hasattr(tokenize, "FSTRING_MIDDLE") else set())
+    {tokenize.STRING}
+    | ({tokenize.FSTRING_MIDDLE} if hasattr(tokenize, "FSTRING_MIDDLE") else set())
 )
 
 
@@ -227,7 +228,9 @@ def _compiles(text: str) -> bool:
     return True
 
 
-def _replace_outside(text: str, spans: list[tuple[int, int]], chars: frozenset[str]) -> tuple[str, bool]:
+def _replace_outside(
+    text: str, spans: list[tuple[int, int]], chars: frozenset[str]
+) -> tuple[str, bool]:
     """Podmienia znaki z `chars` stojace POZA trescia rozpoznanych literalow."""
     out: list[str] = []
     changed = False
@@ -304,7 +307,9 @@ def _map_error_line(origins: list[int], lineno: int | None) -> int | None:
     return lineno
 
 
-def _fail(encoding: str, steps: list[str], exc: SyntaxError, origins: list[int]) -> ConversionResult:
+def _fail(
+    encoding: str, steps: list[str], exc: SyntaxError, origins: list[int]
+) -> ConversionResult:
     return ConversionResult(
         ok=False,
         encoding=encoding,
@@ -360,9 +365,7 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
     # 2. Pusto po zdjeciu otoczki to nie program — osobny komunikat od bledu
     #    skladni ("wklej program", nie "popraw linie X").
     if not text.strip():
-        return ConversionResult(
-            ok=False, encoding=encoding, steps=tuple(steps), error_text=NO_CODE
-        )
+        return ConversionResult(ok=False, encoding=encoding, steps=tuple(steps), error_text=NO_CODE)
 
     # 3. Normalizacja WCIEC: taby -> spacje tylko we wcieciu, gdy mieszaja sie
     #    z spacjami. Nie dotyka tabow wewnatrz napisow.

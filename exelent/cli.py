@@ -7,6 +7,7 @@ wejściem konsolowym, które składa plan z analizy i woła wspólną usługę.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -78,10 +79,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--name", dest="exe_name", help="nazwa pliku wynikowego")
     parser.add_argument("--icon", type=Path, help="plik ikony (.png, .jpg lub .ico)")
     parser.add_argument("--out", dest="dest_dir", type=Path, help="katalog docelowy")
+    parser.add_argument("--report", type=Path, help="zapisz wynik i uwagi jako JSON")
     args = parser.parse_args(argv)
 
-    overrides = {k: v for k, v in vars(args).items() if k != "directory" and v is not None}
+    overrides = {
+        k: v for k, v in vars(args).items() if k not in {"directory", "report"} and v is not None
+    }
     result = run_build(args.directory, **overrides)
+
+    if args.report is not None:
+        payload = {
+            "ok": result.ok,
+            "artifact": str(result.artifact) if result.artifact else None,
+            "executable_path": str(result.executable_path) if result.executable_path else None,
+            "size_bytes": result.size_bytes,
+            "log_path": str(result.log_path) if result.log_path else None,
+            "issues": [
+                {"code": i.code, "severity": i.severity.value, "data": dict(i.data)}
+                for i in result.issues
+            ],
+        }
+        try:
+            args.report.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError as exc:
+            print(f"Nie mozna zapisac raportu: {exc}", file=sys.stderr)
+            return 1
 
     if result.ok and result.artifact:
         print(f"\nGotowe: {result.artifact} ({result.size_bytes / 1024**2:.1f} MB)")

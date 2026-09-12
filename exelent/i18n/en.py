@@ -89,7 +89,7 @@ CATALOG: dict[str, str] = {
         "it was included so the program works."
     ),
     "module_name_collision": (
-        "Two files share the module name \"{module}\" in different folders ({files}). "
+        'Two files share the module name "{module}" in different folders ({files}). '
         "One would hide the other at runtime — rename one or keep only the one you need."
     ),
     # environment
@@ -110,8 +110,8 @@ CATALOG: dict[str, str] = {
         "If the next build behaves oddly, restart your computer."
     ),
     "artifact_vanished": (
-        "The finished file {name} disappeared during the build. This is usually antivirus "
-        "software — add an exception and try again."
+        "The finished file {name} disappeared during the build. Check the output folder "
+        "and your security software's protection history to find the cause."
     ),
     "fence_label_removed": (
         "The first line of {file} was a stray label from a chat window — I removed it "
@@ -153,8 +153,8 @@ CATALOG: dict[str, str] = {
         "fine. Try again; if it keeps happening, please report it. Details: {detail}"
     ),
     "antivirus_blocked": (
-        "Antivirus software blocked writing the file. "
-        "Add the EXElent folder to its exceptions and try again."
+        "Writing the file was blocked. Check your antivirus protection history "
+        "and the alert details before trying again."
     ),
     "cloud_file_unavailable": (
         "The file {file} is kept in the cloud and is not on this computer. Open it once in "
@@ -279,7 +279,7 @@ CATALOG: dict[str, str] = {
         "I do not recognise this error. Save a report or send it in — it will help fix EXElent."
     ),
     "antivirus_note": (
-        "If your antivirus flags this file as suspicious, it is a false alarm typical of "
-        "programs built this way. You can add the file to its exceptions."
+        "If your antivirus raises an alert, check the program's source and the alert details. "
+        "EXElent cannot confirm that the program is safe or that the alert is a false positive."
     ),
 }

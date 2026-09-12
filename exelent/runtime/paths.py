@@ -84,6 +84,28 @@ def _unregister_session() -> None:
 
 def _is_pid_alive(pid: int) -> bool:
     """Czy proces o podanym PID żyje (Windows + POSIX)."""
+    if pid <= 0 or pid > 0xFFFFFFFF:
+        return True  # Uszkodzony zapis nie dowodzi, że sesję można usunąć.
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel.CloseHandle.restype = wintypes.BOOL
+        # SYNCHRONIZE: odczyt stanu bez prawa kończenia procesu.
+        handle = kernel.OpenProcess(0x00100000, False, pid)
+        if not handle:
+            return ctypes.get_last_error() != 87  # ERROR_INVALID_PARAMETER: PID nie istnieje.
+        try:
+            # WAIT_OBJECT_0 oznacza zakończenie. Timeout lub awaria -> zachowaj sesję.
+            return kernel.WaitForSingleObject(handle, 0) != 0
+        finally:
+            kernel.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -134,7 +156,7 @@ def clean_stale_sessions() -> None:
     if not base.exists():
         return
     for pid_file in base.glob(".pid-*"):
-        sid = pid_file.name[len(".pid-"):]
+        sid = pid_file.name[len(".pid-") :]
         if sid == _SESSION_ID:
             continue
         try:

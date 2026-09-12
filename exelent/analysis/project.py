@@ -91,9 +91,7 @@ def _detect_other_language(scan: ScanResult) -> str | None:
     counts: Counter[str] = Counter()
     seen = 0
     for dirpath, dirnames, filenames in scan.root.walk():
-        dirnames[:] = [
-            d for d in dirnames if d not in EXCLUDED_DIRS and not d.startswith(".")
-        ]
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.startswith(".")]
         for name in filenames:
             suffix = Path(name).suffix.lower()
             if suffix in OTHER_LANGUAGE_SUFFIXES:

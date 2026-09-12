@@ -6,7 +6,6 @@ Worker musi:
   - przeżywać wyjątek w analizie (np. brak katalogu).
 """
 
-
 from exelent.ui.analysis_worker import AnalysisWorker
 
 

@@ -80,8 +80,7 @@ CATALOG: dict[str, str] = {
         "bibliotek może być niepełna."
     ),
     "requirements_cycle": (
-        "Pliki wymagań wskazują na siebie w kółko (przez {file}); powtórzenie zostało "
-        "pominięte."
+        "Pliki wymagań wskazują na siebie w kółko (przez {file}); powtórzenie zostało pominięte."
     ),
     "pyproject_unreadable": (
         "Nie udało się odczytać {file}, więc zadeklarowane w nim biblioteki zostały "
@@ -119,8 +118,8 @@ CATALOG: dict[str, str] = {
         "budowanie zachowa się dziwnie, uruchom komputer ponownie."
     ),
     "artifact_vanished": (
-        "Gotowy plik {name} zniknął w trakcie budowania. Najczęściej robi to program "
-        "antywirusowy — dodaj wyjątek i spróbuj ponownie."
+        "Gotowy plik {name} zniknął w trakcie budowania. Sprawdź folder wynikowy "
+        "i historię ochrony systemu, aby ustalić przyczynę."
     ),
     "fence_label_removed": (
         "W pliku {file} pierwsza linia to sama etykieta z okna czatu — usunalem ja, "
@@ -162,8 +161,8 @@ CATALOG: dict[str, str] = {
         "Spróbuj ponownie; jeśli się powtarza, zgłoś to. Szczegóły: {detail}"
     ),
     "antivirus_blocked": (
-        "Program antywirusowy zablokował zapis pliku. "
-        "Dodaj folder EXElent do wyjątków i spróbuj ponownie."
+        "Zapis pliku został zablokowany. Sprawdź historię ochrony programu "
+        "antywirusowego i treść alertu przed ponowną próbą."
     ),
     "cloud_file_unavailable": (
         "Plik {file} jest trzymany w chmurze i nie ma go na tym komputerze. Otwórz go raz "
@@ -255,9 +254,7 @@ CATALOG: dict[str, str] = {
     "review_icon_filter": "Obrazy (*.png *.jpg *.jpeg *.ico)",
     "review_deps_title": "Potrzebne dodatki — zostaną pobrane automatycznie",
     "review_extra_modules": "Brakuje modułu? Dopisz go tutaj",
-    "review_extra_modules_placeholder": (
-        "np. moja_wtyczka, pakiet.podmoduł — oddziel przecinkami"
-    ),
+    "review_extra_modules_placeholder": ("np. moja_wtyczka, pakiet.podmoduł — oddziel przecinkami"),
     "single_file_extra": "Dołączam też: {files}",
     "review_mode": "Postać wyniku",
     "review_recommended_suffix": "(zalecane)",
@@ -292,7 +289,7 @@ CATALOG: dict[str, str] = {
         "Nie rozpoznaję tego błędu. Zapisz raport albo zgłoś go — pomożesz naprawić EXElent."
     ),
     "antivirus_note": (
-        "Jeśli program antywirusowy oznaczy ten plik jako podejrzany, to fałszywy alarm "
-        "typowy dla programów tworzonych w ten sposób. Możesz dodać plik do wyjątków."
+        "Jeśli antywirus zgłosi ostrzeżenie, sprawdź źródło programu i treść alertu. "
+        "EXElent nie potwierdza bezpieczeństwa programu ani tego, że alarm jest fałszywy."
     ),
 }
