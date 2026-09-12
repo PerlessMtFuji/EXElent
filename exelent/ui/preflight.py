@@ -85,7 +85,7 @@ class PreflightWorker(QObject):
         # Wersja DOCELOWEGO Pythona, nie sciezka do `preflight-venv`, ktorego
         # nikt nie tworzyl: --dry-run rozwiazuje wersje kol dla wlasciwego
         # interpretera (te sama, ktorej uzyje build), gdy jest juz w cache uv;
-        # bez cache uv i tak degradujemy do pustego planu (A11).
+        # bez cache uv i tak degradujemy do pustego planu.
         return resolve_download_plan(
             uv=uv, python=TARGET_PYTHON, packages=packages, cancel=cancel
         )

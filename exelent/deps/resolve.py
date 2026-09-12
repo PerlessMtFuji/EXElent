@@ -21,7 +21,7 @@ _DIRECT_REF_PREFIXES = ("git+", "hg+", "svn+", "bzr+")
 _DIRECT_REF_SUFFIXES = (".whl", ".tar.gz", ".zip")
 
 # Środowisko markerów DOCELOWEGO builda: zawsze Windows + Python 3.12, bo taki
-# EXE powstaje — a nie interpreter, na którym akurat działa EXElent (A07).
+# EXE powstaje — a nie interpreter, na którym akurat działa EXElent.
 # `pkg; sys_platform == "darwin"` ma więc NIE instalować się na Windowsie.
 _TARGET_MARKER_ENV = {
     "os_name": "nt",
@@ -72,7 +72,7 @@ def _manifest_lines(
     """Linie wymagań z pliku, z rozwinięciem `-r`/`-c` względem jego katalogu.
 
     Cykl i brakujący plik nie wywalają analizy (best-effort), ale zostawiają
-    ślad w `issues` (A07): milcząco pominięty `-r` znaczy niekompletną listę
+    ślad w `issues`: milcząco pominięty `-r` znaczy niekompletną listę
     zależności, o czym użytkownik musi wiedzieć. `stack` to bieżąca ścieżka
     zejścia — cykl to powrót do pliku, który JEST na tej ścieżce; ten sam plik
     dołączony dwiema różnymi gałęziami (diament) to nie cykl, tylko dedup.
@@ -262,7 +262,7 @@ def _deps_from_manifest(
     return tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
 
 
-# --- Poetry [tool.poetry.dependencies] -> PEP 508 (A07) --------------------
+# --- Poetry [tool.poetry.dependencies] -> PEP 508 --------------------
 #
 # Poetry trzyma zależności jako TABELĘ (nazwa -> ograniczenie), z własną
 # składnią wersji (`^`, `~`) i specjalnym kluczem `python`. Zamiast dublować
@@ -414,7 +414,7 @@ def _handles_import_error(handler: ast.ExceptHandler) -> bool:
     """Czy ten `except` łapie WŁAŚNIE brak importu.
 
     Tylko `ImportError`/`ModuleNotFoundError` — nie dowolny wyjątek kończący się
-    na `Error`. `try: import x except ValueError` nie czyni `x` opcjonalnym (A07).
+    na `Error`. `try: import x except ValueError` nie czyni `x` opcjonalnym.
     """
     node = handler.type
     if isinstance(node, ast.Name):
@@ -438,7 +438,7 @@ def _import_lines_in(nodes: list[ast.stmt]) -> set[int]:
 def _optional_import_lines(tree: ast.AST) -> set[int]:
     """Linie importów, które są OPCJONALNE (nie muszą być zainstalowane).
 
-    Rozbicie gałęzi try/except osobno (A07): przy `try: import orjson / except
+    Rozbicie gałęzi try/except osobno: przy `try: import orjson / except
     ImportError: import simplejson` gałąź `try` jest PODSTAWOWA (instalujemy ją,
     żeby przynajmniej jedna działała), a gałąź `except` to fallback (opcjonalny).
     Gdy `except` nie ma własnego importu (`numpy = None`), sam import z `try`
@@ -519,7 +519,7 @@ def _supplement_with_detected(
     issues: list[Issue],
 ) -> tuple[Dependency, ...]:
     """Manifest jest autorytatywny co do WERSJI, ale wykryte importy spoza
-    niego dopisujemy z widocznym śladem (A07).
+    niego dopisujemy z widocznym śladem.
 
     Kod dla laika generuje AI, które potrafi pominąć pakiet w `requirements`
     albo zostawić puste `dependencies = []` z samego scaffoldingu — cichy brak
@@ -551,7 +551,7 @@ def resolve_extra_modules(
 ) -> tuple[tuple[str, ...], tuple[Dependency, ...]]:
     """Moduły dopisane RĘCZNIE przez użytkownika, których statyczny skan nie mógł
     zobaczyć (import dynamiczny, wtyczka, `importlib`) -> (ukryte importy,
-    zależności do instalacji) (A07).
+    zależności do instalacji).
 
     Każdy wpis pakujemy DOSŁOWNIE jako ukryty import PyInstallera — nazwa z
     kropką (`pkg.plugins.foo`) zostaje w całości, bo to właśnie submoduł, którego
@@ -621,7 +621,7 @@ def resolve_dependencies(
     # dawni wołający działali bez zmian.
     sink = issues if issues is not None else []
     # Manifest bije zgadywanie WERSJI z importów. Pierwszeństwo jest
-    # deterministyczne, nie zależy od kolejności skanowania (A07):
+    # deterministyczne, nie zależy od kolejności skanowania:
     # requirements.txt (konkretna lista instalacyjna) przed pyproject.toml
     # (deklaracja abstrakcyjna). `None` = brak autorytatywnego manifestu.
     manifest_deps: tuple[Dependency, ...] | None = None

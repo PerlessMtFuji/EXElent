@@ -74,7 +74,7 @@ CATALOG: dict[str, str] = {
         "Gotowy program zajmie około {low}–{high} MB, a budowanie potrwa dłużej niż zwykle. "
         "Najwięcej miejsca zajmą: {packages}."
     ),
-    # manifesty zależności (A07)
+    # manifesty zależności
     "requirements_missing": (
         "Lista wymagań wskazuje na plik {file}, którego nie ma — lista dodatkowych "
         "bibliotek może być niepełna."

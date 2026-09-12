@@ -144,7 +144,7 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
     for name, code in plan.converted:
         # `name` to sciezka WZGLEDNA (np. `pkg/help.py`), wiec odtwarzamy
         # katalog docelowy — inaczej konwersja z podkatalogu ladowala w
-        # korzeniu, a dwie o tej samej nazwie nadpisywaly sie (A06).
+        # korzeniu, a dwie o tej samej nazwie nadpisywały się.
         target = workspace / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(code, encoding="utf-8")

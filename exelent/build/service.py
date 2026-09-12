@@ -22,6 +22,7 @@ from exelent.planning import is_cloud_synced
 from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.bootstrap import check_preconditions
 from exelent.runtime.env import create_build_env
+from exelent.runtime.paths import next_build_seq
 
 # Ile paska postępu zajmuje przygotowanie środowiska (reszta — PyInstaller).
 ENV_PROGRESS_SHARE = 0.3
@@ -75,11 +76,6 @@ def _existing_log(plan: BuildPlan | None) -> Path | None:
     return None
 
 
-def _clear_stale_log(plan: BuildPlan) -> None:
-    with suppress(OSError):
-        log_path_for(plan).unlink(missing_ok=True)
-
-
 def _was_cancelled(result: BuildResult) -> bool:
     return any(issue.code == "build_cancelled" for issue in result.issues)
 
@@ -101,6 +97,7 @@ def execute_build(
     ``carried`` to ostrzeżenia z wcześniejszych etapów (analiza).
     """
     cancel = cancel or CancelToken()
+    next_build_seq()
     carried_issues: list[Issue] = list(carried)
     backend = backend or PyInstallerBackend()
     log_owner: BuildPlan | None = None
@@ -117,7 +114,6 @@ def execute_build(
         if preconditions:
             return _fail(preconditions)
 
-        _clear_stale_log(plan)
         log_owner = plan
 
         result = _build(plan, carried_issues, progress, cancel, backend)

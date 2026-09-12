@@ -85,24 +85,18 @@ class MainWindow(QMainWindow):
         self.screen_build.restart_requested.connect(self._on_restart)
         self.screen_build.back_to_review.connect(self._on_back_to_review)
 
-        # JEDEN worker na całe życie okna, podpięty RAZ. Worker tworzony przy
-        # każdym buildzie dokładałby kolejne połączenie do „Przerwij" (po trzech
-        # buildach przycisk anulowałby trzy workery naraz) i zostawiał po sobie
-        # obiekty wątków. Worker umie zacząć od nowa, bo token anulowania
-        # powstaje w `start`, a nie w konstruktorze.
+        # Jeden worker na życie okna, podpięty raz — tworzenie przy każdym
+        # buildzie dublowałoby połączenia sygnałów.
         self.worker = BuildWorker()
         self.worker.progress.connect(self.screen_build.on_progress)
         self.worker.finished.connect(self.screen_build.on_finished)
         self.screen_build.cancel_button.clicked.connect(self.worker.cancel)
 
-        # Ostrzeżenia analizy z ekranu 2 (sekret w kodzie, ciężka paczka).
-        # Zapamiętane tu, bo build wykonuje gotowy plan przez `execute_build`
-        # i sam już nie analizuje folderu — bez tego ostrzeżenia zniknęłyby z
-        # ekranu wyniku.
+        # Ostrzeżenia analizy z ekranu 2 — build wykonuje gotowy plan,
+        # więc ostrzeżenia z analizy trzeba przekazać osobno.
         self._carried: tuple[Issue, ...] = ()
 
-        # B11: analiza w tle — pętla Qt nie zamraża się przy dużych projektach.
-        # Jeden worker na całe życie okna, jak BuildWorker.
+        # Analiza w tle — jeden worker na życie okna, jak BuildWorker.
         self._analysis_worker = AnalysisWorker()
         self._analysis_worker.finished.connect(self._on_analysis_done)
 
@@ -263,7 +257,7 @@ class MainWindow(QMainWindow):
         # Grzeczne zamkniecie: watki wyszly, wiec zaden proces nie trzyma juz
         # plikow tej sesji. Kasujemy katalog roboczy TEJ sesji (kopia kodu,
         # venv, scratch PyInstallera) — sesja innej instancji zostaje nietknieta
-        # (A13). Best-effort: sprzatanie nie moze wstrzymac zamkniecia okna.
+        # Best-effort: sprzątanie nie może wstrzymać zamknięcia okna.
         clean_current_session()
 
     def set_language(self, lang: str) -> None:

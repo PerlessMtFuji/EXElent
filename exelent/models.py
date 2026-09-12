@@ -101,7 +101,7 @@ class ConversionResult:
     # Dla linii wyniku k (0-based) — numer linii w ORYGINALNYM TXT (1-based).
     # Zdejmowanie otoczki (ogrodzenia, etykieta, puste linie na brzegach)
     # przesuwa numeracje, wiec `error_line` bez tej mapy wskazywalby linie w
-    # wycietym kodzie, ktorej uzytkownik nie znajdzie w swoim pliku (A05).
+    # wycietym kodzie, ktorej uzytkownik nie znajdzie w swoim pliku.
     line_map: tuple[int, ...] = ()
 
 
@@ -160,10 +160,9 @@ class BuildPlan:
     single_file: Path | None = None
     extra_sources: tuple[Path, ...] = ()
     total_download_bytes: int = 0
-    # Konwersje TXT -> PY jako niemutowalne pary (nazwa_pliku, kod). Częścią
-    # planu, nie osobnym argumentem: build wykonuje DOKŁADNIE zaakceptowany
-    # plan (A02), a plan jest jego jedynym kontraktem. Krotka par zamiast dict,
-    # bo `frozen=True` nie chroni modyfikowalnego słownika w środku (A13).
+    # Konwersje TXT -> PY jako niemutowalne pary (nazwa_pliku, kod). Build
+    # wykonuje DOKŁADNIE zaakceptowany plan. Krotka par zamiast dict, bo
+    # ``frozen=True`` nie chroni modyfikowalnego słownika w środku.
     converted: tuple[tuple[str, str], ...] = ()
     # Inwentarz zaakceptowanych plików źródłowych i zasobów (B08). Materialization
     # kopiuje TYLKO te pliki i weryfikuje hash; nowe pliki dodane po analizie
@@ -175,10 +174,8 @@ class BuildPlan:
 class BuildResult:
     ok: bool
     artifact: Path | None = None
-    # Plik EXE do URUCHOMIENIA — osobno od `artifact` (A12). Dla ONEFILE to ten
-    # sam plik; dla ONEDIR `artifact` jest KATALOGIEM, a EXE leży w środku, więc
-    # przycisk „Uruchom" bez tej ścieżki nie miał czego odpalić (`is_file()`
-    # było fałszem dla katalogu).
+    # Plik EXE do URUCHOMIENIA. Dla ONEFILE to to samo co ``artifact``; dla
+    # ONEDIR ``artifact`` jest KATALOGIEM, a EXE leży w środku.
     executable_path: Path | None = None
     size_bytes: int = 0
     duration_s: float = 0.0
