@@ -199,6 +199,10 @@ class DownloadPlan:
     specs: tuple[str, ...] = ()
     would_download: int = 0
     total_bytes: int = 0
+    # B12: status wyniku — pozwala odróżnić kompletny wynik od offline/błędu.
+    # "complete": policzono, "empty": brak paczek (wciąż OK), "pending": trwa,
+    # "offline": brak uv/sieci, "error": błąd resolvera, "cancelled": przerwano.
+    status: str = "empty"
 
 
 def _default_run_dry(uv: Path, python: str | Path, packages: Sequence[str], *, cancel=None) -> str:
@@ -237,13 +241,13 @@ def resolve_download_plan(
     try:
         text = runner(uv, python, packages)
     except (OSError, ValueError):
-        return DownloadPlan()
+        return DownloadPlan(status="offline")
 
     # Po anulowaniu uv wraca z niczym albo z połową odpowiedzi. Liczby dla
     # użytkownika i tak już nikt nie zobaczy, a każde zapytanie do PyPI
     # przedłuża życie wątku, na który czeka zamykane okno.
     if cancel is not None and cancel.cancelled:
-        return DownloadPlan()
+        return DownloadPlan(status="cancelled")
 
     specs: list[str] = []
     would = 0
@@ -257,4 +261,6 @@ def resolve_download_plan(
             would = event.count
 
     total = measurer(specs) if would else 0
-    return DownloadPlan(specs=tuple(specs), would_download=would, total_bytes=total)
+    return DownloadPlan(
+        specs=tuple(specs), would_download=would, total_bytes=total, status="complete"
+    )
