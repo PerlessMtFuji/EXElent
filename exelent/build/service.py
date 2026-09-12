@@ -20,7 +20,7 @@ from exelent.diagnostics.patterns import explain_log, filename_of, map_os_error,
 from exelent.models import BuildPlan, BuildResult, Issue, IssueError, Severity
 from exelent.planning import is_cloud_synced
 from exelent.runtime import Progress, ProgressFn
-from exelent.runtime.bootstrap import check_preconditions
+from exelent.runtime.bootstrap import check_preconditions, uv_path
 from exelent.runtime.env import create_build_env
 from exelent.runtime.paths import next_build_seq
 
@@ -110,7 +110,12 @@ def execute_build(
         )
 
     try:
-        preconditions = check_preconditions(need_network=True)
+        # B06: sieć jest potrzebna bezwarunkowo tylko do pobrania uv.
+        # Jeśli uv jest już w cache, pozwalamy na budowanie offline —
+        # brak sieci ujawni się jako konkretny błąd instalacji paczek,
+        # a nie ogólna blokada „brak internetu". Kompletny cache uv
+        # wystarcza do powtórzenia builda bez połączenia.
+        preconditions = check_preconditions(need_network=not uv_path().exists())
         if preconditions:
             return _fail(preconditions)
 
@@ -128,9 +133,14 @@ def execute_build(
             result,
             ok=False,
             issues=sort_issues((*carried_issues, *result.issues, vanished)),
+            plan_id=plan.plan_id,
         )
 
-    return replace(result, issues=sort_issues((*carried_issues, *result.issues)))
+    return replace(
+        result,
+        issues=sort_issues((*carried_issues, *result.issues)),
+        plan_id=plan.plan_id,
+    )
 
 
 def _build(
@@ -158,6 +168,9 @@ def _build(
         single_file=plan.single_file,
         total_download_bytes=plan.total_download_bytes,
         cancel=cancel,
+        workspace=workspace,
+        manifest_paths=plan.manifest_paths,
+        constraint_paths=plan.constraint_paths,
     )
     if env.failed_packages:
         return BuildResult(
@@ -176,6 +189,9 @@ def _build(
     )
     if syntax_issue is not None:
         return BuildResult(ok=False, issues=(syntax_issue,))
+
+    # B06: ostrzeżenia o niezgodności wersji trafiają do puli ostrzeżeń builda.
+    carried.extend(env.version_issues)
 
     result = backend.build(plan, env, scale.stage(ENV_PROGRESS_SHARE, 1.0), cancel)
     # B06: utrwalenie rozstrzygniętych wersji w wyniku builda.

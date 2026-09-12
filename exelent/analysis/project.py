@@ -51,10 +51,21 @@ def _module_name_collisions(py_files: tuple[Path, ...], root: Path) -> list[tupl
     importują się oba jako `util`; o zwycięzcy decyduje kolejność `sys.path`,
     która przy pakowaniu bywa przypadkowa. To ostrzeżenie, nie blokada: build da
     się zrobić, ale użytkownik musi wiedzieć, że jeden z modułów przesłoni drugi.
+
+    B03/B04: case-insensitive — na Windows `Helper.py` i `helper.py` to ten sam
+    plik, ale `import Helper` i `import helper` na Linuksie to różne moduły.
+    Budujemy na Windows, więc dopasowujemy bez rozróżniania wielkości liter.
+    Namespace packages (foldery bez `__init__.py`) są traktowane jak luźne
+    moduły — ich pliki mogą kolidować z innymi tego samego poziomu.
     """
     by_name: dict[str, list[Path]] = {}
     for path in py_files:
-        if path.name == "__init__.py" or (path.parent / "__init__.py").exists():
+        if path.name == "__init__.py":
+            continue
+        # B03: namespace packages — folder bez __init__.py nadal może być
+        # pakietem. Plik w takim folderze jest luźnym modułem (koliduje jak
+        # każdy inny), chyba że folder jest jawnym pakietem.
+        if (path.parent / "__init__.py").exists():
             continue
         by_name.setdefault(path.stem.lower(), []).append(path)
     collisions: list[tuple[str, list[Path]]] = []

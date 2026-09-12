@@ -96,6 +96,10 @@ CATALOG: dict[str, str] = {
         "The option {option} in {file} is not supported — it was skipped. "
         "The list of packages may be incomplete."
     ),
+    "version_mismatch": (
+        "The library {package} was installed as version {installed}, but {declared} was "
+        "declared. Make sure the program works with this version."
+    ),
     "requires_python_mismatch": (
         'The project declares requires-python = "{declared}", which does not include '
         "the target Python {target}. The build may still work, but the program was not "

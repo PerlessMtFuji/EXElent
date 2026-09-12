@@ -23,9 +23,65 @@ from exelent.models import (
     Issue,
     OutputMode,
     ProjectAnalysis,
+    ResourceEntry,
     Severity,
     SourceEntry,
+    _classify_resource,
+    should_exclude_resource,
 )
+
+# --- B05: zbieranie ścieżek manifestów i constraints z pliku requirements ---
+
+
+def _collect_manifest_paths(
+    requirements_path: Path | None,
+    root: Path,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Zbiera ścieżki manifestów i constraints z drzewa `-r`/`-c` w requirements.
+
+    Zwraca (manifest_paths, constraint_paths) jako krotki ścieżek WZGLĘDNYCH
+    do korzenia projektu. Ścieżki są potrzebne do przekopiowania plików do
+    workspace i przekazania ich do uv z poprawnymi bazami ścieżek.
+    """
+    if requirements_path is None:
+        return (), ()
+
+    manifests: list[str] = []
+    constraints: list[str] = []
+    seen: set[Path] = set()
+
+    def _walk(path: Path, *, is_constraint: bool = False) -> None:
+        resolved = path.resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            return
+        if is_constraint:
+            constraints.append(rel)
+        else:
+            manifests.append(rel)
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            lowered = line.lower()
+            if lowered.startswith(("-r ", "--requirement ")):
+                ref = line.split(None, 1)[1].strip()
+                _walk(path.parent / ref, is_constraint=False)
+            elif lowered.startswith(("-c ", "--constraint ")):
+                ref = line.split(None, 1)[1].strip()
+                _walk(path.parent / ref, is_constraint=True)
+
+    _walk(requirements_path)
+    return tuple(manifests), tuple(constraints)
+
 
 _ILLEGAL = re.compile(r'[/\\:*?"<>|]')
 
@@ -397,6 +453,48 @@ def _build_source_inventory(analysis: ProjectAnalysis) -> tuple[SourceEntry, ...
     return tuple(sorted(entries, key=lambda e: e.rel_path))
 
 
+def _build_resource_inventory(analysis: ProjectAnalysis) -> tuple[ResourceEntry, ...]:
+    """Jawny inwentarz zasobów z wykluczeniami (B07).
+
+    Każdy plik z `scan.data_files` jest klasyfikowany, mierzony i filtrowany.
+    Pliki wykluczone (artefakty IDE, logi, pliki tymczasowe) dostają
+    `included=False` — GUI wyświetla je wyszarzone i pozwala przywrócić.
+    """
+    root = analysis.root
+    entries: list[ResourceEntry] = []
+    seen: set[str] = set()
+
+    for path in analysis.scan.data_files:
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if rel in seen:
+            continue
+        seen.add(rel)
+
+        suffix = path.suffix.lower()
+        name = path.name
+        kind = _classify_resource(suffix)
+
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+
+        included = not should_exclude_resource(name, suffix)
+        entries.append(
+            ResourceEntry(
+                rel_path=rel,
+                size_bytes=size,
+                kind=kind,
+                included=included,
+            )
+        )
+
+    return tuple(sorted(entries, key=lambda e: e.rel_path))
+
+
 def _local_module_names(analysis: ProjectAnalysis) -> set[str]:
     """Nazwy najwyższego poziomu modułów lokalnych — także tych skonwertowanych
     z `.txt`, których nie ma na dysku. Chronią przed potraktowaniem ręcznie
@@ -431,6 +529,11 @@ def make_plan(
     # build wykonuje DOKŁADNIE plan, więc dopisania muszą być już w nim.
     extra_hidden, extra_deps = resolve_extra_modules(extra_modules, _local_module_names(analysis))
 
+    # B05/B08: ścieżki manifestów i constraints do przekopiowania do workspace.
+    manifest_paths, constraint_paths = _collect_manifest_paths(
+        analysis.scan.requirements, analysis.root
+    )
+
     return BuildPlan(
         root=analysis.root,
         entry=Path(chosen_entry),
@@ -457,5 +560,12 @@ def make_plan(
         # Inwentarz utrwala listę zaakceptowanych plików z hashami (B08).
         # Materializacja kopiuje TYLKO te pliki i weryfikuje hash.
         source_inventory=_build_source_inventory(analysis),
+        # B07: jawny inwentarz zasobów z klasyfikacją i wykluczeniami.
+        resource_inventory=_build_resource_inventory(analysis),
         plan_issues=tuple(plan_issues),
+        # B08: unikalny identyfikator planu — łączy raport z planem.
+        plan_id=uuid.uuid4().hex,
+        # B05/B08: zachowane manifesty do przekazania uv.
+        manifest_paths=manifest_paths,
+        constraint_paths=constraint_paths,
     )

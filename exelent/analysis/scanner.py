@@ -116,17 +116,26 @@ def _module_imports(code: str) -> list[tuple[int, str | None, tuple[str, ...]]]:
 def _resolve_module(base: Path, parts: list[str]) -> list[Path]:
     """Pliki modułu `a.b.c` względem `base`: `__init__.py` każdego pakietu po
     drodze plus sam moduł (`a/b/c.py` albo `a/b/c/__init__.py`). Pusta lista,
-    gdy moduł nie istnieje lokalnie albo pakiet pośredni nie jest pakietem."""
+    gdy moduł nie istnieje lokalnie albo pakiet pośredni nie jest pakietem.
+
+    B03/B04: namespace packages (PEP 420) — foldery BEZ `__init__.py` — są
+    obsługiwane jako fallback: jeśli folder istnieje, ale nie ma `__init__.py`,
+    moduł jest nadal rozwiązywany (plik liścia musi istnieć). `__init__.py`
+    pośrednich pakietów jest dodawany do wyniku tylko wtedy, gdy istnieje.
+    """
     if not parts:
         return []
     files: list[Path] = []
     cur = base
     for part in parts[:-1]:
         cur = cur / part
-        init = cur / "__init__.py"
-        if not init.is_file():
+        if not cur.is_dir():
             return []
-        files.append(init)
+        init = cur / "__init__.py"
+        if init.is_file():
+            files.append(init)
+        # Namespace package — folder istnieje, ale bez __init__.py.
+        # Kontynuujemy rozwiązywanie, bo plik liścia może istnieć.
     leaf = cur / f"{parts[-1]}.py"
     package = cur / parts[-1] / "__init__.py"
     if leaf.is_file():

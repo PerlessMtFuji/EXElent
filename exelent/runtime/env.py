@@ -14,6 +14,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
+
 from exelent.constants import PYINSTALLER_SPEC, TARGET_PYTHON
 from exelent.diagnostics.patterns import explain_log
 from exelent.models import Issue, IssueError, Severity
@@ -53,6 +56,8 @@ class BuildEnv:
     # B06: rozstrzygnięte wersje zainstalowanych paczek (nazwa, wersja).
     # Umożliwia odtworzenie problemu; zapisywane w raporcie builda.
     resolved_versions: tuple[tuple[str, str], ...] = ()
+    # B06: ostrzeżenia o niezgodności zadeklarowanych i zainstalowanych wersji.
+    version_issues: tuple[Issue, ...] = ()
 
 
 def run_uv(
@@ -281,6 +286,38 @@ class _DownloadTally:
         return done, self._total, self._speed, eta
 
 
+def _check_version_consistency(
+    resolved: tuple[tuple[str, str], ...],
+    packages: Sequence[str],
+) -> tuple[Issue, ...]:
+    """B06: sprawdza, czy zainstalowane wersje zgadzają się z deklarowanymi.
+
+    Nie blokuje builda — to ostrzeżenie. Jeśli uv zainstalowało wersję spoza
+    zadeklarowanego zakresu (bo np. constraint ją ograniczył, a deklaracja nie
+    została zaktualizowana), użytkownik powinien o tym wiedzieć.
+    """
+    installed = {canonicalize_name(name): ver for name, ver in resolved}
+    issues: list[Issue] = []
+    for spec in packages:
+        try:
+            req = Requirement(spec)
+        except InvalidRequirement:
+            continue
+        canon = canonicalize_name(req.name)
+        ver = installed.get(canon)
+        if ver is None:
+            continue
+        if req.specifier and not req.specifier.contains(ver, prereleases=True):
+            issues.append(
+                Issue(
+                    "version_mismatch",
+                    Severity.WARNING,
+                    {"package": req.name, "declared": str(req.specifier), "installed": ver},
+                )
+            )
+    return tuple(issues)
+
+
 def _raise_if_cancelled(cancel) -> None:
     """Anulowanie na etapie srodowiska konczy build jako PRZERWANY, nie blad.
 
@@ -324,6 +361,9 @@ def create_build_env(
     single_file: Path | None = None,
     total_download_bytes: int = 0,
     cancel=None,
+    workspace: Path | None = None,
+    manifest_paths: Sequence[str] = (),
+    constraint_paths: Sequence[str] = (),
 ) -> BuildEnv:
     uv = ensure_uv(progress, cancel=cancel)
     _raise_if_cancelled(cancel)
@@ -371,7 +411,23 @@ def create_build_env(
     python = venv / "Scripts" / "python.exe"
 
     progress(Progress(phase="install_packages", fraction=0.5))
+    # B05: gdy mamy zachowane manifesty, przekazujemy je do uv przez `-r`,
+    # dzięki czemu uv samodzielnie obsługuje pełną semantykę (hashowanie,
+    # ścieżki `-r`/`-c`, indeks). PyInstaller jest ZAWSZE potrzebny i nie
+    # leży w manifeście, więc dochodzi jako oddzielny spec. Gdy manifestu
+    # nie ma, wracamy do listy specyfikacji z analizy.
     wanted = [PYINSTALLER_SPEC, *packages]
+    install_args: list[str] = ["pip", "install", "--python", str(python)]
+    if manifest_paths and workspace is not None:
+        # Manifest + constraint → argumenty `-r`/`-c` zamiast gołych nazw.
+        # PyInstaller wchodzi jawnie na początku; reszta przez manifest.
+        install_args.append(PYINSTALLER_SPEC)
+        for rel in manifest_paths:
+            install_args += ["-r", str(workspace / rel)]
+        for rel in constraint_paths:
+            install_args += ["-c", str(workspace / rel)]
+    else:
+        install_args.extend(wanted)
     tally = _DownloadTally(total_download_bytes)
 
     def on_line(line: str) -> None:
@@ -397,9 +453,7 @@ def create_build_env(
             )
         )
 
-    returncode, bulk_text = _stream_uv(
-        uv, ["pip", "install", "--python", str(python), *wanted], on_line, cancel=cancel
-    )
+    returncode, bulk_text = _stream_uv(uv, install_args, on_line, cancel=cancel)
     _raise_if_cancelled(cancel)
 
     failed: list[str] = []
@@ -438,12 +492,16 @@ def create_build_env(
     # raport builda pozwalał odtworzyć środowisko i wyjaśnić problem.
     resolved = _freeze_versions(uv, python, cancel=cancel)
 
+    # B06: sprawdzenie spójności zadeklarowanych i zainstalowanych wersji.
+    version_issues = _check_version_consistency(resolved, packages)
+
     return BuildEnv(
         uv=uv,
         venv=venv,
         python=python,
         failed_packages=tuple(failed),
         resolved_versions=resolved,
+        version_issues=version_issues,
     )
 
 
