@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from types import MappingProxyType
 
 
 class AppKind(str, Enum):
@@ -28,11 +29,30 @@ class Severity(str, Enum):
     BLOCKER = "blocker"
 
 
+def _freeze_data(data: Mapping[str, str]) -> MappingProxyType[str, str]:
+    """Zamraża ``data`` Issue, żeby ``frozen=True`` nie kłamało.
+
+    ``frozen=True`` na dataclasie blokuje przypisanie do atrybutu, ale NIE
+    chroni modyfikowalnego obiektu wewnątrz: ``issue.data["key"] = "val"``
+    przechodzi, gdy ``data`` jest zwykłym ``dict``. ``MappingProxyType`` jest
+    widokiem tylko-do-odczytu na istniejącym ``dict`` — podnosi ``TypeError``
+    przy próbie zmiany i kosztuje jedno opakowanie, nie kopię."""
+    if isinstance(data, MappingProxyType):
+        return data
+    return MappingProxyType(dict(data))
+
+
 @dataclass(frozen=True)
 class Issue:
     code: str
     severity: Severity
-    data: Mapping[str, str] = field(default_factory=dict)
+    data: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        # frozen=True → object.__setattr__. Zamrażamy `data` przy tworzeniu,
+        # niezależnie od tego, co wołający przekazał.
+        if not isinstance(self.data, MappingProxyType):
+            object.__setattr__(self, "data", _freeze_data(self.data))
 
 
 class IssueError(RuntimeError):
@@ -147,6 +167,77 @@ class SourceEntry:
     sha256: str
 
 
+class ResourceKind(str, Enum):
+    """Rodzaj zasobu wykrytego przez skaner (B07)."""
+
+    DATA = "data"
+    IMAGE = "image"
+    CONFIG = "config"
+    DATABASE = "database"
+
+
+# Pliki, które wyglądają jak zasoby, ale prawie na pewno NIE powinny trafić
+# do paczki: pliki testowe, generowane, IDE, build artifacts. Case-insensitive.
+_RESOURCE_EXCLUDE_NAMES = frozenset(
+    {
+        "thumbs.db",
+        "desktop.ini",
+        ".ds_store",
+        ".gitkeep",
+        ".gitignore",
+    }
+)
+_RESOURCE_EXCLUDE_SUFFIXES = frozenset(
+    {
+        ".pyc",
+        ".pyo",
+        ".egg-info",
+        ".dist-info",
+        ".bak",
+        ".tmp",
+        ".swp",
+        ".swo",
+        ".log",
+        ".orig",
+    }
+)
+
+
+def _classify_resource(suffix: str) -> ResourceKind:
+    """Rodzaj zasobu po sufiksie pliku."""
+    if suffix in {".db", ".sqlite", ".sqlite3"}:
+        return ResourceKind.DATABASE
+    if suffix in {".json", ".ini", ".cfg", ".yaml", ".yml", ".toml", ".xml"}:
+        return ResourceKind.CONFIG
+    if suffix in {".png", ".jpg", ".jpeg", ".ico", ".bmp", ".gif"}:
+        return ResourceKind.IMAGE
+    return ResourceKind.DATA
+
+
+@dataclass(frozen=True)
+class ResourceEntry:
+    """Zasób kandydujący do dołączenia do paczki (B07).
+
+    `rel_path` jest ścieżką względną do korzenia projektu, znormalizowaną
+    do `/`. `size_bytes` pozwala oszacować wpływ na rozmiar EXE. `kind`
+    rozróżnia konfigurację od bazy danych od obrazu — użytkownik może
+    zdecydować, że bazy danych nie powinny trafić do EXE. `included` to
+    domyślna decyzja analizy; GUI pozwala ją zmienić.
+    """
+
+    rel_path: str
+    size_bytes: int = 0
+    kind: ResourceKind = ResourceKind.DATA
+    included: bool = True
+
+
+def should_exclude_resource(name: str, suffix: str) -> bool:
+    """Czy plik o danej nazwie i sufiksie powinien być domyślnie wykluczony (B07)."""
+    if name.lower() in _RESOURCE_EXCLUDE_NAMES:
+        return True
+    return suffix.lower() in _RESOURCE_EXCLUDE_SUFFIXES
+
+
 @dataclass(frozen=True)
 class BuildPlan:
     root: Path
@@ -171,9 +262,22 @@ class BuildPlan:
     # kopiuje TYLKO te pliki i weryfikuje hash; nowe pliki dodane po analizie
     # nie wchodzą do builda bez ponownej analizy.
     source_inventory: tuple[SourceEntry, ...] = ()
+    # B07: inwentarz zasobów kandydujących do dołączenia do paczki. Każdy
+    # wpis ma klasyfikację (obraz, baza, konfiguracja), rozmiar i domyślną
+    # decyzję; GUI pozwala zmienić `included` przed buildem.
+    resource_inventory: tuple[ResourceEntry, ...] = ()
     # Uwagi wykryte przy budowaniu planu (B07: kolizje zasobów, B05: niezgodności).
     # Rozdzielone od `BuildResult.issues` — te powstają PRZED startem builda.
     plan_issues: tuple[Issue, ...] = ()
+    # B08: identyfikator planu — UUID4 wygenerowany w `make_plan`. Łączy
+    # raport, log i artefakt z DOKŁADNIE tym planem, który je stworzył.
+    # Pusty string = starszy plan bez identyfikatora.
+    plan_id: str = ""
+    # B08: ścieżki manifestów zachowane z analizy. Kopiowane do workspace
+    # i przekazywane do uv z poprawnymi bazami ścieżek (B05).
+    manifest_paths: tuple[str, ...] = ()
+    # B08: ścieżki plików constraints zachowane z analizy (B05).
+    constraint_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -191,3 +295,5 @@ class BuildResult:
     # (nazwa, wersja). Umożliwiają odtworzenie problemu i weryfikację
     # zgodności. Zapisywane w raporcie JSON.
     resolved_versions: tuple[tuple[str, str], ...] = ()
+    # B08: identyfikator planu, który stworzył ten wynik.
+    plan_id: str = ""

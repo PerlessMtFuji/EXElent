@@ -40,6 +40,12 @@ def resolve_entry(workspace: Path, entry_rel: Path) -> EntrySpec:
     który odtwarza tę samą strukturę). Korzeń importów wyznaczamy wspinaczką w
     górę tak długo, jak każdy kolejny katalog jest pakietem (`__init__.py`),
     najwyżej do samego workspace.
+
+    B03: folder BEZ `__init__.py` przerywa wspinaczkę — moduł jest rozwiązywany
+    względem tego katalogu (dodawanego na `--paths`). Namespace packages (PEP 420)
+    są obsługiwane w domknięciu importów skanera, nie tu: tam wystarczy znaleźć
+    plik, żeby dodać go do builda, a tutaj trzeba wyznaczyć poprawną nazwę
+    modułu dla `runpy.run_module`, która MUSI odpowiadać strukturze `sys.path`.
     """
     entry_abs = workspace / entry_rel
     import_root = entry_abs.parent

@@ -102,6 +102,10 @@ CATALOG: dict[str, str] = {
         "Opcja {option} w {file} nie jest obsługiwana — została pominięta. "
         "Lista bibliotek może być niepełna."
     ),
+    "version_mismatch": (
+        "Biblioteka {package} została zainstalowana w wersji {installed}, a zadeklarowana "
+        "była {declared}. Upewnij się, że program działa z tą wersją."
+    ),
     "requires_python_mismatch": (
         "Projekt deklaruje requires-python = „{declared}”, co nie obejmuje docelowego "
         "Pythona {target}. Budowanie może się udać, ale program nie był projektowany "

@@ -199,4 +199,13 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(code, encoding="utf-8")
 
+    # B05: kopiowanie manifestów i constraints do workspace, żeby uv mógł
+    # rozwinąć `-r`/`-c` z poprawnymi bazami ścieżek.
+    for rel in (*plan.manifest_paths, *plan.constraint_paths):
+        source = plan.root / rel
+        if source.is_file():
+            target = workspace / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
     return workspace
