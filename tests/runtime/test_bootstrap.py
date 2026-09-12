@@ -53,7 +53,8 @@ def test_ensure_uv_returns_cached_binary_without_download(monkeypatch, tmp_path)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     target = bootstrap.uv_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(b"udawany uv")
+    # Plik musi przejść walidację integralności: nagłówek PE + minimalny rozmiar.
+    target.write_bytes(b"MZ" + b"\x00" * bootstrap._UV_MIN_SIZE)
     monkeypatch.setattr(bootstrap, "_download", lambda *a, **k: pytest.fail("nie pobieraj"))
     assert bootstrap.ensure_uv(noop_progress) == target
 

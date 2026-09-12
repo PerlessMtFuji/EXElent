@@ -1,4 +1,4 @@
-"""Kwalifikowana nazwa modułu wejściowego i korzenie importów (A03).
+"""Kwalifikowana nazwa modułu wejściowego i korzenie importów.
 
 Sama nazwa pliku nie określa modułu. `pkg/main.py` to moduł `pkg.main`, nie
 `main` — a launcher z `runpy.run_module("main")` daje EXE, które umiera na

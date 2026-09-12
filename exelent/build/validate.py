@@ -44,7 +44,7 @@ _KILL_WAIT_SECONDS = 3.0
 # nie wykonywała i `None` czytano jako sukces (B09). Jako stała w importowanym
 # module źródło jest w paczce zawsze.
 #
-# Checker KOMPILUJE każde źródło (nie uruchamia — patrz A05), bajtami, żeby
+# Checker KOMPILUJE każde źródło (nie uruchamia), bajtami, żeby
 # `compile` uszanował deklarację kodowania (PEP 263) dokładnie tak jak import w
 # gotowym EXE. Pierwszy plik, który się nie kompiluje, wypisuje
 # `<marker>\t<ścieżka względna>\t<linia>\t<komunikat>` i kończy kodem 1; gdy

@@ -372,7 +372,7 @@ def make_plan(
 
     # Moduły dopisane ręcznie na ekranie 2: przypadki, których statyczny skan nie
     # widzi (import dynamiczny, wtyczka). Scalane z tym, co znalazła analiza —
-    # build wykonuje DOKŁADNIE plan (A02), więc dopisania muszą być już w nim.
+    # build wykonuje DOKŁADNIE plan, więc dopisania muszą być już w nim.
     extra_hidden, extra_deps = resolve_extra_modules(extra_modules, _local_module_names(analysis))
 
     return BuildPlan(
@@ -396,7 +396,7 @@ def make_plan(
         extra_sources=analysis.extra_sources,
         total_download_bytes=total_download_bytes,
         # Konwersje wędrują W PLANIE, żeby build dało się wykonać z samego
-        # planu, bez ponownej analizy źródeł (A02).
+        # planu, bez ponownej analizy źródeł.
         converted=tuple(analysis.converted.items()),
         # Inwentarz utrwala listę zaakceptowanych plików z hashami (B08).
         # Materializacja kopiuje TYLKO te pliki i weryfikuje hash.

@@ -102,7 +102,7 @@ def _base_name(spec: str) -> str:
 
     `pandas==2.2.3` -> `pandas`, `uvicorn[standard]>=0.20` -> `uvicorn`. Bez
     tego tabela wkładów, kluczowana nazwą, nie rozpoznawała przypiętej wersji
-    i szacunek dla `pandas==2.2.3` wynosił zero (A11)."""
+    i szacunek dla `pandas==2.2.3` wynosił zero."""
     return re.split(r"[<>=!~;\[ @]", spec.strip(), maxsplit=1)[0].strip()
 
 

@@ -73,8 +73,7 @@ def looks_like_python(text: str) -> bool:
 def _read_head(path: Path, limit: int = 64_000) -> str:
     """Czyta co najwyżej `limit` bajtów — do rozpoznania rodzaju pliku.
 
-    `read_bytes()[:limit]` wciągało do pamięci CAŁY plik (np. 2 GB .txt) i
-    dopiero potem obcinało. Otwieramy i czytamy tylko potrzebny prefiks (A10).
+    Czytamy tylko potrzebny prefiks, nie cały plik.
 
     Dekodujemy przez `decode_bytes` — TĄ SAMĄ funkcją co konwerter — więc TXT w
     UTF-16/BOM jest widziany jako program, a nie jako śmieć z twardego utf-8
@@ -263,7 +262,7 @@ def scan_directory(
                 requirements = path
             elif name.lower() == "pyproject.toml" and pyproject is None:
                 # Pierwszy trafiony wygrywa; walk() idzie od korzenia, więc
-                # pyproject projektu bije ten z podkatalogu (A07).
+                # pyproject projektu bije ten z podkatalogu.
                 pyproject = path
             elif suffix == ".txt":
                 if looks_like_python(_read_head(path)):

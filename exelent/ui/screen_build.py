@@ -85,7 +85,7 @@ class BuildScreen(QWidget):
 
         # Natychmiastowa reakcja na "Przerwij": samo anulowanie leci osobnym
         # polaczeniem (w app.py), ale zanim watek zdazy zareagowac, przycisk ma
-        # od razu pokazac "Przerywanie…" i przestac przyjmowac kliki (A09).
+        # od razu pokazać "Przerywanie…" i przestać przyjmować kliki.
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
         self.again_button.clicked.connect(self.restart_requested)
         self.back_button.clicked.connect(self.back_to_review)
@@ -360,9 +360,9 @@ class BuildScreen(QWidget):
         subprocess.run(arguments, check=False)
 
     def _run_artifact(self) -> None:
-        """Uruchamia gotowy program. Działa w ONEFILE i ONEDIR (A12).
+        """Uruchamia gotowy program. Działa w ONEFILE i ONEDIR.
 
-        Wcześniej warunek `artifact.is_file()` był fałszem dla ONEDIR, którego
+        Warunek `artifact.is_file()` byłby fałszem dla ONEDIR, którego
         artefaktem jest katalog — przycisk „Uruchom" nic nie robił. Teraz
         odpalamy `executable_path`, a `cwd` to katalog EXE, żeby program czytał
         swoje zasoby leżące obok."""

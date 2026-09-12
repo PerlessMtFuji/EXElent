@@ -21,7 +21,7 @@ from exelent.build.workspace import workspace_for
 from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, Severity
 from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.env import CREATE_NO_WINDOW, BuildEnv
-from exelent.runtime.paths import logs_dir, path_hash, session_id
+from exelent.runtime.paths import build_seq, logs_dir, path_hash, session_id
 from exelent.runtime.procs import kill_tree
 
 PHASES: dict[str, str] = {
@@ -137,7 +137,7 @@ def build_arguments(
         # podkatalogu `_internal`. Launcher w ONEDIR robi `chdir` do katalogu
         # EXE, wiec `open('config.json')` znajduje spakowany zasob, a trwale
         # zapisy programu ladują tam, gdzie uzytkownik ich szuka — obok EXE
-        # (A04). Bez tego zasoby wpadaly do `_internal` i byly nieosiagalne.
+        # Bez tego zasoby wpadały do `_internal` i były nieosiągalne.
         args += ["--onedir", "--contents-directory", "."]
     args.append("--windowed" if plan.app_kind is AppKind.WINDOWED else "--console")
 
@@ -156,7 +156,7 @@ def build_arguments(
         # Cel w paczce zachowuje uklad wzgledny: `assets/nested.json` ma trafic
         # do `assets/`, nie do korzenia. Wczesniej kazdy zasob dostawal cel `.`,
         # wiec `open('assets/nested.json')` w EXE nie znajdowal pliku
-        # splaszczonego do `nested.json` (A04).
+        # spłaszczonego do `nested.json`.
         dest = rel.parent.as_posix()
         dest = "." if dest == "." or dest == "" else dest
         args += ["--add-data", f"{workspace_data}{_ADD_DATA_SEPARATOR}{dest}"]
@@ -189,22 +189,16 @@ def dropped_project_modules(lines: Iterable[str], workspace: Path) -> tuple[str,
 
 
 def log_path_for(plan: BuildPlan) -> Path:
-    """Sciezka logu tego builda — wyliczalna z planu, zanim build ruszy.
+    """Ścieżka logu tego builda — wyliczalna z planu, zanim build ruszy.
 
-    Publiczna, bo `run_build` musi ja znac takze wtedy, gdy backend NIE
-    zdazyl oddac `BuildResult`: gdy wyjatek poleci juz po zapisaniu logu,
-    uzytkownik i tak ma dostac sciezke, ktora zadanie 20 podpina pod "Zapisz
-    raport". Jedno miejsce, w ktorym powstaje ta nazwa.
+    Publiczna, bo usługa musi ją znać gdy backend nie zdążył oddać
+    ``BuildResult``. Jedno miejsce definiujące tę nazwę.
 
-    W nazwie jest skrot sciezki PROJEKTU, nie sama nazwa EXE. Dwa rozne
-    projekty czesto nazywaja sie tak samo ("program", "main"), a od rundy 2
-    stary log jest KASOWANY przed buildem — bez tego skrotu build jednego
-    projektu niszczylby log drugiego, zanim cokolwiek zapisze.
-
-    Jest tez identyfikator sesji: dwie instancje budujace ten sam projekt
-    pisza do osobnych logow, wiec jedna nie kasuje logu drugiej (A13).
+    Składniki nazwy: hash projektu (izoluje różne projekty o tej samej nazwie
+    EXE), identyfikator sesji (izoluje równoległe instancje) i numer próby
+    builda (izoluje ponowione próby w tej samej sesji).
     """
-    return logs_dir() / f"{plan.exe_name}-{path_hash(plan.root)}-{session_id()}.log"
+    return logs_dir() / f"{plan.exe_name}-{path_hash(plan.root)}-{session_id()}.{build_seq()}.log"
 
 
 class PyInstallerBackend:

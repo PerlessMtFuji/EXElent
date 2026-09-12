@@ -5,6 +5,9 @@ Testy weryfikują:
 - Backend jest wstrzykiwany przez parametr
 - Sprzątanie osieroconych sesji oparte na PID
 - Staging publikacji sprzątany przy błędzie weryfikacji
+- Numer próby builda izoluje logi ponowionych prób
+- Weryfikacja integralności uv
+- Sprzątanie logów sesji
 """
 
 from __future__ import annotations
@@ -193,3 +196,95 @@ def test_staging_cleaned_when_verification_throws(tmp_path):
     assert result is None
     assert any(i.code == "publish_incomplete" for i in issues)
     assert not list(dest_dir.glob(".exelent-publish-*")), "staging powinien być sprzątnięty"
+
+
+# --- B14: numer próby builda izoluje logi ---
+
+
+def test_each_execute_build_gets_a_new_build_seq(tmp_path, monkeypatch):
+    """Ponowiona próba dostaje inny numer — logi się nie nadpisują."""
+    from exelent.build.pyinstaller import log_path_for
+    from exelent.runtime.paths import build_seq
+
+    _stub_service(monkeypatch, tmp_path)
+    log_paths = []
+
+    class _LogRecorder:
+        def build(self, plan, env, progress, cancel):
+            log_paths.append(log_path_for(plan))
+            return BuildResult(ok=True, artifact=plan.dest_dir / "x.exe", size_bytes=1)
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "main.py").write_text("print(1)\n", encoding="utf-8")
+    plan = BuildPlan(
+        root=root,
+        entry=root / "main.py",
+        app_kind="console",
+        output_mode=OutputMode.ONEDIR,
+        exe_name="test",
+        dest_dir=tmp_path / "out",
+    )
+
+    seq_before = build_seq()
+    execute_build(plan, noop_progress, backend=_LogRecorder())
+    seq_after_first = build_seq()
+    execute_build(plan, noop_progress, backend=_LogRecorder())
+    seq_after_second = build_seq()
+
+    assert seq_after_first > seq_before
+    assert seq_after_second > seq_after_first
+    assert len(log_paths) == 2
+    assert log_paths[0] != log_paths[1], "logi muszą mieć różne ścieżki"
+
+
+# --- B14: weryfikacja integralności uv ---
+
+
+def test_corrupted_uv_is_redownloaded(tmp_path, monkeypatch):
+    """Istniejący, ale uszkodzony uv.exe jest usuwany — nie blokuje bootstrapu."""
+    from exelent.runtime import bootstrap
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    target = bootstrap.uv_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"truncated junk")  # za mały, brak nagłówka PE
+
+    assert not bootstrap._is_valid_uv(target)
+
+
+def test_valid_uv_passes_check(tmp_path):
+    """Plik z nagłówkiem MZ i rozsądnym rozmiarem przechodzi walidację."""
+    from exelent.runtime.bootstrap import _UV_MIN_SIZE, _is_valid_uv
+
+    fake = tmp_path / "uv.exe"
+    # Nagłówek PE + padding do minimalnego rozmiaru
+    fake.write_bytes(b"MZ" + b"\x00" * (_UV_MIN_SIZE + 1))
+
+    assert _is_valid_uv(fake)
+
+
+# --- B14: sprzątanie logów sesji ---
+
+
+def test_clean_stale_sessions_removes_dead_session_logs(tmp_path, monkeypatch):
+    """Logi osieroconych sesji są usuwane razem z katalogami."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    from exelent.runtime import paths
+
+    base = tmp_path / paths.APP_NAME / "b"
+    base.mkdir(parents=True)
+    log_dir = tmp_path / paths.APP_NAME / "logs"
+    log_dir.mkdir(parents=True)
+
+    dead_sid = "deadbeef"
+    (base / f"abc12345-{dead_sid}").mkdir()
+    (base / f".pid-{dead_sid}").write_text("999999999", encoding="utf-8")
+    # Logi z dwóch prób builda
+    (log_dir / f"prog-abc12345-{dead_sid}.1.log").write_text("log1", encoding="utf-8")
+    (log_dir / f"prog-abc12345-{dead_sid}.2.log").write_text("log2", encoding="utf-8")
+
+    paths.clean_stale_sessions()
+
+    assert not (base / f"abc12345-{dead_sid}").exists()
+    assert not list(log_dir.glob(f"*-{dead_sid}.*"))

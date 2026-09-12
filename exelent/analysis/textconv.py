@@ -44,7 +44,7 @@ _FENCE_LABEL = re.compile(r"^[ \t]*(?:python3?|py)[ \t]*\n", re.IGNORECASE)
 # Numer linii: opcjonalne wciecie, cyfry, opcjonalny separator, a potem
 # odstep i kod. Grupa 1 to WLASNIE ten pelny odstep — z jego najmniejszej
 # szerokosci w calym pliku wyliczamy separator, zeby nie zjesc wciecia kodu
-# (A05). Bez chciwego `[ \t]*` przed separatorem, inaczej odstep uciekalby do
+#. Bez chciwego `[ \t]*` przed separatorem, inaczej odstep uciekalby do
 # niego i grupa mierzylaby zawsze 1.
 _LINE_NUMBER = re.compile(r"^[ \t]*\d+[:|.]?([ \t]+)(?=\S)")
 _PROMPT = re.compile(r"^(?:>>>|\.\.\.) ?")
@@ -70,7 +70,7 @@ def decode_bytes(raw: bytes) -> tuple[str, str]:
 
 def _line_starts(text: str) -> list[int]:
     """Offsety (w znakach) poczatku kazdej linii — do przeliczenia pozycji
-    dopasowania regexa na numer linii przy budowaniu mapy linii (A05)."""
+    dopasowania regexa na numer linii przy budowaniu mapy linii."""
     starts = [0]
     for i, ch in enumerate(text):
         if ch == "\n":
@@ -82,7 +82,7 @@ def _strip_fences(text: str, origins: list[int]) -> tuple[str, list[int], bool]:
     """Wycina bloki kodu z ogrodzen i laczy je. Poza tekstem prowadzi `origins`:
     dla kazdej linii wyniku numer jej linii w oryginale. To najwazniejszy krok
     dla mapy linii — bloki stoja w rozproszeniu miedzy proza czatu, wiec ich
-    numeracja skacze i bez mapy blad wskazywalby nieistniejaca linie (A05)."""
+    numeracja skacze i bez mapy blad wskazywalby nieistniejaca linie."""
     matches = list(_FENCE.finditer(text))
     if not matches:
         return text, origins, False
@@ -187,7 +187,7 @@ def _protected_spans(text: str) -> list[tuple[int, int]]:
     dostajemy literaly stojace PRZED tym miejscem — dokladnie te, ktorych
     naprawa nie moze dotknac. `label = 'A—B…'` to poprawny STRING; jego myslnik
     i wielokropek to tresc, nie ogranicznik, wiec globalna podmiana nie ma tu
-    wstepu (A05)."""
+    wstepu."""
     line_starts = [0]
     for i, ch in enumerate(text):
         if ch == "\n":
@@ -210,7 +210,7 @@ def _protected_spans(text: str) -> list[tuple[int, int]]:
 # Znaki-OGRANICZNIKI: typograficzne cudzyslowy uzywane zamiast prostych. Reszta
 # `_REPLACEMENTS` (myslniki, wielokropek, twarde spacje) to znaki TRESCI. Podzial
 # ma znaczenie: ogranicznik naprawiamy jako pierwszy, bo dopiero po zamknieciu
-# literalu jego tresc (np. myslnik w srodku) staje sie chroniona (A05).
+# literalu jego tresc (np. myslnik w srodku) staje sie chroniona.
 _QUOTE_CHARS = frozenset("„“”«»‘’′")
 _CONTENT_CHARS = frozenset(_REPLACEMENTS) - _QUOTE_CHARS
 
@@ -243,7 +243,7 @@ def _replace_outside(text: str, spans: list[tuple[int, int]], chars: frozenset[s
 def _token_aware_repair(text: str) -> str:
     """Podmienia znaki, ktore czat lubi psuc, ale WYLACZNIE poza trescia
     rozpoznanych literalow. Zastepuje wczesniejsza globalna podmiane, ktora
-    zmieniala wartosc poprawnych literalow (A05).
+    zmieniala wartosc poprawnych literalow.
 
     Ograniczniki naprawiamy przed trescia: `msg = ‘ok—now’` najpierw dostaje
     proste cudzyslowy, a przy kolejnym tokenizowaniu myslnik jest juz w srodku
@@ -267,7 +267,7 @@ def _expand_indent_tabs(text: str) -> str:
     """Zamienia taby na spacje WYLACZNIE we wcieciu (tabstop 8), nie w tresci.
 
     `text.expandtabs()` rozwijalo tez taby WEWNATRZ napisow — literal `'a\\tb'`
-    zmienial znaczenie (A05). Tu ruszamy tylko biale znaki na poczatku linii,
+    zmienial znaczenie. Tu ruszamy tylko biale znaki na poczatku linii,
     czyli rzeczywiste wciecie; reszta linii, lacznie z napisami, zostaje."""
     out: list[str] = []
     for line in text.split("\n"):
@@ -323,7 +323,7 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
     # `origins[k]` = numer linii w oryginalnym TXT dla k-tej linii biezacego
     # tekstu. Niesiony przez kroki, ktore przesuwaja numeracje (ogrodzenia,
     # etykieta, puste linie na brzegach); pozostale kroki sa 1:1 co do liczby
-    # linii, wiec mapa pozostaje wazna az do konca (A05).
+    # linii, wiec mapa pozostaje wazna az do konca.
     origins = list(range(1, text.count("\n") + 2))
 
     # 1. Zdejmowanie OTOCZKI z okna czatu i numeracji. To zmiany strukturalne —
@@ -372,7 +372,7 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
 
     # 4. Poprawny Python zostaje BEZ heurystycznych zmian tresci. Literal
     #    `label = 'A—B…'` przechodzi nietkniety — wczesniej globalna podmiana
-    #    znakow zmieniala jego wartosc (A05).
+    #    znakow zmieniala jego wartosc.
     try:
         _check_syntax(text)
         return ConversionResult(

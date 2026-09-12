@@ -44,7 +44,7 @@ def _read(path: Path) -> str | None:
 
 
 def _module_name_collisions(py_files: tuple[Path, ...], root: Path) -> list[tuple[str, list[Path]]]:
-    """Moduły o tej samej gołej nazwie w różnych folderach (A03).
+    """Moduły o tej samej gołej nazwie w różnych folderach.
 
     Plik w pakiecie (`__init__.py` obok) ma nazwę kwalifikowaną — `pkg_a.util`
     vs `pkg_b.util` się nie mylą. Ale dwa `util.py` w folderach BEZ `__init__.py`
@@ -146,7 +146,7 @@ def analyze_project(root: Path) -> ProjectAnalysis:
 
     # Kolizje: cel konwersji nie moze nadpisac istniejacego pliku .py ani
     # innej konwersji. Klucz jest znormalizowany do malych liter, bo Windows
-    # nie rozroznia wielkosci liter w nazwach (A06).
+    # nie rozróżnia wielkości liter w nazwach.
     taken: dict[str, Path] = {p: p for p in (_rel_key(root, s) for s in scan.py_files)}
 
     for txt in scan.text_candidates:
@@ -176,7 +176,7 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             taken[key] = virtual
             # Klucz konwersji to SCIEZKA WZGLEDNA, nie sama nazwa: `pkg/help.txt`
             # ma trafic do `pkg/help.py`, a `a/help.txt` i `b/help.txt` musza
-            # zostac dwoma osobnymi modulami (A06).
+            # zostać dwoma osobnymi modułami.
             converted[rel] = result.code
             sources[virtual] = result.code
             if "fence_label" in result.steps:
@@ -202,7 +202,7 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     txt_severity = Severity.WARNING if sources else Severity.BLOCKER
     for data in conversion_failures:
         # Pusty wynik (sama otoczka czatu, pusty blok) dostaje osobny, ludzki
-        # komunikat zamiast "blad w linii 0" (A05).
+        # komunikat zamiast "błąd w linii 0".
         if data["detail"] == NO_CODE:
             issues.append(Issue("txt_no_code", txt_severity, {"file": data["file"]}))
         else:
@@ -286,8 +286,8 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     hidden_imports = collect_hidden_imports(sources)
 
     # Ścieżka, a nie sam tekst: resolver rozwija `-r`/`-c` względem katalogu
-    # manifestu (A07). `dep_issues` niesie diagnostykę manifestu (cykl, brak
-    # pliku, nieczytelny pyproject), która inaczej ginęłaby po cichu.
+    # manifestu. `dep_issues` niesie diagnostykę manifestu (cykl, brak
+    # pliku, nieczytelny pyproject).
     dep_issues: list[Issue] = []
     dependencies = resolve_dependencies(
         sources,

@@ -78,16 +78,10 @@ def check_preconditions(*, need_network: bool) -> tuple[Issue, ...]:
 
 
 def _download(url: str, progress: ProgressFn, cancel=None) -> bytes:
-    """Pobiera `url` w całości, meldując po każdej porcji.
+    """Pobiera ``url`` w całości, meldując po każdej porcji.
 
-    Bajty są tu DOKŁADNE, nie zgadywane: `Content-Length` podaje sumę, a
-    czytanie porcjami daje licznik. To jedyne pobranie w programie, które
-    wie o sobie wszystko — instalacja paczek musi tę wiedzę składać z linii uv.
-
-    `cancel` (cokolwiek z własnością `cancelled`) przerywa pobranie między
-    porcjami (B10). Timeout na poziomie pojedynczego `read` chroni przed
-    wisząca sesją: serwer, który nie odpowiada, nie ma prawa zablokować
-    zamknięcia okna na czas nieokreślony.
+    ``cancel`` przerywa pobranie między porcjami. Timeout na pojedynczym
+    ``read`` chroni przed wisząca sesją.
     """
     buffer = io.BytesIO()
     started = time.monotonic()
@@ -120,16 +114,9 @@ def _download(url: str, progress: ProgressFn, cancel=None) -> bytes:
 
 
 def _atomic_write(dest: Path, data: bytes) -> None:
-    """Zapisuje `data` pod `dest` tak, że proces przerwany w połowie nigdy
-    nie zostawia obciętego pliku pod finalną ścieżką.
+    """Zapisuje ``data`` pod ``dest`` atomowo (tmpfile + ``os.replace``).
 
-    `ensure_uv` uznaje istnienie `dest` za dowód poprawnego cache — gdybyśmy
-    pisali wprost do `dest`, zabity w połowie zapisu proces zostawiłby tam
-    obcięty plik, który kolejne uruchomienie potraktowałoby jako gotowego
-    uv.exe, i każdy późniejszy build psułby się w sposób niemożliwy do
-    zdiagnozowania. Zapis do pliku tymczasowego w tym samym katalogu, a
-    potem `os.replace` (atomowy w obrębie jednego wolumenu na Windows),
-    eliminuje to okno.
+    Przerwany proces nigdy nie zostawia obciętego pliku pod finalną ścieżką.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=".uv-download-", suffix=".tmp")
@@ -155,18 +142,39 @@ def _download_and_extract_uv(url: str, dest: Path, progress: ProgressFn, cancel=
     _atomic_write(dest, data)
 
 
-def ensure_uv(progress: ProgressFn, cancel=None) -> Path:
-    """Zapewnia uv na dysku. `cancel` przerywa pobieranie (B10).
+# uv.exe to ~30 MB; plik mniejszy niż 1 MB jest uszkodzony (obcięty zapis,
+# interwencja antywirusa). Nagłówek PE („MZ") potwierdza binarny format.
+_UV_MIN_SIZE = 1024 * 1024
 
-    Anulowany token PRZED startem nie uruchamia pobierania — wcześniejsze
-    fazy mogły już ustawić token, a ściąganie 15 MB bez potrzeby to strata
-    czasu i łącza.
+
+def _is_valid_uv(path: Path) -> bool:
+    """Czy plik wygląda na poprawny plik wykonywalny uv."""
+    try:
+        size = path.stat().st_size
+        if size < _UV_MIN_SIZE:
+            return False
+        with open(path, "rb") as f:
+            return f.read(2) == b"MZ"
+    except OSError:
+        return False
+
+
+def ensure_uv(progress: ProgressFn, cancel=None) -> Path:
+    """Zapewnia uv na dysku. Weryfikuje integralność istniejącego pliku.
+
+    Anulowany token przed startem nie uruchamia pobierania. Współdzielony
+    cache jest bezpieczny: zapis jest atomowy (``_atomic_write``), a uv
+    zarządza własnym cache paczek bez potrzeby dodatkowych blokad.
     """
     if cancel is not None and cancel.cancelled:
         raise IssueError(Issue("build_cancelled", Severity.INFO))
     target = uv_path()
     if target.exists():
-        return target
+        if _is_valid_uv(target):
+            return target
+        # Uszkodzony plik — usuń i pobierz ponownie.
+        with suppress(OSError):
+            target.unlink(missing_ok=True)
     try:
         _download_and_extract_uv(UV_URL, target, progress, cancel=cancel)
     except (urllib.error.URLError, OSError, zipfile.BadZipFile, FileNotFoundError) as exc:

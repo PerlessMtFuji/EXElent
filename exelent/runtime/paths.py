@@ -7,6 +7,7 @@ w Windows i przed narzędziami, które gubią się na znakach spoza ASCII.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import os
 import shutil
 import uuid
@@ -15,14 +16,30 @@ from pathlib import Path
 
 from exelent.constants import APP_NAME
 
-# Identyfikator TEJ instancji programu — raz na proces, wchodzi w nazwę
-# katalogu roboczego i logu. Dwie instancje tego samego projektu dostają
-# osobne katalogi i nie kasują sobie danych (A13).
+# Identyfikator instancji — raz na proces. Izoluje workspace i logi między
+# równoległymi instancjami tego samego projektu.
 _SESSION_ID = uuid.uuid4().hex[:8]
+
+# Numer próby builda w tej sesji. Każde wołanie execute_build dostaje
+# osobny numer, dzięki czemu logi ponowionych prób nie nadpisują się.
+_build_counter = itertools.count(1)
+_current_build_seq: int = 0
 
 
 def session_id() -> str:
     return _SESSION_ID
+
+
+def next_build_seq() -> int:
+    """Nowy numer próby builda. Wołać na początku ``execute_build``."""
+    global _current_build_seq
+    _current_build_seq = next(_build_counter)
+    return _current_build_seq
+
+
+def build_seq() -> int:
+    """Bieżący numer próby builda w tej sesji."""
+    return _current_build_seq
 
 
 def state_dir() -> Path:
@@ -41,14 +58,14 @@ def work_dir_for(source: Path, single_file: Path | None = None) -> Path:
 
     W trybie jednoplikowym hashujemy PLIK, nie katalog — inaczej dwa pliki
     w tym samym folderze dzieliłyby katalog roboczy. Identyfikator sesji
-    izoluje równoległe instancje (A13).
+    izoluje równoległe instancje.
     """
     return state_dir() / "b" / f"{path_hash(single_file or source)}-{_SESSION_ID}"
 
 
 def _pid_file() -> Path:
     """Plik PID tej sesji — pozwala innym instancjom odróżnić żywą sesję
-    od osieroconej (B14)."""
+    od osieroconej."""
     return state_dir() / "b" / f".pid-{_SESSION_ID}"
 
 
@@ -80,7 +97,7 @@ def _is_pid_alive(pid: int) -> bool:
 
 
 def clean_current_session() -> None:
-    """Usuwa katalogi robocze TEJ sesji i jej plik PID.
+    """Usuwa katalogi robocze i logi TEJ sesji oraz jej plik PID.
 
     Best-effort: sprzątanie przy zamykaniu okna nie może być powodem błędu.
     """
@@ -89,14 +106,29 @@ def clean_current_session() -> None:
         return
     for directory in base.glob(f"*-{_SESSION_ID}"):
         shutil.rmtree(directory, ignore_errors=True)
+    _clean_session_logs(_SESSION_ID)
     _unregister_session()
 
 
+def _clean_session_logs(sid: str) -> None:
+    """Usuwa logi budowań sesji ``sid``."""
+    log_base = logs_dir()
+    if not log_base.exists():
+        return
+    for log_file in log_base.glob(f"*-{sid}.*.log"):
+        with suppress(OSError):
+            log_file.unlink(missing_ok=True)
+    # Compat: logi bez numeru próby (stary format).
+    for log_file in log_base.glob(f"*-{sid}.log"):
+        with suppress(OSError):
+            log_file.unlink(missing_ok=True)
+
+
 def clean_stale_sessions() -> None:
-    """Sprząta katalogi robocze sesji, których proces już nie żyje (B14).
+    """Sprząta katalogi robocze i logi sesji, których proces już nie żyje.
 
     Sprawdza pliki `.pid-*` w katalogu buildów. Jeśli PID jest martwy,
-    usuwa katalog roboczy i plik PID. Żywe sesje — nietknięte.
+    usuwa katalogi, logi i plik PID. Żywe sesje — nietknięte.
     """
     base = state_dir() / "b"
     if not base.exists():
@@ -108,15 +140,14 @@ def clean_stale_sessions() -> None:
         try:
             pid = int(pid_file.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
-            # Uszkodzony plik PID — bezpiecznie usunąć.
             pid = -1
         if _is_pid_alive(pid):
             continue
-        # Sesja osierocona — sprzątnij jej katalogi.
         for directory in base.glob(f"*-{sid}"):
             if directory.name.startswith(".pid-"):
                 continue
             shutil.rmtree(directory, ignore_errors=True)
+        _clean_session_logs(sid)
         with suppress(OSError):
             pid_file.unlink(missing_ok=True)
 

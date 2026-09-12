@@ -1,22 +1,8 @@
-"""Bezpieczne opublikowanie gotowego artefaktu w katalogu docelowym (A01).
+"""Bezpieczne opublikowanie gotowego artefaktu w katalogu docelowym.
 
-Zasada: kolejny build NIGDY nie nadpisuje istniejącego pliku ani katalogu.
-Poprzednia wersja mogła zapisać obok EXE bazę danych albo konfigurację —
-skasowanie jej przy publikacji nowego builda to nieodwracalna utrata danych u
-odbiorcy, który nie używa gita ani kosza z historią.
-
-Dlatego:
-
-- Nazwa docelowa jest wybierana tak, żeby była wolna: `Program.exe`, a jeśli
-  istnieje — `Program (2).exe`, `Program (3).exe`, … (tak jak robi to Eksplorator
-  przy kopiowaniu, więc laik to rozpoznaje).
-- Artefakt najpierw ląduje w tymczasowym miejscu NA WOLUMINIE DOCELOWYM, jest
-  sprawdzany pod kątem kompletności, a dopiero potem finalizowany zmianą nazwy
-  w obrębie tego woluminu. Zmiana nazwy na tym samym woluminie jest atomowa:
-  albo istnieje kompletny artefakt pod docelową nazwą, albo nie ma nic — nigdy
-  połowa skopiowanych plików podszywających się pod gotowy program.
-- Każda awaria (brak miejsca, odmowa dostępu, wyścig o nazwę, zablokowany plik)
-  zostawia poprzedni artefakt nietknięty i nie zostawia niedokończonych śmieci.
+Kolejny build NIGDY nie nadpisuje istniejącego pliku ani katalogu — przy
+kolizji nazw wybierana jest wolna. Staging na wolumenie docelowym
+i atomowa zmiana nazwy gwarantują, że awaria nie zostawia połówki plików.
 """
 
 from __future__ import annotations

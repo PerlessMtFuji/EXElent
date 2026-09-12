@@ -68,7 +68,7 @@ CATALOG: dict[str, str] = {
         "The finished program will take about {low}–{high} MB and will take longer than usual "
         "to build. Largest: {packages}."
     ),
-    # dependency manifests (A07)
+    # dependency manifests
     "requirements_missing": (
         "The requirements list points to {file}, which is not there — the list of extra "
         "packages may be incomplete."
