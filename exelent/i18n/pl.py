@@ -98,6 +98,24 @@ CATALOG: dict[str, str] = {
         "Jeden przesłoniłby drugi przy uruchomieniu — zmień nazwę jednego albo zostaw "
         "tylko ten potrzebny."
     ),
+    "requirements_unsupported_option": (
+        "Opcja {option} w {file} nie jest obsługiwana — została pominięta. "
+        "Lista bibliotek może być niepełna."
+    ),
+    "requires_python_mismatch": (
+        "Projekt deklaruje requires-python = „{declared}”, co nie obejmuje docelowego "
+        "Pythona {target}. Budowanie może się udać, ale program nie był projektowany "
+        "pod tę wersję."
+    ),
+    "asset_collides_with_generated": (
+        "Plik {file} ma taką samą nazwę jak plik tworzony przy budowaniu ({generated}). "
+        "Zmień mu nazwę, żeby uniknąć konfliktu."
+    ),
+    "asset_path_collision": (
+        "Dwa pliki trafiają pod tę samą ścieżkę w gotowym programie: {file_a} i {file_b}. "
+        "W systemie Windows nazwy różniące się tylko wielkością liter oznaczają ten sam plik "
+        "— zmień nazwę jednego z nich."
+    ),
     # środowisko
     "no_network": (
         "Brak połączenia z internetem. Pierwsze budowanie wymaga pobrania narzędzi "

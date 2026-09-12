@@ -628,3 +628,85 @@ def test_constraint_with_r_recursive_and_c(tmp_path):
     assert len(deps) == 1
     assert "flask" in deps[0].package.lower()
     assert "==2.3.0" in deps[0].package
+
+
+# --- B05: pochodzenie zależności (origin) ---
+
+
+def test_manifest_dependency_has_origin_manifest():
+    """B05: zależność z requirements.txt ma origin='manifest'."""
+    deps = resolve_dependencies(_s(""), set(), "requests>=2.0\n")
+    assert deps[0].origin == "manifest"
+
+
+def test_import_dependency_has_origin_import():
+    """B05: zależność wykryta ze skanu importów ma origin='import'."""
+    deps = resolve_dependencies(_s("import requests"), set())
+    assert deps[0].origin == "import"
+
+
+def test_dynamic_import_dependency_has_origin_dynamic():
+    """B05: zależność z dynamicznego importu ma origin='dynamic'."""
+    deps = resolve_dependencies(_s(""), set(), hidden_imports=("PIL.Image",))
+    dep = next(d for d in deps if d.package == "pillow")
+    assert dep.origin == "dynamic"
+
+
+def test_user_module_dependency_has_origin_user():
+    """B05: moduł dopisany ręcznie ma origin='user'."""
+    _, deps = resolve_extra_modules(["sklearn"], set())
+    assert deps[0].origin == "user"
+
+
+# --- B05: diagnostyka nieobsługiwanych opcji ---
+
+
+def test_unsupported_option_in_manifest_is_reported(tmp_path):
+    """B05: opcje takie jak -e, --hash zgłaszane jako Issue."""
+    main = tmp_path / "requirements.txt"
+    main.write_text("-e ./local\n--hash=sha256:abc\nrequests\n", encoding="utf-8")
+    issues: list = []
+    deps = resolve_dependencies(_s(""), set(), requirements_path=main, issues=issues)
+    assert _names(deps) == {"requests"}
+    unsupported = [i for i in issues if i.code == "requirements_unsupported_option"]
+    assert len(unsupported) == 2
+    options = {i.data["option"] for i in unsupported}
+    assert "-e" in options
+    assert "--hash=sha256:abc" in options
+
+
+# --- B05: requires-python ---
+
+
+def test_requires_python_mismatch_is_reported(tmp_path):
+    """B05: requires-python spoza docelowego 3.12 daje ostrzeżenie."""
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(
+        '[project]\nname = "x"\nrequires-python = "<3.10"\ndependencies = ["rich"]\n',
+        encoding="utf-8",
+    )
+    issues: list = []
+    resolve_dependencies(_s(""), set(), pyproject_path=pp, issues=issues)
+    assert "requires_python_mismatch" in {i.code for i in issues}
+
+
+def test_requires_python_matching_is_silent(tmp_path):
+    """B05: requires-python obejmujące 3.12 nie daje ostrzeżenia."""
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(
+        '[project]\nname = "x"\nrequires-python = ">=3.8"\ndependencies = ["rich"]\n',
+        encoding="utf-8",
+    )
+    issues: list = []
+    resolve_dependencies(_s(""), set(), pyproject_path=pp, issues=issues)
+    assert "requires_python_mismatch" not in {i.code for i in issues}
+
+
+def test_constraint_preserves_origin(tmp_path):
+    """B05: constraint nakładany na manifest zachowuje origin='manifest'."""
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("requests<3.0\n", encoding="utf-8")
+    main = tmp_path / "requirements.txt"
+    main.write_text(f"-c {constraints.name}\nrequests>=2.0\n", encoding="utf-8")
+    deps = resolve_dependencies(_s(""), set(), requirements_path=main)
+    assert deps[0].origin == "manifest"

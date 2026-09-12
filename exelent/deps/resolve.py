@@ -120,11 +120,47 @@ def _manifest_lines(
                 constraints.extend(constraint_lines)
         elif line.startswith("-"):
             # Inne opcje pip (-e, --index-url, --hash) nie są nazwą paczki.
+            # Diagnostyka: użytkownik musi wiedzieć, że je pominęliśmy (B05).
+            option = line.split()[0] if line.split() else line
+            issues.append(
+                Issue(
+                    "requirements_unsupported_option",
+                    Severity.WARNING,
+                    {"option": option, "file": path.name},
+                )
+            )
             continue
         else:
             lines.append(line)
     stack.pop()
     return lines
+
+
+def _check_requires_python(data: dict, issues: list[Issue], file_name: str) -> None:
+    """Sprawdza `requires-python` z `[project]` względem docelowego targetu (B05).
+
+    Niezgodność nie blokuje builda — to ostrzeżenie: autor mógł nieprecyzyjnie
+    zadeklarować zakres, a kod może i tak działać. Blokadą jest dopiero
+    nieudana walidacja składni docelowym interpreterem (B09).
+    """
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return
+    requires = project.get("requires-python")
+    if not isinstance(requires, str) or not requires.strip():
+        return
+    try:
+        spec = SpecifierSet(requires)
+    except InvalidSpecifier:
+        return
+    if not spec.contains(TARGET_PYTHON, prereleases=True):
+        issues.append(
+            Issue(
+                "requires_python_mismatch",
+                Severity.WARNING,
+                {"declared": requires, "target": TARGET_PYTHON},
+            )
+        )
 
 
 def _deps_from_pyproject(path: Path, issues: list[Issue]) -> tuple[Dependency, ...] | None:
@@ -147,6 +183,10 @@ def _deps_from_pyproject(path: Path, issues: list[Issue]) -> tuple[Dependency, .
     except (OSError, tomllib.TOMLDecodeError):
         issues.append(Issue("pyproject_unreadable", Severity.WARNING, {"file": path.name}))
         return None
+
+    # B05: sprawdzenie `requires-python` względem docelowego targetu.
+    _check_requires_python(data, issues, path.name)
+
     project = data.get("project")
     if isinstance(project, dict):
         if "dependencies" in project.get("dynamic", []):
@@ -179,7 +219,7 @@ def _dep_from_requirement_line(line: str) -> Dependency | None:
     """Jedna linia manifestu -> Dependency, albo None gdy marker ją wyklucza
     dla docelowej platformy lub gdy linia jest niepoprawna."""
     if _is_direct_reference(line):
-        return Dependency(import_name=line, package=line, heavy=False)
+        return Dependency(import_name=line, package=line, heavy=False, origin="manifest")
     try:
         req = Requirement(line)
     except InvalidRequirement:
@@ -193,7 +233,9 @@ def _dep_from_requirement_line(line: str) -> Dependency | None:
         spec = f"{req.name}{extras} @ {req.url}"
     else:
         spec = f"{req.name}{extras}{req.specifier}"
-    return Dependency(import_name=req.name, package=spec, heavy=is_heavy(req.name))
+    return Dependency(
+        import_name=req.name, package=spec, heavy=is_heavy(req.name), origin="manifest"
+    )
 
 
 def _apply_constraints(deps: dict[str, Dependency], constraint_lines: list[str]) -> None:
@@ -244,6 +286,7 @@ def _apply_constraints(deps: dict[str, Dependency], constraint_lines: list[str])
             package=new_spec,
             optional=dep.optional,
             heavy=dep.heavy,
+            origin=dep.origin,
         )
 
 
@@ -504,6 +547,7 @@ def _deps_from_imports(
             package=package,
             optional=optional,
             heavy=is_heavy(package),
+            origin="import",
         )
         for package, optional in package_optional.items()
     ]
@@ -574,7 +618,8 @@ def resolve_extra_modules(
             continue
         package = ALIASES.get(top, top)
         by_package.setdefault(
-            package, Dependency(import_name=top, package=package, heavy=is_heavy(package))
+            package,
+            Dependency(import_name=top, package=package, heavy=is_heavy(package), origin="user"),
         )
     deps = tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
     return tuple(hidden), deps
@@ -599,7 +644,8 @@ def _deps_from_hidden_imports(
             continue
         package = ALIASES.get(top, top)
         by_package.setdefault(
-            package, Dependency(import_name=top, package=package, heavy=is_heavy(package))
+            package,
+            Dependency(import_name=top, package=package, heavy=is_heavy(package), origin="dynamic"),
         )
     return tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
 

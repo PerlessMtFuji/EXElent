@@ -92,6 +92,24 @@ CATALOG: dict[str, str] = {
         'Two files share the module name "{module}" in different folders ({files}). '
         "One would hide the other at runtime — rename one or keep only the one you need."
     ),
+    "requirements_unsupported_option": (
+        "The option {option} in {file} is not supported — it was skipped. "
+        "The list of packages may be incomplete."
+    ),
+    "requires_python_mismatch": (
+        'The project declares requires-python = "{declared}", which does not include '
+        "the target Python {target}. The build may still work, but the program was not "
+        "designed for this version."
+    ),
+    "asset_collides_with_generated": (
+        "The file {file} has the same name as a file the build creates ({generated}). "
+        "Rename it to avoid the conflict."
+    ),
+    "asset_path_collision": (
+        "Two files end up at the same path in the finished program: {file_a} and {file_b}. "
+        "On Windows, file names that differ only in capitalisation are the same file — "
+        "rename one."
+    ),
     # environment
     "no_network": (
         "No internet connection. The first build needs to download tools — connect and try again."

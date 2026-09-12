@@ -73,6 +73,9 @@ class Dependency:
     package: str
     optional: bool = False
     heavy: bool = False
+    # Skąd pochodzi ta zależność: "manifest", "import", "dynamic", "user".
+    # Pusty string = nieznane (starszy kod).
+    origin: str = ""
 
 
 @dataclass(frozen=True)
@@ -168,6 +171,9 @@ class BuildPlan:
     # kopiuje TYLKO te pliki i weryfikuje hash; nowe pliki dodane po analizie
     # nie wchodzą do builda bez ponownej analizy.
     source_inventory: tuple[SourceEntry, ...] = ()
+    # Uwagi wykryte przy budowaniu planu (B07: kolizje zasobów, B05: niezgodności).
+    # Rozdzielone od `BuildResult.issues` — te powstają PRZED startem builda.
+    plan_issues: tuple[Issue, ...] = ()
 
 
 @dataclass(frozen=True)
