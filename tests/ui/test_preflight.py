@@ -35,11 +35,15 @@ def test_missing_uv_degrades_quietly(qtbot, worker, monkeypatch):
     monkeypatch.setattr(preflight_module, "uv_path", lambda: Path("nie-ma-mnie.exe"))
     with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
         worker.start(["scipy"])
-    assert blocker.args[0] == DownloadPlan()
+    plan = blocker.args[0]
+    assert plan.would_download == 0
+    assert plan.status == "offline"
 
 
 def test_result_reaches_the_signal(qtbot, worker, monkeypatch):
-    expected = DownloadPlan(specs=("scipy==1.18.1",), would_download=1, total_bytes=36_700_160)
+    expected = DownloadPlan(
+        specs=("scipy==1.18.1",), would_download=1, total_bytes=36_700_160, status="complete"
+    )
     monkeypatch.setattr(worker, "_resolve", lambda packages, cancel: expected)
     with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
         worker.start(["scipy"])
@@ -67,7 +71,8 @@ def test_waiting_for_the_plan_has_a_deadline(qtbot, worker, monkeypatch):
     release.set()
 
     assert elapsed < 3.0, "oczekiwanie przekroczylo swoj limit"
-    assert plan == DownloadPlan()
+    # B12: plan w trakcie liczenia ma status "pending", nie "empty".
+    assert plan.would_download == 0
 
 
 def test_waiting_returns_the_real_plan_when_it_arrives_in_time(qtbot, worker, monkeypatch):
@@ -146,5 +151,6 @@ def test_stop_releases_whoever_waits_for_the_plan(qtbot, worker, monkeypatch):
 
     release.set()
     qtbot.waitUntil(lambda: not worker.is_running(), timeout=15000)
-    assert plan == DownloadPlan()
+    # B12: po stop() plan ma status "pending" (nie zdążył się policzyć).
+    assert plan.would_download == 0
     assert elapsed < 2.0

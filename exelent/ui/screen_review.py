@@ -287,9 +287,13 @@ class ReviewScreen(QWidget):
             self.show_download_plan(self._download_plan)
 
     def show_download_plan(self, plan) -> None:
-        """Wynik preflightu. Pusty plan zostawia pole puste — brak liczby jest
-        lepszy niż liczba zmyślona."""
+        """Wynik preflightu. B12: status odróżnia kompletny wynik od offline/błędu."""
         self._download_plan = plan
+        # B12: nierozstrzygnięty wynik (offline, error, cancelled) → czyste pole,
+        # warstwa wyżej sięga po szacunek z tabeli. Nie pokazujemy fałszywego zera.
+        if plan.status in ("offline", "error", "cancelled", "pending"):
+            self.deps_size_label.setText("")
+            return
         if plan.would_download == 0 and not plan.specs:
             self.deps_size_label.setText("")
             return

@@ -7,6 +7,7 @@ zostawia pusty plan, a ekran wraca do szacunku z tabeli.
 
 from __future__ import annotations
 
+import itertools
 import threading
 from collections.abc import Sequence
 
@@ -19,22 +20,28 @@ from exelent.runtime.bootstrap import uv_path
 
 _THREAD_QUIT_TIMEOUT_MS = 5000
 
+# B12: monotoniczny generator identyfikatorów żądań.
+_request_counter = itertools.count(1)
+
 
 class _Job(QObject):
-    finished = Signal(object)
+    finished = Signal(int, object)  # (request_id, DownloadPlan)
 
-    def __init__(self, packages: Sequence[str], resolve, cancel: CancelToken) -> None:
+    def __init__(
+        self, packages: Sequence[str], resolve, cancel: CancelToken, request_id: int
+    ) -> None:
         super().__init__()
         self._packages = list(packages)
         self._resolve = resolve
         self._cancel = cancel
+        self._request_id = request_id
 
     def run(self) -> None:
         try:
             plan = self._resolve(self._packages, self._cancel)
         except Exception:  # noqa: BLE001 - liczba dla uzytkownika nie moze zabic okna
-            plan = DownloadPlan()
-        self.finished.emit(plan)
+            plan = DownloadPlan(status="error")
+        self.finished.emit(self._request_id, plan)
 
 
 class PreflightWorker(QObject):
@@ -46,6 +53,9 @@ class PreflightWorker(QObject):
         self._job: _Job | None = None
         self._token: CancelToken | None = None
         self._plan = DownloadPlan()
+        # B12: identyfikator żądania — spóźniony wynik starego żądania nie
+        # nadpisuje nowego.
+        self._current_request: int = 0
         # Zdarzenie, a nie `QThread.wait`: wątek roboczy kręci własną pętlę
         # zdarzeń i kończy ją dopiero `quit()` z wątku głównego. Gdyby okno
         # czekało na `QThread.wait`, czekałoby na `quit()`, którego samo nie
@@ -71,7 +81,7 @@ class PreflightWorker(QObject):
             # Preflight NIE pobiera uv. To praca fazy budowania, ktora ma na to
             # wlasny pasek postepu — sciaganie 15 MB w tle ekranu 2, bez slowa
             # do uzytkownika, byloby niespodzianka.
-            return DownloadPlan()
+            return DownloadPlan(status="offline")
         # Wersja DOCELOWEGO Pythona, nie sciezka do `preflight-venv`, ktorego
         # nikt nie tworzyl: --dry-run rozwiazuje wersje kol dla wlasciwego
         # interpretera (te sama, ktorej uzyje build), gdy jest juz w cache uv;
@@ -85,6 +95,10 @@ class PreflightWorker(QObject):
 
     def start(self, packages: Sequence[str]) -> None:
         self.stop()
+        self._current_request = next(_request_counter)
+        # B12: czyszczenie poprzedniego wyniku — nie pokazujemy szacunku
+        # poprzedniego projektu podczas oczekiwania.
+        self._plan = DownloadPlan(status="pending")
         if not packages:
             self._plan = DownloadPlan()
             self._done.set()
@@ -93,7 +107,7 @@ class PreflightWorker(QObject):
         self._done.clear()
         self._token = CancelToken()
         self._thread = QThread()
-        self._job = _Job(packages, self._resolve, self._token)
+        self._job = _Job(packages, self._resolve, self._token, self._current_request)
         self._job.moveToThread(self._thread)
         # DWA połączenia do jednego sygnału, celowo. Bezpośrednie zapisuje
         # wynik jeszcze w wątku roboczym, żeby `plan(wait_ms)` miał na co
@@ -104,18 +118,23 @@ class PreflightWorker(QObject):
         self._thread.started.connect(self._job.run)
         self._thread.start()
 
-    def _store(self, plan: DownloadPlan) -> None:
-        self._plan = plan
+    def _store(self, request_id: int, plan: DownloadPlan) -> None:
+        # B12: tylko aktualny wynik trafia do _plan.
+        if request_id == self._current_request:
+            self._plan = plan
         self._done.set()
 
-    def _on_done(self, plan: DownloadPlan) -> None:
-        self._plan = plan
+    def _on_done(self, request_id: int, plan: DownloadPlan) -> None:
         thread = self._thread
         self._thread = None
         if thread is not None:
             thread.quit()
             thread.wait(_THREAD_QUIT_TIMEOUT_MS)
         self._job = None
+        # B12: spóźniony wynik starego żądania — odrzucamy, nie emitujemy.
+        if request_id != self._current_request:
+            return
+        self._plan = plan
         self.finished.emit(plan)
 
     def stop(self, timeout_ms: int = _THREAD_QUIT_TIMEOUT_MS) -> bool:
