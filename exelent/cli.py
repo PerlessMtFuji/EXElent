@@ -57,6 +57,11 @@ def run_build(
             )
 
         plan = make_plan(analysis, **overrides)
+        # B07: kolizje zasobów i inne uwagi planu.
+        carried.extend(plan.plan_issues)
+        plan_blockers = tuple(i for i in plan.plan_issues if i.severity is Severity.BLOCKER)
+        if plan_blockers:
+            return BuildResult(ok=False, issues=sort_issues((*carried,)))
     except IssueError as exc:
         return BuildResult(ok=False, issues=sort_issues((*carried, *exc.issues)))
     except Exception as exc:  # noqa: BLE001 - granica wyjątków

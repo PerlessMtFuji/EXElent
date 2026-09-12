@@ -57,6 +57,22 @@ def _check_cancel(cancel) -> None:
         raise IssueError(Issue("build_cancelled", Severity.INFO))
 
 
+def _validate_rel_path(rel_path: str) -> bool:
+    """Czy ścieżka względna jest bezpieczna do materializacji (B08).
+
+    Odrzuca ścieżki z `..`, bezwzględne ścieżki i inne próby wyjścia poza
+    workspace. Nie ufa samemu `relative_to` — sprawdza surowy tekst.
+    """
+    if not rel_path:
+        return False
+    # Bezwzględne ścieżki (Windows: `C:\\`, `\\\\server`, `/root`).
+    if rel_path.startswith(("/", "\\")) or (len(rel_path) >= 2 and rel_path[1] == ":"):
+        return False
+    # Segmenty `..` w dowolnym miejscu.
+    parts = rel_path.replace("\\", "/").split("/")
+    return ".." not in parts
+
+
 def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
     """Kopia robocza projektu z weryfikacją inwentarza (B08).
 
@@ -84,10 +100,27 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
         for i, entry in enumerate(plan.source_inventory):
             if i % _CANCEL_CHECK_INTERVAL == 0:
                 _check_cancel(cancel)
+            # B08: ochrona przed path traversal — ścieżka z `..` lub bezwzględna
+            # nie może wyjść poza workspace.
+            if not _validate_rel_path(entry.rel_path):
+                changed.append(f"{entry.rel_path} (niedozwolona ścieżka)")
+                continue
             source = plan.root / entry.rel_path
             if not source.is_file():
                 changed.append(f"{entry.rel_path} (usunięty)")
                 continue
+            # B08: symlinki mogą wyjść poza zaakceptowany zakres — sprawdzamy,
+            # czy cel mieści się w korzeniu projektu.
+            if source.is_symlink():
+                try:
+                    real = source.resolve(strict=True)
+                    root_real = plan.root.resolve(strict=True)
+                    if root_real not in real.parents and real != root_real:
+                        changed.append(f"{entry.rel_path} (symlink poza projekt)")
+                        continue
+                except OSError:
+                    changed.append(f"{entry.rel_path} (niedostępny symlink)")
+                    continue
             target = workspace / entry.rel_path
             mismatch = _copy_and_verify(source, target, entry.sha256)
             if mismatch:

@@ -15,6 +15,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from exelent.analysis.entrypoint import local_module_names
+from exelent.build.launcher import LAUNCHER_FILENAME
 from exelent.deps.resolve import resolve_extra_modules
 from exelent.models import (
     AppKind,
@@ -280,6 +281,58 @@ def _dedup(items: Iterable[str]) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _detect_asset_collisions(analysis: ProjectAnalysis, exe_name: str) -> list[Issue]:
+    """Wykrywa kolizje zasobów z wygenerowanymi plikami (B07).
+
+    Sprawdzenia (case-insensitive, bo Windows):
+    - zasób vs launcher (_exelent_launcher.py)
+    - zasób vs nazwa EXE (np. program.exe)
+    - zasób vs ikona w workspace (_exelent_icon.ico)
+    - duplikaty ścieżek zasobów (np. Data.json i data.json na Windows)
+    """
+    issues: list[Issue] = []
+    root = analysis.root
+    reserved = {
+        LAUNCHER_FILENAME.lower(),
+        f"{exe_name}.exe".lower(),
+        "_exelent_icon.ico",
+    }
+
+    seen: dict[str, Path] = {}
+    for data_path in analysis.scan.data_files:
+        try:
+            rel = data_path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        key = rel.lower()
+
+        # Kolizja z plikami generowanymi przez build.
+        base_name = data_path.name.lower()
+        if base_name in reserved and data_path.parent == root:
+            issues.append(
+                Issue(
+                    "asset_collides_with_generated",
+                    Severity.WARNING,
+                    {"file": rel, "generated": base_name},
+                )
+            )
+
+        # Duplikat ścieżki (case-insensitive).
+        if key in seen:
+            existing = seen[key].relative_to(root).as_posix()
+            issues.append(
+                Issue(
+                    "asset_path_collision",
+                    Severity.BLOCKER,
+                    {"file_a": existing, "file_b": rel},
+                )
+            )
+        else:
+            seen[key] = data_path
+
+    return issues
+
+
 def _file_hash(path: Path) -> str:
     """SHA-256 pliku — utrwala treść w momencie akceptacji (B08)."""
     h = hashlib.sha256()
@@ -370,6 +423,9 @@ def make_plan(
 
     name = sanitize_exe_name(exe_name or analysis.suggested_name)
 
+    # B07: kolizje zasobów z plikami generowanymi przez build.
+    plan_issues = _detect_asset_collisions(analysis, name)
+
     # Moduły dopisane ręcznie na ekranie 2: przypadki, których statyczny skan nie
     # widzi (import dynamiczny, wtyczka). Scalane z tym, co znalazła analiza —
     # build wykonuje DOKŁADNIE plan, więc dopisania muszą być już w nim.
@@ -401,4 +457,5 @@ def make_plan(
         # Inwentarz utrwala listę zaakceptowanych plików z hashami (B08).
         # Materializacja kopiuje TYLKO te pliki i weryfikuje hash.
         source_inventory=_build_source_inventory(analysis),
+        plan_issues=tuple(plan_issues),
     )
