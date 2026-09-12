@@ -187,3 +187,7 @@ class BuildResult:
     duration_s: float = 0.0
     log_path: Path | None = None
     issues: tuple[Issue, ...] = ()
+    # B06: rozstrzygnięte wersje paczek zainstalowanych w środowisku builda
+    # (nazwa, wersja). Umożliwiają odtworzenie problemu i weryfikację
+    # zgodności. Zapisywane w raporcie JSON.
+    resolved_versions: tuple[tuple[str, str], ...] = ()

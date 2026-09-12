@@ -301,3 +301,49 @@ def test_empty_hash_skips_verification(tmp_path, monkeypatch):
     workspace = materialize_workspace(plan)
 
     assert (workspace / "main.py").exists()
+
+
+# --- B08: wspólne limity skanowania i materializacji ---
+
+
+def test_materialization_enforces_file_limit(tmp_path, monkeypatch):
+    """B08: materializacja nie kopiuje więcej plików niż limit skanera."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    # Ustawiamy limit na 3, żeby test nie tworzył tysięcy plików.
+    monkeypatch.setattr("exelent.build.workspace.MAX_SCAN_FILES", 3)
+    root = tmp_path / "src"
+    root.mkdir()
+
+    inventory = []
+    for i in range(5):
+        name = f"mod{i}.py"
+        content = f"X = {i}".encode()
+        (root / name).write_bytes(content)
+        inventory.append(SourceEntry(rel_path=name, sha256=_sha(content)))
+
+    plan = _plan(root, source_inventory=tuple(inventory))
+
+    with pytest.raises(IssueError) as exc_info:
+        materialize_workspace(plan)
+
+    assert exc_info.value.issue.code == "scan_truncated"
+
+
+def test_materialization_within_limit_succeeds(tmp_path, monkeypatch):
+    """B08: materializacja w granicach limitu przechodzi bez błędu."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+    monkeypatch.setattr("exelent.build.workspace.MAX_SCAN_FILES", 10)
+    root = tmp_path / "src"
+    root.mkdir()
+
+    inventory = []
+    for i in range(3):
+        name = f"mod{i}.py"
+        content = f"X = {i}".encode()
+        (root / name).write_bytes(content)
+        inventory.append(SourceEntry(rel_path=name, sha256=_sha(content)))
+
+    plan = _plan(root, source_inventory=tuple(inventory))
+    workspace = materialize_workspace(plan)
+
+    assert len(list(workspace.iterdir())) == 3

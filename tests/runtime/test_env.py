@@ -380,3 +380,54 @@ def test_run_uv_without_a_token_behaves_as_before():
     result = run_uv(Path(sys.executable), ["-c", "print('cichy')"])
     assert result.returncode == 0
     assert "cichy" in result.stdout
+
+
+# --- B06: rozstrzygnięte wersje ---
+
+
+def test_resolved_versions_are_captured_after_install(monkeypatch, tmp_path):
+    """B06: po udanej instalacji `uv pip freeze` zbiera zainstalowane wersje."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(env, "ensure_uv", lambda _p, cancel=None: tmp_path / "uv.exe")
+
+    freeze_output = "numpy==1.26.4\npyinstaller==6.16.0\nrequests==2.31.0\n"
+
+    def fake_run(uv, args, *, cwd=None, cancel=None):
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        Result.stdout = freeze_output if args[:2] == ["pip", "freeze"] else ""
+        return Result()
+
+    monkeypatch.setattr(env, "run_uv", fake_run)
+    monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv())
+
+    result = create_build_env(tmp_path / "src", ["requests", "numpy"], noop_progress)
+
+    assert ("numpy", "1.26.4") in result.resolved_versions
+    assert ("requests", "2.31.0") in result.resolved_versions
+    # Posortowane alfabetycznie.
+    names = [name for name, _ in result.resolved_versions]
+    assert names == sorted(names, key=str.lower)
+
+
+def test_resolved_versions_empty_when_freeze_fails(monkeypatch, tmp_path):
+    """B06: błąd `uv pip freeze` nie blokuje builda — zwracamy pustą krotkę."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(env, "ensure_uv", lambda _p, cancel=None: tmp_path / "uv.exe")
+
+    def fake_run(uv, args, *, cwd=None, cancel=None):
+        class Result:
+            returncode = 1 if args[:2] == ["pip", "freeze"] else 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(env, "run_uv", fake_run)
+    monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv())
+
+    result = create_build_env(tmp_path / "src", [], noop_progress)
+
+    assert result.resolved_versions == ()

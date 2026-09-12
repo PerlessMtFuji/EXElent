@@ -10,7 +10,7 @@ import hashlib
 import shutil
 from pathlib import Path
 
-from exelent.constants import EXCLUDED_DIRS
+from exelent.constants import EXCLUDED_DIRS, MAX_SCAN_BYTES, MAX_SCAN_FILES
 from exelent.models import BuildPlan, Issue, IssueError, Severity
 from exelent.runtime.paths import work_dir_for
 
@@ -93,6 +93,10 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
 
     changed: list[str] = []
+    # B08: te same limity co skan — materializacja nie może kopiować więcej
+    # plików ani bajtów niż analiza zaakceptowała.
+    copied_files = 0
+    copied_bytes = 0
 
     if plan.source_inventory:
         # B08: kopiowanie inwentarza — TYLKO zaakceptowane pliki.
@@ -125,6 +129,17 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
             mismatch = _copy_and_verify(source, target, entry.sha256)
             if mismatch:
                 changed.append(f"{entry.rel_path} (zmieniony)")
+            else:
+                copied_files += 1
+                try:
+                    copied_bytes += target.stat().st_size
+                except OSError:
+                    pass
+            # B08: wspólne limity — materializacja nie kopiuje więcej niż skan.
+            if copied_files > MAX_SCAN_FILES or copied_bytes > MAX_SCAN_BYTES:
+                raise IssueError(
+                    Issue("scan_truncated", Severity.BLOCKER, {"files": str(copied_files)})
+                )
         # Upewnij się, że plik główny jest w workspace, nawet jeśli nie
         # trafił do inwentarza (konwersja TXT → nowy .py).
         entry_rel = plan.entry.relative_to(plan.root).as_posix()
@@ -148,7 +163,7 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
                 for name in filenames:
                     if name.endswith((".py", ".pyw")):
                         all_sources.append(dirpath / name)
-        for source in all_sources:
+        for source in (*all_sources, *plan.data_files):
             try:
                 rel = source.relative_to(plan.root)
             except ValueError:
@@ -156,14 +171,16 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
             target = workspace / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-        for data in plan.data_files:
+            copied_files += 1
             try:
-                rel = data.relative_to(plan.root)
-            except ValueError:
-                continue
-            target = workspace / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(data, target)
+                copied_bytes += target.stat().st_size
+            except OSError:
+                pass
+            # B08: wspólne limity — materializacja nie kopiuje więcej niż skan.
+            if copied_files > MAX_SCAN_FILES or copied_bytes > MAX_SCAN_BYTES:
+                raise IssueError(
+                    Issue("scan_truncated", Severity.BLOCKER, {"files": str(copied_files)})
+                )
 
     if changed:
         raise IssueError(

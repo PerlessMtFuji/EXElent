@@ -50,6 +50,9 @@ class BuildEnv:
     venv: Path
     python: Path
     failed_packages: tuple[str, ...] = field(default_factory=tuple)
+    # B06: rozstrzygnięte wersje zainstalowanych paczek (nazwa, wersja).
+    # Umożliwia odtworzenie problemu; zapisywane w raporcie builda.
+    resolved_versions: tuple[tuple[str, str], ...] = ()
 
 
 def run_uv(
@@ -287,6 +290,31 @@ def _raise_if_cancelled(cancel) -> None:
         raise IssueError(Issue("build_cancelled", Severity.INFO))
 
 
+def _freeze_versions(
+    uv: Path,
+    python: Path,
+    *,
+    cancel=None,
+) -> tuple[tuple[str, str], ...]:
+    """B06: odczytuje zainstalowane wersje paczek z venv.
+
+    `uv pip freeze` drukuje linie `name==version`. Parsujemy je do par
+    (nazwa, wersja) i sortujemy alfabetycznie. Błąd freeze nie blokuje
+    builda — zwracamy pustą krotkę.
+    """
+    result = run_uv(uv, ["pip", "freeze", "--python", str(python)], cancel=cancel)
+    if result.returncode != 0:
+        return ()
+    versions: list[tuple[str, str]] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if "==" in line:
+            name, _, version = line.partition("==")
+            versions.append((name.strip(), version.strip()))
+    versions.sort(key=lambda nv: nv[0].lower())
+    return tuple(versions)
+
+
 def create_build_env(
     source: Path,
     packages: Sequence[str],
@@ -404,7 +432,19 @@ def create_build_env(
             speed_bps=speed,
         )
     )
-    return BuildEnv(uv=uv, venv=venv, python=python, failed_packages=tuple(failed))
+
+    # B06: utrwalenie rozstrzygniętych wersji. `uv pip freeze` drukuje
+    # zainstalowane paczki w formacie `name==version` — zbieramy je, żeby
+    # raport builda pozwalał odtworzyć środowisko i wyjaśnić problem.
+    resolved = _freeze_versions(uv, python, cancel=cancel)
+
+    return BuildEnv(
+        uv=uv,
+        venv=venv,
+        python=python,
+        failed_packages=tuple(failed),
+        resolved_versions=resolved,
+    )
 
 
 def _requirements_conflict(bulk_text: str) -> BuildEnvError:
