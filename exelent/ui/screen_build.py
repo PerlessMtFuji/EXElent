@@ -63,6 +63,10 @@ class BuildScreen(QWidget):
 
         self.summary_label = QLabel("")
         self.summary_label.setWordWrap(True)
+        # B13: ostrzeżenia analizy i backendu widoczne RÓWNIEŻ po sukcesie.
+        self.issues_label = QLabel("")
+        self.issues_label.setWordWrap(True)
+        self.issues_label.setObjectName("Muted")
         self.antivirus_label = QLabel(t("antivirus_note"), objectName="Muted")
         self.antivirus_label.setWordWrap(True)
 
@@ -110,6 +114,7 @@ class BuildScreen(QWidget):
         outer.addWidget(self.bar)
         outer.addWidget(self.bytes_label)
         outer.addWidget(self.summary_label)
+        outer.addWidget(self.issues_label)
         outer.addWidget(self.antivirus_label)
         outer.addWidget(self.log_toggle, alignment=Qt.AlignmentFlag.AlignLeft)
         outer.addWidget(self.log_view, stretch=1)
@@ -132,6 +137,7 @@ class BuildScreen(QWidget):
         nadal odlicza.
         """
         self.antivirus_label.setVisible(False)
+        self.issues_label.setVisible(False)
         self.bytes_label.setVisible(False)
         for button in (
             self.cancel_button,
@@ -257,6 +263,13 @@ class BuildScreen(QWidget):
                 size=human_size(result.size_bytes),
             )
         )
+        # B13: ostrzeżenia analizy i backendu widoczne RÓWNIEŻ po sukcesie.
+        # Sam przycisk „Uruchom" nie jest dowodem poprawności aplikacji.
+        if result.issues:
+            self.issues_label.setText(
+                "\n".join(describe(i) for i in result.issues)
+            )
+            self.issues_label.setVisible(True)
         self.antivirus_label.setVisible(True)
         self.open_folder_button.setVisible(True)
         self.run_button.setVisible(True)

@@ -531,3 +531,43 @@ def test_byte_line_omits_eta_when_speed_is_unknown(qtbot, screen):
     )
     assert screen.bytes_label.isHidden() is False
     assert "None" not in screen.bytes_label.text()
+
+
+# --- B13: issues widoczne po sukcesie ------------------------------------------
+
+
+def test_success_with_issues_shows_them(screen, tmp_path):
+    """B13 P1: ostrzeżenia analizy i backendu muszą być widoczne RÓWNIEŻ po
+    sukcesie pakowania — sam przycisk „Uruchom" nie jest dowodem poprawności."""
+    issues = (
+        Issue("dependency_not_declared", Severity.WARNING, {"package": "requests"}),
+        Issue("size_estimate_large", Severity.WARNING, {"packages": "torch", "low": "200", "high": "600"}),
+    )
+    screen.on_finished(
+        BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048, issues=issues)
+    )
+    assert _visible(screen.issues_label, screen) is True
+    text = screen.issues_label.text()
+    assert text != ""
+    # Sprawdzamy, że oba issues się pojawiły.
+    assert "requests" in text or t("dependency_not_declared", package="requests") in text
+
+
+def test_success_without_issues_hides_the_label(screen, tmp_path):
+    """Pusty blok nie powinien się pojawiać, gdy nie ma ostrzeżeń."""
+    screen.on_finished(
+        BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048)
+    )
+    assert _visible(screen.issues_label, screen) is False
+
+
+def test_issues_cleared_on_new_build(screen, tmp_path):
+    """Ostrzeżenia poprzedniego builda nie mogą zostać na ekranie nowego."""
+    issues = (Issue("dependency_not_declared", Severity.WARNING, {"package": "requests"}),)
+    screen.on_finished(
+        BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048, issues=issues)
+    )
+    assert _visible(screen.issues_label, screen) is True
+
+    screen.start(_plan(tmp_path))
+    assert _visible(screen.issues_label, screen) is False
