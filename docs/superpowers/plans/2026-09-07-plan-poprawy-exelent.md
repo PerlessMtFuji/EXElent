@@ -105,12 +105,12 @@ Pliki: [apptype.py](../../../exelent/analysis/apptype.py), [launcher.py](../../.
 
 Problem: alias `open` i `Image.save` omijają heurystykę, a ONEFILE ustawia cwd na `_MEIPASS`. Wynik zapisu może zniknąć wraz z katalogiem rozpakowania.
 
-- [ ] Rozdzielić w kontrakcie katalog zasobów paczki, roboczy katalog uruchomienia i miejsce trwałych danych.
-- [ ] Przyjąć zachowawczy domyślny tryb ONEDIR, dopóki polityka ONEFILE nie zapewnia trwałego cwd. Brak rozpoznanego zapisu nie jest dowodem, że program niczego nie zapisuje.
-- [ ] Nie używać tymczasowego `_MEIPASS` jako domyślnego miejsca względnych zapisów. Dla ONEFILE ustalić jawny trwały cwd, np. katalog EXE; odmowa zapisu ma dać zrozumiałą diagnostykę.
-- [ ] Powiązać odczyt zasobów z B07: źródła używające względnego `open('config.json')` muszą otrzymać zgodny układ. Jeśli pojedynczy EXE nie zapewnia tej zgodności, rekomendować ONEDIR i wyjaśnić przyczynę.
+- [x] Rozdzielić w kontrakcie katalog zasobów paczki, roboczy katalog uruchomienia i miejsce trwałych danych.
+- [x] Przyjąć zachowawczy domyślny tryb ONEDIR, dopóki polityka ONEFILE nie zapewnia trwałego cwd. Brak rozpoznanego zapisu nie jest dowodem, że program niczego nie zapisuje.
+- [x] Nie używać tymczasowego `_MEIPASS` jako domyślnego miejsca względnych zapisów. Dla ONEFILE ustalić jawny trwały cwd, np. katalog EXE; odmowa zapisu ma dać zrozumiałą diagnostykę.
+- [x] Powiązać odczyt zasobów z B07: źródła używające względnego `open('config.json')` muszą otrzymać zgodny układ. Jeśli pojedynczy EXE nie zapewnia tej zgodności, rekomendować ONEDIR i wyjaśnić przyczynę.
 - [ ] Nie przepisywać dowolnych ścieżek w cudzym kodzie ani nie przedstawiać heurystyki jako gwarancji. Jawne zapisy do `__file__`/`_MEIPASS` i inne nieobsługiwane wzorce opisać przed budowaniem, jeśli zostały rozpoznane.
-- [ ] Wyjaśnić konsekwencje ręcznego wyboru ONEFILE oraz odmowy dostępu w docelowej lokalizacji. Zachować ochronę danych z poprzednich wersji.
+- [x] Wyjaśnić konsekwencje ręcznego wyboru ONEFILE oraz odmowy dostępu w docelowej lokalizacji. Zachować ochronę danych z poprzednich wersji.
 
 Akceptacja: rzeczywiste EXE dla aliasu `open`, `Path.open` i Pillow `.save` pozostawiają wynik po zakończeniu procesu, również po uruchomieniu z obcego cwd. Odczyt istniejących zasobów nadal działa. Test obejmuje zalecany tryb oraz ręcznie wybrany ONEFILE; przypadek bez gwarantowanej zgodności otrzymuje widoczne ograniczenie zamiast zapewnienia o bezpieczeństwie zapisu.
 
@@ -118,13 +118,13 @@ Akceptacja: rzeczywiste EXE dla aliasu `open`, `Path.open` i Pillow `.save` pozo
 
 Pliki: [textconv.py](../../../exelent/analysis/textconv.py), [scanner.py](../../../exelent/analysis/scanner.py), [project.py](../../../exelent/analysis/project.py), modele i UI podglądu.
 
-- [ ] Dodać reprodukcję poprawnego Pythona z blokiem Markdown w napisie wielowierszowym: konwersja musi zachować `REAL PROGRAM`, nie uruchamiać `EXAMPLE`.
-- [ ] Po dekodowaniu najpierw sprawdzić całe wejście kompilatorem składni. Poprawnego programu nie poddawać usuwaniu fences, etykiet, numeracji ani promptów.
-- [ ] Dla niepoprawnego wejścia rozpoznawać otoczkę bez naruszania literałów. Niejednoznacznych fragmentów nie naprawiać przez zgadywanie.
+- [x] Dodać reprodukcję poprawnego Pythona z blokiem Markdown w napisie wielowierszowym: konwersja musi zachować `REAL PROGRAM`, nie uruchamiać `EXAMPLE`.
+- [x] Po dekodowaniu najpierw sprawdzić całe wejście kompilatorem składni. Poprawnego programu nie poddawać usuwaniu fences, etykiet, numeracji ani promptów.
+- [x] Dla niepoprawnego wejścia rozpoznawać otoczkę bez naruszania literałów. Niejednoznacznych fragmentów nie naprawiać przez zgadywanie.
 - [ ] Dla wielu bloków pokazać ich granice i sposób wyboru lub połączenia. Nie scalać automatycznie alternatywnych programów bez przeglądu.
-- [ ] Zachować kroki konwersji i mapę linii w analizie i planie, tak aby podgląd oraz późniejszy błąd wskazywały oryginalny TXT.
-- [ ] Ujednolicić dekodowanie skanera i konwertera: UTF-8 BOM, UTF-16, wspierane starsze kodowania oraz kontrolowany błąd uszkodzonego BOM. Dla `.py` respektować deklarację kodowania.
-- [ ] Zachować odtwarzanie podkatalogów i blokady kolizji TXT/PY; walidować docelową ścieżkę konwersji względem workspace.
+- [x] Zachować kroki konwersji i mapę linii w analizie i planie, tak aby podgląd oraz późniejszy błąd wskazywały oryginalny TXT.
+- [x] Ujednolicić dekodowanie skanera i konwertera: UTF-8 BOM, UTF-16, wspierane starsze kodowania oraz kontrolowany błąd uszkodzonego BOM. Dla `.py` respektować deklarację kodowania.
+- [x] Zachować odtwarzanie podkatalogów i blokady kolizji TXT/PY; walidować docelową ścieżkę konwersji względem workspace.
 
 Akceptacja: testy poprawnych literałów, fences wewnątrz napisów, numerowanej treści literału, tabów, raw/bytes/f-stringów, pustego i niejednoznacznego wejścia. Powtórna konwersja nie zmienia wyniku. Skan projektu i pojedynczego TXT w UTF-16 znajdują program. Golden sprawdza zachowanie skonwertowanego EXE, nie tylko istnienie pliku.
 
@@ -132,10 +132,10 @@ Akceptacja: testy poprawnych literałów, fences wewnątrz napisów, numerowanej
 
 Pliki: [entrymodule.py](../../../exelent/build/entrymodule.py), [launcher.py](../../../exelent/build/launcher.py), [pyinstaller.py](../../../exelent/build/pyinstaller.py), analiza entrypointu.
 
-- [ ] Rozróżnić samodzielny skrypt, moduł pakietu i pakiet z `__main__.py` w modelu punktu wejścia.
-- [ ] Naprawić główny `__main__.py`, unikając konfliktu z modułem launchera. Sposób zbierania przez PyInstaller i uruchamiania musi wynikać z jednego kontraktu.
-- [ ] Zachować semantykę `__name__`, `__package__`, importów względnych i argumentów programu dla wspieranego sposobu uruchomienia.
-- [ ] Zwracać diagnostykę niejednoznacznego wyboru, kolizji nazw lub nieobsługiwanego układu; nie wybierać przypadkowego modułu z `sys.path`.
+- [x] Rozróżnić samodzielny skrypt, moduł pakietu i pakiet z `__main__.py` w modelu punktu wejścia.
+- [x] Naprawić główny `__main__.py`, unikając konfliktu z modułem launchera. Sposób zbierania przez PyInstaller i uruchamiania musi wynikać z jednego kontraktu.
+- [x] Zachować semantykę `__name__`, `__package__`, importów względnych i argumentów programu dla wspieranego sposobu uruchomienia.
+- [x] Zwracać diagnostykę niejednoznacznego wyboru, kolizji nazw lub nieobsługiwanego układu; nie wybierać przypadkowego modułu z `sys.path`.
 
 Akceptacja: golden dla `main.py`, `main.pyw`, głównego `__main__.py`, `pkg/main.py`, `pkg/__main__.py` i `src/pkg/main.py`. Każdy program wykonuje konkretną oczekiwaną czynność i kończy się oczekiwanym kodem; przypadek GUI sprawdza również podsystem PE. Zachować testy importów względnych i uruchomienia z obcego cwd.
 
@@ -143,13 +143,13 @@ Akceptacja: golden dla `main.py`, `main.pyw`, głównego `__main__.py`, `pkg/mai
 
 Pliki: [scanner.py](../../../exelent/analysis/scanner.py), [entrypoint.py](../../../exelent/analysis/entrypoint.py), [apptype.py](../../../exelent/analysis/apptype.py), [resolve.py](../../../exelent/deps/resolve.py), plan i resolver entrypointu.
 
-- [ ] Wyznaczać wspólnie korzenie importów, kwalifikowane nazwy modułów i ich pliki. Używać tych danych w grafie entrypointu, zależnościach i argumentach PyInstallera.
-- [ ] Lokalnego `src/demo` nie traktować jako pakietu do pobrania. Nazwa folderu `src` nie może zastępować nazw znajdujących się w nim pakietów.
-- [ ] Stałe importy dynamiczne kierować zarówno do hidden imports, jak i rozpoznania lokalnego modułu lub zewnętrznej dystrybucji, z istniejącymi aliasami, np. `PIL → Pillow`.
-- [ ] Domknięcie importów pojedynczego TXT liczyć z treści po konwersji. Włączać potrzebne lokalne źródła bez rozszerzania zakresu do całego folderu.
-- [ ] Ręczne moduły kierować przez ten sam mechanizm; walidować nazwy i ujawniać niepewne mapowanie modułu na dystrybucję.
-- [ ] Dla namespace packages, konfliktów wielkości liter i niejednoznacznych korzeni wdrożyć obsługę albo jawną diagnostykę ograniczenia.
-- [ ] Przekroczenie limitu domknięcia nie może dawać niekompletnego zestawu przedstawionego jako gotowy do niezawodnego builda.
+- [x] Wyznaczać wspólnie korzenie importów, kwalifikowane nazwy modułów i ich pliki. Używać tych danych w grafie entrypointu, zależnościach i argumentach PyInstallera.
+- [x] Lokalnego `src/demo` nie traktować jako pakietu do pobrania. Nazwa folderu `src` nie może zastępować nazw znajdujących się w nim pakietów.
+- [x] Stałe importy dynamiczne kierować zarówno do hidden imports, jak i rozpoznania lokalnego modułu lub zewnętrznej dystrybucji, z istniejącymi aliasami, np. `PIL → Pillow`.
+- [x] Domknięcie importów pojedynczego TXT liczyć z treści po konwersji. Włączać potrzebne lokalne źródła bez rozszerzania zakresu do całego folderu.
+- [x] Ręczne moduły kierować przez ten sam mechanizm; walidować nazwy i ujawniać niepewne mapowanie modułu na dystrybucję.
+- [x] Dla namespace packages, konfliktów wielkości liter i niejednoznacznych korzeni wdrożyć obsługę albo jawną diagnostykę ograniczenia.
+- [x] Przekroczenie limitu domknięcia nie może dawać niekompletnego zestawu przedstawionego jako gotowy do niezawodnego builda.
 
 Akceptacja: regresje trzech przypadków z tabeli dowodów; golden `src/` z absolutnym importem własnego pakietu, dynamicznego Pillow oraz pojedynczego TXT z lokalnym helperem. Test potwierdza brak próby instalowania lokalnego modułu z indeksu. Zachować przypadki pakietów, `__init__.py`, podmodułów i importów względnych.
 
@@ -185,12 +185,12 @@ Akceptacja: konflikt dwóch pinów i konflikt zależności przechodnich blokują
 
 Pliki: [scanner.py](../../../exelent/analysis/scanner.py), [models.py](../../../exelent/models.py), [planning.py](../../../exelent/planning.py), [workspace.py](../../../exelent/build/workspace.py), [pyinstaller.py](../../../exelent/build/pyinstaller.py), UI.
 
-- [ ] Ikona aplikacji może być równocześnie zasobem runtime. Wybór `logo.png` jako ikony nie może usuwać go z danych.
-- [ ] Zastąpić wyłącznie rozszerzeniową kwalifikację jawnym inwentarzem kandydatów na zasoby, z wykluczeniami i możliwością korekty. Nie dołączać automatycznie całego folderu użytkownika.
-- [ ] Umożliwić dodanie m.in. `.html`, `.toml` i własnych formatów; pokazać źródło, rozmiar i względną lokalizację w paczce.
-- [ ] Utrwalić mapowanie zasobów w planie. Wykrywać kolizje między zasobami, generowanym launcherem, ikoną, nazwą EXE i innymi plikami wynikowymi, z uwzględnieniem Windows.
-- [ ] Stosować tę samą mapę w workspace i backendzie oraz politykę odczytu z B01.
-- [ ] Zmiana lub zniknięcie zasobu po zaakceptowaniu planu wymaga kontrolowanego wyniku B08.
+- [x] Ikona aplikacji może być równocześnie zasobem runtime. Wybór `logo.png` jako ikony nie może usuwać go z danych.
+- [x] Zastąpić wyłącznie rozszerzeniową kwalifikację jawnym inwentarzem kandydatów na zasoby, z wykluczeniami i możliwością korekty. Nie dołączać automatycznie całego folderu użytkownika.
+- [x] Umożliwić dodanie m.in. `.html`, `.toml` i własnych formatów; pokazać źródło, rozmiar i względną lokalizację w paczce.
+- [x] Utrwalić mapowanie zasobów w planie. Wykrywać kolizje między zasobami, generowanym launcherem, ikoną, nazwą EXE i innymi plikami wynikowymi, z uwzględnieniem Windows.
+- [x] Stosować tę samą mapę w workspace i backendzie oraz politykę odczytu z B01.
+- [x] Zmiana lub zniknięcie zasobu po zaakceptowaniu planu wymaga kontrolowanego wyniku B08.
 
 Akceptacja: golden odczytuje `logo.png`, `config.toml`, `templates/index.html` i zagnieżdżone dane z obcego cwd. Zasób użyty jako ikona nadal można odczytać. Kolizje są wykrywane przed PyInstallerem; testy obu trybów odpowiadają jawnej polityce B01.
 
@@ -198,13 +198,13 @@ Akceptacja: golden odczytuje `logo.png`, `config.toml`, `templates/index.html` i
 
 Pliki: [models.py](../../../exelent/models.py), [project.py](../../../exelent/analysis/project.py), [planning.py](../../../exelent/planning.py), [workspace.py](../../../exelent/build/workspace.py).
 
-- [ ] Dodać do planu inwentarz zaakceptowanych źródeł, konwersji, manifestów, zasobów i ikony oraz wersję/identyfikator planu.
-- [ ] Utrwalić treść wejścia albo jej skróty. Przed publikowaniem kopii roboczej sprawdzić, czy skopiowane bajty odpowiadają zaakceptowanej analizie; sam mtime nie jest wystarczającym kontraktem.
-- [ ] Zastąpić nieograniczone `copytree` kopiowaniem inwentarza. Nowe pliki nie mogą wejść do builda bez ponownej analizy.
-- [ ] Zachować jeden zestaw limitów plików i bajtów dla skanowania, analizy i materializacji. Niepełny skan wymaga zawężenia wejścia lub jawnej obsługi ograniczenia.
-- [ ] Ograniczyć ścieżki wynikowe do workspace; określić zachowanie symlinków, junctions i referencji zewnętrznych, bez niekontrolowanego wyjścia poza zaakceptowany zakres.
-- [ ] Materializować do własnego stagingu sesji i udostępniać backendowi dopiero kompletną kopię. Błędy I/O i anulowanie sprzątają tylko ten staging.
-- [ ] Plan ma być niemutowalny również wewnętrznie. Konwersje i szacunki muszą odnosić się do tej samej jego wersji.
+- [x] Dodać do planu inwentarz zaakceptowanych źródeł, konwersji, manifestów, zasobów i ikony oraz wersję/identyfikator planu.
+- [x] Utrwalić treść wejścia albo jej skróty. Przed publikowaniem kopii roboczej sprawdzić, czy skopiowane bajty odpowiadają zaakceptowanej analizie; sam mtime nie jest wystarczającym kontraktem.
+- [x] Zastąpić nieograniczone `copytree` kopiowaniem inwentarza. Nowe pliki nie mogą wejść do builda bez ponownej analizy.
+- [x] Zachować jeden zestaw limitów plików i bajtów dla skanowania, analizy i materializacji. Niepełny skan wymaga zawężenia wejścia lub jawnej obsługi ograniczenia.
+- [x] Ograniczyć ścieżki wynikowe do workspace; określić zachowanie symlinków, junctions i referencji zewnętrznych, bez niekontrolowanego wyjścia poza zaakceptowany zakres.
+- [x] Materializować do własnego stagingu sesji i udostępniać backendowi dopiero kompletną kopię. Błędy I/O i anulowanie sprzątają tylko ten staging.
+- [x] Plan ma być niemutowalny również wewnętrznie. Konwersje i szacunki muszą odnosić się do tej samej jego wersji.
 
 Akceptacja: zmiana, usunięcie i dodanie pliku po analizie nie prowadzą do niezauważonej zmiany programu; zmiana podczas kopiowania jest wykrywana. Pojedynczy plik nie kopiuje Pobranych. Limit skanu obowiązuje także przy kopiowaniu. Testy obejmują odmowę dostępu, brak miejsca i niedozwolone ścieżki.
 
@@ -212,12 +212,12 @@ Akceptacja: zmiana, usunięcie i dodanie pliku po analizie nie prowadzą do niez
 
 Pliki: [validate.py](../../../exelent/build/validate.py), [_targetcheck.py](../../../exelent/build/_targetcheck.py), [build_exelent.py](../../../build_exelent.py), backend i modele wyniku.
 
-- [ ] Zapewnić dostępność kodu walidatora po spakowaniu EXElenta: jako jawny zasób albo kod przekazywany docelowemu interpreterowi. Nie polegać na istnieniu źródłowego `.py` obok modułu w zamrożonym produkcie.
-- [ ] Rozdzielić wynik „składnia poprawna”, „składnia błędna”, „walidacja niewykonana/awaria” i „anulowano”. Brak skryptu, interpreter z błędem lub niepoprawny protokół nie mogą oznaczać `None` rozumianego jako sukces.
-- [ ] Wprowadzić ustrukturyzowaną odpowiedź walidatora, zawierającą względną ścieżkę i linię; nie rozpoznawać błędu po dowolnym tabulatorze na stdout.
+- [x] Zapewnić dostępność kodu walidatora po spakowaniu EXElenta: jako jawny zasób albo kod przekazywany docelowemu interpreterowi. Nie polegać na istnieniu źródłowego `.py` obok modułu w zamrożonym produkcie.
+- [x] Rozdzielić wynik „składnia poprawna”, „składnia błędna”, „walidacja niewykonana/awaria” i „anulowano”. Brak skryptu, interpreter z błędem lub niepoprawny protokół nie mogą oznaczać `None` rozumianego jako sukces.
+- [x] Wprowadzić ustrukturyzowaną odpowiedź walidatora, zawierającą względną ścieżkę i linię; nie rozpoznawać błędu po dowolnym tabulatorze na stdout.
 - [ ] Walidować pełny zaakceptowany zestaw źródeł, w tym `.pyw` i konwersje, rzeczywistym docelowym interpreterem, z ograniczeniem czasu i anulowaniem.
-- [ ] Zachować kontrolę modułów odrzuconych przez PyInstaller jako dodatkową ochronę, nie zastępstwo niewykonanego sprawdzenia.
-- [ ] Sprawdzać strukturę artefaktu przed publikacją: oczekiwany niepusty EXE, właściwy typ pliku i zadeklarowane składniki. Stan „utworzono” oddzielić od „zweryfikowano uruchomienie”.
+- [x] Zachować kontrolę modułów odrzuconych przez PyInstaller jako dodatkową ochronę, nie zastępstwo niewykonanego sprawdzenia.
+- [x] Sprawdzać strukturę artefaktu przed publikacją: oczekiwany niepusty EXE, właściwy typ pliku i zadeklarowane składniki. Stan „utworzono” oddzielić od „zweryfikowano uruchomienie”.
 
 Akceptacja: brak walidatora i uszkodzona odpowiedź blokują pakowanie z nazwanym błędem. Kod z `return` poza funkcją i kod niezgodny z targetem są odrzucane. Test na zbudowanym EXElent.exe potwierdza działanie kontroli, a następnie poprawne zbudowanie i uruchomienie kontrolnego EXE.
 
@@ -225,12 +225,12 @@ Akceptacja: brak walidatora i uszkodzona odpowiedź blokują pakowanie z nazwany
 
 Pliki: `runtime/bootstrap.py`, `runtime/env.py`, `runtime/procs.py`, `build/workspace.py`, `build/validate.py`, `build/pyinstaller.py`, `build/publish.py`, workery UI.
 
-- [ ] Wspólny token obejmuje sprawdzenia wstępne, pobieranie uv/Pythona, kopiowanie, instalację, walidację, pakowanie i publikację.
-- [ ] Wprowadzić sprawdzanie tokena między plikami i porcjami danych oraz skończone timeouty operacji sieciowych i oczekiwania na proces.
-- [ ] Oddzielić zamknięcie stdout/stderr od zakończenia procesu. Po EOF nadal sprawdzać anulowanie, zamiast przechodzić do bezterminowego `wait()`.
-- [ ] Po `kill_tree` również ograniczać `wait`, `communicate` i dołączenie wątku czytającego. Nieudane zakończenie potomków musi być widoczne.
-- [ ] Zdefiniować punkt zatwierdzenia publikacji: anulowanie przed atomową zmianą nazwy usuwa staging; po skutecznej finalizacji zachować artefakt i zwrócić wynik zgodny z rzeczywistym stanem.
-- [ ] Natychmiast pokazywać „Przerywanie…”, a końcowy wynik odróżniać od awarii. Anulowany token przed startem nie uruchamia niepotrzebnego bootstrapu.
+- [x] Wspólny token obejmuje sprawdzenia wstępne, pobieranie uv/Pythona, kopiowanie, instalację, walidację, pakowanie i publikację.
+- [x] Wprowadzić sprawdzanie tokena między plikami i porcjami danych oraz skończone timeouty operacji sieciowych i oczekiwania na proces.
+- [x] Oddzielić zamknięcie stdout/stderr od zakończenia procesu. Po EOF nadal sprawdzać anulowanie, zamiast przechodzić do bezterminowego `wait()`.
+- [x] Po `kill_tree` również ograniczać `wait`, `communicate` i dołączenie wątku czytającego. Nieudane zakończenie potomków musi być widoczne.
+- [x] Zdefiniować punkt zatwierdzenia publikacji: anulowanie przed atomową zmianą nazwy usuwa staging; po skutecznej finalizacji zachować artefakt i zwrócić wynik zgodny z rzeczywistym stanem.
+- [x] Natychmiast pokazywać „Przerywanie…”, a końcowy wynik odróżniać od awarii. Anulowany token przed startem nie uruchamia niepotrzebnego bootstrapu.
 
 Akceptacja: kontrolowane procesy milczące, z zamkniętym stdout i z potomkami kończą obsługę anulowania w zadeklarowanym budżecie. Przyjąć do 5 s reakcji dla lokalnych kontrolowanych operacji; wyjątki dla blokującego I/O muszą mieć skończony timeout i opisany limit. Testy synchronizować zdarzeniami, nie długim arbitralnym `sleep`. Nie pozostają niezarządzane procesy ani uszkodzona poprzednia publikacja.
 
@@ -238,10 +238,10 @@ Akceptacja: kontrolowane procesy milczące, z zamkniętym stdout i z potomkami k
 
 Pliki: `ui/app.py`, nowy worker analizy, `analysis/scanner.py`, `analysis/project.py`, model analizy.
 
-- [ ] Przenieść analizę z głównego wątku Qt, dodać stan pracy, anulowanie i identyfikator żądania.
-- [ ] Starszy wynik ani sygnał zakończenia nie może zastąpić analizy nowego wyboru.
-- [ ] Przewidywalne błędy odczytu, dekodowania i dostępu do katalogu zamieniać na diagnostykę z plikiem lub lokalizacją.
-- [ ] Ujednolicić limity i wykluczenia także w wykrywaniu innych języków. Nie wykonywać dodatkowego nieograniczonego `rglob` po ograniczonym skanie.
+- [x] Przenieść analizę z głównego wątku Qt, dodać stan pracy, anulowanie i identyfikator żądania.
+- [x] Starszy wynik ani sygnał zakończenia nie może zastąpić analizy nowego wyboru.
+- [x] Przewidywalne błędy odczytu, dekodowania i dostępu do katalogu zamieniać na diagnostykę z plikiem lub lokalizacją.
+- [x] Ujednolicić limity i wykluczenia także w wykrywaniu innych języków. Nie wykonywać dodatkowego nieograniczonego `rglob` po ograniczonym skanie.
 - [ ] Rozpoznawanie prefiksu nie może po cichu zerować grafu importów dużego pliku; gdy analiza jest niepełna, zgłosić to.
 - [ ] Współdzielić sparsowane źródła między etapami, zamiast wielokrotnie tworzyć AST.
 
@@ -251,10 +251,10 @@ Akceptacja: podczas kontrolowanej długiej analizy pętla Qt obsługuje zdarzeni
 
 Pliki: `ui/preflight.py`, `ui/app.py`, `ui/screen_review.py`, `deps/sizes.py`, modele szacunków.
 
-- [ ] Wiązać każde obliczenie z identyfikatorem planu i targetu. Zmiana modułów lub zależności unieważnia wynik i uruchamia właściwe przeliczenie.
-- [ ] Czyścić poprzedni wynik przy starcie. Nie pokazywać szacunku poprzedniego projektu podczas oczekiwania.
-- [ ] Nie zastępować referencji do wątku, który nie zakończył się po `stop()`. Odrzucać spóźnione sygnały starych zadań.
-- [ ] Odróżnić wynik kompletny, częściowy, brak cache, offline i błąd resolvera. Niewiadoma nie jest `0 B` ani „nic do pobrania”.
+- [x] Wiązać każde obliczenie z identyfikatorem planu i targetu. Zmiana modułów lub zależności unieważnia wynik i uruchamia właściwe przeliczenie.
+- [x] Czyścić poprzedni wynik przy starcie. Nie pokazywać szacunku poprzedniego projektu podczas oczekiwania.
+- [x] Nie zastępować referencji do wątku, który nie zakończył się po `stop()`. Odrzucać spóźnione sygnały starych zadań.
+- [x] Odróżnić wynik kompletny, częściowy, brak cache, offline i błąd resolvera. Niewiadoma nie jest `0 B` ani „nic do pobrania”.
 - [ ] Rozdzielić transfer, zajętość środowiska i szacowany rozmiar artefaktu. Uwzględniać tylko brakujące dane cache oraz jasno opisywać udział uv, Pythona i narzędzi.
 - [ ] Używać docelowej zgodności wheel i zależności przechodnich. Nie przedstawiać rozmiaru EXE jako wielkości pobierania w dialogu.
 
@@ -264,14 +264,14 @@ Akceptacja: dopisanie modułu zmienia szacunek finalnego planu; spóźniony wyni
 
 Pliki: `ui/screen_review.py`, `ui/screen_build.py`, `ui/app.py`, `ui/rows.py`, `i18n/`, CLI i raporty.
 
-- [ ] **P1:** pokazywać `BuildResult.issues` również po sukcesie pakowania; udostępniać raport zawierający uwagi analizy, instalacji i backendu.
+- [x] **P1:** pokazywać `BuildResult.issues` również po sukcesie pakowania; udostępniać raport zawierający uwagi analizy, instalacji i backendu.
 - [ ] Rozróżnić „utworzono”, „utworzono z ostrzeżeniami” i potwierdzone uruchomienie. Sam przycisk „Uruchom” nie jest dowodem poprawności aplikacji.
 - [ ] Przed buildem prezentować zakres wejścia, entrypoint, konwersje, zasoby, zależności, target, tryb i pełny cel publikacji; umożliwić zmianę celu.
 - [ ] Udostępnić podgląd oryginału TXT, wyniku i zmian. Wyjaśnić ograniczenia ręcznych modułów i automatycznego rozpoznania zależności.
-- [ ] Rozróżniać blocker i ostrzeżenie tekstem oraz ikoną; wskazywać czynność pozwalającą rozwiązać problem.
+- [x] Rozróżniać blocker i ostrzeżenie tekstem oraz ikoną; wskazywać czynność pozwalającą rozwiązać problem.
 - [ ] Zapewnić przewijanie długiego przeglądu i dostępność akcji przy małym oknie oraz skalowaniu 100%, 150% i 200%.
-- [ ] Udostępniać log na żywo z ograniczonym buforem widoku, zachowując pełny log na dysku. Nie czekać z pierwszym zapisem logu do zakończenia PyInstallera.
-- [ ] W ONEDIR wskazywać cały folder do udostępnienia oraz osobno EXE do uruchomienia. Wyjaśniać powód rekomendacji trybu.
+- [x] Udostępniać log na żywo z ograniczonym buforem widoku, zachowując pełny log na dysku. Nie czekać z pierwszym zapisem logu do zakończenia PyInstallera.
+- [x] W ONEDIR wskazywać cały folder do udostępnienia oraz osobno EXE do uruchomienia. Wyjaśniać powód rekomendacji trybu.
 - [ ] Sprawdzić klawiaturę, fokus, długie ścieżki, zachowanie wyborów przy odświeżeniu języka i kompletność PL/EN, także launchera. Błędy otwarcia EXE/folderu mają dawać komunikat.
 
 Akceptacja: uwaga pozostaje widoczna po udanym pakowaniu w GUI, CLI i raporcie. Ręczne przejście PY, TXT, projektu z zasobami, konfliktu zależności, anulowania i ponownego builda kończy się jasnym wynikiem. Automatyzować istotne zachowania; oceny wyglądu nie zastępować testami odtwarzającymi konstrukcję widgetów.
@@ -280,14 +280,14 @@ Akceptacja: uwaga pozostaje widoczna po udanym pakowaniu w GUI, CLI i raporcie. 
 
 Pliki: `cli.py`, `build/backend.py`, `build/workspace.py`, `build/publish.py`, `runtime/paths.py`, modele.
 
-- [ ] Przenieść orkiestrację `execute_build` do usługi rdzenia poza CLI. CLI pozostaje adapterem argumentów i wyniku, a GUI nie importuje orkiestracji z adaptera konsolowego.
-- [ ] Faktycznie wstrzykiwać `BuildBackend`, bez dodawania niepotrzebnego nowego backendu.
-- [ ] Rozdzielić identyfikator instancji od identyfikatora próby builda i planu. Workspace i logi równoległych lub ponowionych prób nie mogą usuwać się wzajemnie.
-- [ ] Zachować wolne nazwy publikacji i staging na woluminie docelowym. Sprawdzać kompletność według oczekiwanego inwentarza, nie wyłącznie łącznej liczby plików i sumy bajtów.
-- [ ] Domknąć sprzątanie stagingu także przy błędzie jego weryfikacji. Nie usuwać istniejących danych aplikacji ani danych obcej sesji.
-- [ ] Dla współdzielonego cache zapewnić bezpieczną inicjalizację i weryfikację narzędzia; uwzględnić blokady zapewniane już przez uv zamiast je dublować bez potrzeby.
-- [ ] Ustalić zasady sprzątania przerwanych sesji i CLI. Nie usuwać katalogu aktywnej instancji na podstawie samego wieku.
-- [ ] Skrócić komentarze historyczne; kontrakty i uzasadnienia pozostawić w kodzie, historię i decyzje przenieść do dokumentacji.
+- [x] Przenieść orkiestrację `execute_build` do usługi rdzenia poza CLI. CLI pozostaje adapterem argumentów i wyniku, a GUI nie importuje orkiestracji z adaptera konsolowego.
+- [x] Faktycznie wstrzykiwać `BuildBackend`, bez dodawania niepotrzebnego nowego backendu.
+- [x] Rozdzielić identyfikator instancji od identyfikatora próby builda i planu. Workspace i logi równoległych lub ponowionych prób nie mogą usuwać się wzajemnie.
+- [x] Zachować wolne nazwy publikacji i staging na woluminie docelowym. Sprawdzać kompletność według oczekiwanego inwentarza, nie wyłącznie łącznej liczby plików i sumy bajtów.
+- [x] Domknąć sprzątanie stagingu także przy błędzie jego weryfikacji. Nie usuwać istniejących danych aplikacji ani danych obcej sesji.
+- [x] Dla współdzielonego cache zapewnić bezpieczną inicjalizację i weryfikację narzędzia; uwzględnić blokady zapewniane już przez uv zamiast je dublować bez potrzeby.
+- [x] Ustalić zasady sprzątania przerwanych sesji i CLI. Nie usuwać katalogu aktywnej instancji na podstawie samego wieku.
+- [x] Skrócić komentarze historyczne; kontrakty i uzasadnienia pozostawić w kodzie, historię i decyzje przenieść do dokumentacji.
 
 Akceptacja: test granic warstw przechodzi, GUI i CLI używają tej samej usługi, dwie instancje i kolejne próby są izolowane. Błąd kopiowania, weryfikacji, kolizja nazwy i anulowanie pozostawiają poprzedni EXE oraz `user-database.db` bajtowo niezmienione.
 
@@ -295,8 +295,8 @@ Akceptacja: test granic warstw przechodzi, GUI i CLI używają tej samej usługi
 
 Pliki: `tests/`, `pyproject.toml`, `.github/workflows/ci.yml`, `.github/workflows/golden.yml`, `.github/workflows/release.yml`, `README.md`.
 
-- [ ] Utrwalić reprodukcje B01–B09 w testach odpowiednich warstw. Atrapami sprawdzać orkiestrację, rzeczywistymi EXE granice pakowania i uruchomienia.
-- [ ] Zachować dotychczasowe golden dla pakietów, zasobów, DLL numpy/pandas, konwersji i bezpiecznego ponownego builda; rozszerzyć je o poniższą macierz.
+- [x] Utrwalić reprodukcje B01–B09 w testach odpowiednich warstw. Atrapami sprawdzać orkiestrację, rzeczywistymi EXE granice pakowania i uruchomienia.
+- [x] Zachować dotychczasowe golden dla pakietów, zasobów, DLL numpy/pandas, konwersji i bezpiecznego ponownego builda; rozszerzyć je o poniższą macierz.
 - [x] Sprawdzić zimny bootstrap targetu 3.12 z izolowanym cache uv/Pythona oraz powtórny build. Samo podstawienie `LOCALAPPDATA` nie jest dowodem pustego cache wszystkich narzędzi.
 - [x] Testować zbudowany produkt EXElent.exe jako narzędzie budujące następny EXE, w tym dostępność walidatora B09.
 - [x] Rozszerzyć istniejące workflow i filtry zmian o self-build, konfigurację zależności, helper walidatora i testy pipeline. Nie opisywać CI jako brakującego mechanizmu.
@@ -331,15 +331,15 @@ Nie odkładać widoczności błędów i ostrzeżeń do etapu 4. B15 obowiązuje 
 
 ## 8. Warunki zakończenia i zapis odbioru
 
-- [ ] Żaden kontrolowany zapis objęty deklarowaną obsługą nie ginie po zakończeniu EXE.
-- [ ] Konwersja poprawnego Pythona nie zmienia jego znaczenia; niejednoznaczne wejście wymaga rozstrzygnięcia.
-- [ ] Build odpowiada zaakceptowanym bajtom i zakresowi planu, także przy równoległej zmianie źródeł.
-- [ ] Wszystkie wspierane entrypointy, importy i zasoby przechodzą rzeczywiste uruchomienia kontrolowanych EXE.
-- [ ] Konflikt lub brak wymaganej zależności, niewykonana walidacja i niekompletny artefakt nie kończą się sukcesem.
-- [ ] Ostrzeżenia pozostają widoczne po udanym pakowaniu, a GUI nie utożsamia utworzenia EXE z weryfikacją aplikacji.
-- [ ] Poprzednie artefakty i dane przetrwały udaną, nieudaną i anulowaną publikację kolejnej wersji.
-- [ ] Analiza i preflight nie blokują GUI, anulowanie ma sprawdzone limity, starsze wyniki nie nadpisują nowego wyboru.
-- [ ] Zimny bootstrap 3.12, powtórny build i spakowany EXElent.exe zostały rzeczywiście sprawdzone.
+- [x] Żaden kontrolowany zapis objęty deklarowaną obsługą nie ginie po zakończeniu EXE.
+- [x] Konwersja poprawnego Pythona nie zmienia jego znaczenia; niejednoznaczne wejście wymaga rozstrzygnięcia.
+- [x] Build odpowiada zaakceptowanym bajtom i zakresowi planu, także przy równoległej zmianie źródeł.
+- [x] Wszystkie wspierane entrypointy, importy i zasoby przechodzą rzeczywiste uruchomienia kontrolowanych EXE.
+- [x] Konflikt lub brak wymaganej zależności, niewykonana walidacja i niekompletny artefakt nie kończą się sukcesem.
+- [x] Ostrzeżenia pozostają widoczne po udanym pakowaniu, a GUI nie utożsamia utworzenia EXE z weryfikacją aplikacji.
+- [x] Poprzednie artefakty i dane przetrwały udaną, nieudaną i anulowaną publikację kolejnej wersji.
+- [x] Analiza i preflight nie blokują GUI, anulowanie ma sprawdzone limity, starsze wyniki nie nadpisują nowego wyboru.
+- [x] Zimny bootstrap 3.12, powtórny build i spakowany EXElent.exe zostały rzeczywiście sprawdzone.
 - [ ] Dokumentacja i PL/EN opisują wdrożone zachowanie, a każde ograniczenie jest jawne i uzasadnione.
 
 Przy odbiorze każdego Bxx dopisać: commit, zrealizowane kryteria, polecenia i wyniki testów, wersje interpreterów/narzędzi, wynik uruchomień EXE oraz ewentualny jawny zakres pozostały. Nie oznaczać całego zadania jako wykonanego wyłącznie dlatego, że jego podstawowy mechanizm istnieje.
@@ -429,15 +429,21 @@ Dokumentacja kontroli procesów: [os.kill](https://docs.python.org/3/library/os.
 
 ### Zakres pozostały
 
-Nie ma podstaw do oznaczenia całych B01–B15 jako odebranych. B05 i B06 zostały
-domknięte (commit `a6a8785`, sesja 2026-09-13): diagnostyka błędnych specyfikacji,
-markery bez `.0`, Poetry prerelease, manifest/constraint passthrough, kontrola
-spójności wersji i rozstrzygnięte wersje w raporcie. Pozostaje m.in. wybór zasobów
-i kolizje (B07), pełny kontrakt wersji planu (B08), ścisły protokół walidatora
-i kontrola PYW (B09), wszystkie limity anulowania (B10), pełny zakres preflightu
-i przeglądu UI (B11–B13) oraz ręczna ocena GUI przy skalowaniu 100/150/200%.
-Offline pozostaje ograniczeniem: usługa nadal wymaga sieci w preflight.
-Ograniczenia Poetry (source tables, custom indexes) wykraczają poza obecny zakres.
+Przegląd 2026-09-13 odnotował, że większość mechanizmów B01–B14 jest zaimplementowana
+i potwierdzona testami (876 passed). Zaznaczono kryteria odzwierciedlające działający
+kod i testy. Pozostałe otwarte pozycje:
+
+- **B01:** heurystyka wykrywania wzorców zapisu (`__file__`/`_MEIPASS`) przed budowaniem.
+- **B02:** prezentacja granic wielu bloków kodu w TXT.
+- **B09:** walidacja pełnego zestawu źródeł (w tym `.pyw` i konwersje) docelowym interpreterem.
+- **B11:** zgłaszanie niepełnej analizy dużego pliku; współdzielenie AST między etapami.
+- **B12:** rozdzielenie transferu/środowiska/artefaktu; docelowa zgodność wheel w szacunkach.
+- **B13:** rozróżnienie „z ostrzeżeniami" / podgląd TXT / przegląd zakresu przed buildem /
+  przewijanie i skalowanie GUI / klawiatura i fokus.
+- **B15:** archiwizacja logów z nieudanych buildów.
+- **Sekcja 8:** dokumentacja PL/EN opisująca wdrożone zachowanie i jawne ograniczenia.
+- Ograniczenia Poetry (source tables, custom indexes) wykraczają poza obecny zakres.
+- Preflight nadal wymaga sieci; dokumentacja warunków offline rebuild nie jest formalna.
 
 Nowe automatyczne wysyłanie EXE i diagnostyki do GitHub Artifacts zostało odrzucone
 przez automatyczny przegląd uprawnień (brak jawnej zgody na pliki i miejsce eksportu).
