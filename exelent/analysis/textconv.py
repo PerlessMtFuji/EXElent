@@ -8,7 +8,7 @@ import io
 import re
 import tokenize
 
-from exelent.models import ConversionResult
+from exelent.models import CodeBlockSpan, ConversionResult
 
 _ENCODINGS = ("utf-8", "cp1250", "latin-1")
 
@@ -78,26 +78,41 @@ def _line_starts(text: str) -> list[int]:
     return starts
 
 
-def _strip_fences(text: str, origins: list[int]) -> tuple[str, list[int], bool]:
+def _strip_fences(
+    text: str, origins: list[int]
+) -> tuple[str, list[int], bool, list[CodeBlockSpan]]:
     """Wycina bloki kodu z ogrodzen i laczy je. Poza tekstem prowadzi `origins`:
     dla kazdej linii wyniku numer jej linii w oryginale. To najwazniejszy krok
     dla mapy linii — bloki stoja w rozproszeniu miedzy proza czatu, wiec ich
-    numeracja skacze i bez mapy blad wskazywalby nieistniejaca linie."""
+    numeracja skacze i bez mapy blad wskazywalby nieistniejaca linie.
+
+    Zwraca rowniez granice kazdego bloku (B02) — pary (start, end) w numeracji
+    oryginalnego TXT. Gdy blokow jest wiecej niz jeden, warstwa prezentacji
+    pokazuje ich granice i wyjasnia, ze zostaly polaczone w podanej kolejnosci.
+    """
     matches = list(_FENCE.finditer(text))
     if not matches:
-        return text, origins, False
+        return text, origins, False, []
     starts = _line_starts(text)
     out_lines: list[str] = []
     out_origins: list[int] = []
+    block_spans: list[CodeBlockSpan] = []
     for match in matches:
         content = match.group(1)
         first = bisect.bisect_right(starts, match.start(1)) - 1
         base = first + (len(content) - len(content.lstrip("\n")))
-        for offset, line in enumerate(content.strip("\n").split("\n")):
+        stripped = content.strip("\n")
+        line_count = stripped.count("\n") + 1 if stripped else 0
+        for offset, line in enumerate(stripped.split("\n")):
             out_lines.append(line)
             idx = base + offset
             out_origins.append(origins[idx] if idx < len(origins) else origins[-1])
-    return "\n".join(out_lines), out_origins, True
+        if line_count > 0:
+            start_orig = origins[base] if base < len(origins) else origins[-1]
+            end_idx = base + line_count - 1
+            end_orig = origins[end_idx] if end_idx < len(origins) else origins[-1]
+            block_spans.append(CodeBlockSpan(start_line=start_orig, end_line=end_orig))
+    return "\n".join(out_lines), out_origins, True, block_spans
 
 
 def _strip_fence_label(text: str, origins: list[int]) -> tuple[str, list[int], bool]:
@@ -343,8 +358,9 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
     #    otoczki, tylko zachowujaca znaczenie normalizacja. Pusty/bialy wejscie
     #    kompiluje sie jako pusty modul, wiec wyraznie wymagamy tresci — inaczej
     #    ta sciezka wyprzedzilaby komunikat NO_CODE ponizej.
+    code_blocks: list[CodeBlockSpan] = []
     if not (text.strip() and _compiles(text)):
-        text, origins, changed = _strip_fences(text, origins)
+        text, origins, changed, code_blocks = _strip_fences(text, origins)
         if changed:
             steps.append("fence")
         text, origins, changed = _strip_fence_label(text, origins)
@@ -373,13 +389,23 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
         text = _expand_indent_tabs(text)
         steps.append("tabs")
 
+    # Granice bloków raportujemy tylko gdy wycieto wiecej niz jeden (B02):
+    # jeden blok to trywialne wycięcie, nie wymaga przeglądu. Puste code_blocks
+    # (brak ogrodzeń) też nie.
+    blocks = tuple(code_blocks) if len(code_blocks) > 1 else ()
+
     # 4. Poprawny Python zostaje BEZ heurystycznych zmian tresci. Literal
     #    `label = 'A—B…'` przechodzi nietkniety — wczesniej globalna podmiana
     #    znakow zmieniala jego wartosc.
     try:
         _check_syntax(text)
         return ConversionResult(
-            ok=True, code=text, encoding=encoding, steps=tuple(steps), line_map=tuple(origins)
+            ok=True,
+            code=text,
+            encoding=encoding,
+            steps=tuple(steps),
+            line_map=tuple(origins),
+            code_blocks=blocks,
         )
     except TabError:
         # CPython nie zawsze zglasza mieszanie tabow jako TabError przy kroku 3;
@@ -392,7 +418,12 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
         if "tabs" not in steps:
             steps.append("tabs")
         return ConversionResult(
-            ok=True, code=fixed, encoding=encoding, steps=tuple(steps), line_map=tuple(origins)
+            ok=True,
+            code=fixed,
+            encoding=encoding,
+            steps=tuple(steps),
+            line_map=tuple(origins),
+            code_blocks=blocks,
         )
     except SyntaxError as exc:
         # `as exc` znika po bloku (Python kasuje cel except), wiec przenosimy
@@ -411,7 +442,12 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
             return _fail(encoding, steps, exc, origins)
         steps.append("normalize")
         return ConversionResult(
-            ok=True, code=repaired, encoding=encoding, steps=tuple(steps), line_map=tuple(origins)
+            ok=True,
+            code=repaired,
+            encoding=encoding,
+            steps=tuple(steps),
+            line_map=tuple(origins),
+            code_blocks=blocks,
         )
 
     return _fail(encoding, steps, first_error, origins)

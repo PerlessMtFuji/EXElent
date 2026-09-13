@@ -17,6 +17,7 @@ import ast
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from exelent.analysis.parsed import ParsedSources
 from exelent.models import EntryCandidate
 
 PREFERRED_STEMS = ("main", "app", "run", "start", "__main__", "program", "gui")
@@ -101,11 +102,12 @@ def _is_test_file(path: Path) -> bool:
     return stem.startswith("test_") or stem.endswith("_test")
 
 
-def _imported_locals(code: str, local: set[str]) -> set[str]:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return set()
+def _imported_locals(code: str, local: set[str], *, tree: ast.Module | None = None) -> set[str]:
+    if tree is None:
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return set()
     found: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -118,11 +120,12 @@ def _imported_locals(code: str, local: set[str]) -> set[str]:
     return found & local
 
 
-def _has_main_guard(code: str) -> bool:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return False
+def _has_main_guard(code: str, *, tree: ast.Module | None = None) -> bool:
+    if tree is None:
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return False
     for node in tree.body:
         if not isinstance(node, ast.If):
             continue
@@ -132,11 +135,12 @@ def _has_main_guard(code: str) -> bool:
     return False
 
 
-def _has_startup_call(code: str) -> bool:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return False
+def _has_startup_call(code: str, *, tree: ast.Module | None = None) -> bool:
+    if tree is None:
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return False
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
@@ -154,12 +158,16 @@ def rank_entry_candidates(root: Path, sources: Mapping[Path, str]) -> tuple[Entr
         only = next(iter(sources))
         return (EntryCandidate(path=only, score=100, reasons=("jedyny plik",)),)
 
+    # B11: korzystamy z cache AST jesli sources to ParsedSources
+    parsed = sources if isinstance(sources, ParsedSources) else ParsedSources(sources)
+
     roots = import_roots(root, sources)
     local = local_module_names(root, sources)
     imported_by_nontest: set[str] = set()
     imports_map: dict[Path, set[str]] = {}
     for path, code in sources.items():
-        deps = _imported_locals(code, local)
+        t = parsed.tree(path)
+        deps = _imported_locals(code, local, tree=t)
         imports_map[path] = deps
         if not _is_test_file(path):
             imported_by_nontest |= deps
@@ -169,6 +177,7 @@ def rank_entry_candidates(root: Path, sources: Mapping[Path, str]) -> tuple[Entr
         score = 0
         reasons: list[str] = []
         module = _module_name(root, path, roots)
+        t = parsed.tree(path)
 
         if module not in imported_by_nontest:
             score += ROOT_CANDIDATE_BONUS
@@ -176,7 +185,7 @@ def rank_entry_candidates(root: Path, sources: Mapping[Path, str]) -> tuple[Entr
         if imports_map[path]:
             score += IMPORTS_LOCAL_BONUS
             reasons.append("importuje inne pliki projektu")
-        if _has_main_guard(code):
+        if _has_main_guard(code, tree=t):
             score += MAIN_GUARD_BONUS
             reasons.append("ma blok __main__")
         if path.parent == root:
@@ -185,7 +194,7 @@ def rank_entry_candidates(root: Path, sources: Mapping[Path, str]) -> tuple[Entr
         if path.stem.lower() in PREFERRED_STEMS or path.stem.lower() == root.name.lower():
             score += PREFERRED_NAME_BONUS
             reasons.append("typowa nazwa pliku startowego")
-        if _has_startup_call(code):
+        if _has_startup_call(code, tree=t):
             score += STARTUP_CALL_BONUS
             reasons.append("wywołuje start aplikacji")
         if _is_test_file(path):

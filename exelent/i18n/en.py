@@ -40,6 +40,11 @@ CATALOG: dict[str, str] = {
         "There is no code to run in {file} — only chat-window wrapping or an empty block was "
         "left. Paste the program and try again."
     ),
+    "txt_multiple_blocks": (
+        "{file} contains {count} code blocks (lines {ranges}). They were joined in order — "
+        "if any block is an alternative version rather than a continuation, keep only "
+        "the one you need."
+    ),
     "txt_collision": (
         "Turning {file} into code would produce {target}, but that file already exists in the "
         "project. Keep only one version and try again."
@@ -62,6 +67,12 @@ CATALOG: dict[str, str] = {
     ),
     "dynamic_import_unresolved": (
         "Your program loads libraries while it runs. One of them may not make it into the EXE."
+    ),
+    "frozen_path_pattern": (
+        "Your code uses {pattern}, which points to the unpacking folder after packaging — "
+        "not where the EXE actually sits. Relative file paths built from it may read or write "
+        "to unexpected places. EXElent does not rewrite your code; check these paths yourself "
+        "before sharing the EXE."
     ),
     "size_estimate": "The finished program will take about {low}–{high} MB. Largest: {packages}.",
     "size_estimate_large": (

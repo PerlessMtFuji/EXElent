@@ -70,3 +70,43 @@ def test_variable_dynamic_import_raises_issue():
     code = "import importlib\nname = 'x'\nimportlib.import_module(name)"
     codes = {i.code for i in collect_code_issues(_s(code))}
     assert "dynamic_import_unresolved" in codes
+
+
+# B01: heurystyka __file__ / _MEIPASS — ostrzezenia bez przepisywania kodu
+
+
+def test_dunder_file_raises_frozen_path_issue():
+    code = "import os\nbase = os.path.dirname(__file__)\ndata = open(os.path.join(base, 'x'))"
+    issues = collect_code_issues(_s(code))
+    matching = [i for i in issues if i.code == "frozen_path_pattern"]
+    assert len(matching) == 1
+    assert matching[0].data["pattern"] == "__file__"
+
+
+def test_sys_meipass_raises_frozen_path_issue():
+    code = "import sys\nbase = sys._MEIPASS\nprint(base)"
+    issues = collect_code_issues(_s(code))
+    matching = [i for i in issues if i.code == "frozen_path_pattern"]
+    assert len(matching) == 1
+    assert matching[0].data["pattern"] == "_MEIPASS"
+
+
+def test_getattr_meipass_raises_frozen_path_issue():
+    code = "import sys\nbase = getattr(sys, '_MEIPASS', '.')\nprint(base)"
+    issues = collect_code_issues(_s(code))
+    matching = [i for i in issues if i.code == "frozen_path_pattern"]
+    assert len(matching) == 1
+    assert matching[0].data["pattern"] == "_MEIPASS"
+
+
+def test_both_file_and_meipass_raise_separate_issues():
+    code = "import sys, os\nif getattr(sys, '_MEIPASS', None):\n  p = sys._MEIPASS\nelse:\n  p = os.path.dirname(__file__)"
+    issues = collect_code_issues(_s(code))
+    patterns = sorted(i.data["pattern"] for i in issues if i.code == "frozen_path_pattern")
+    assert set(patterns) == {"__file__", "_MEIPASS"}
+
+
+def test_plain_code_has_no_frozen_path_issue():
+    code = "x = 1\nprint(x)"
+    issues = collect_code_issues(_s(code))
+    assert not any(i.code == "frozen_path_pattern" for i in issues)

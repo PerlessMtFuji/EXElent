@@ -42,6 +42,11 @@ CATALOG: dict[str, str] = {
         "W pliku {file} nie ma żadnego kodu do uruchomienia — została sama otoczka z okna "
         "czatu albo pusty blok. Wklej program i spróbuj ponownie."
     ),
+    "txt_multiple_blocks": (
+        "Plik {file} zawiera {count} bloków kodu (linie {ranges}). Zostały połączone "
+        "po kolei — jeśli któryś jest alternatywną wersją, a nie kontynuacją, zostaw "
+        "tylko ten właściwy."
+    ),
     "txt_collision": (
         "Plik {file} po zamianie na kod dałby {target}, ale taki plik już w projekcie jest. "
         "Zostaw tylko jedną wersję i spróbuj ponownie."
@@ -66,6 +71,12 @@ CATALOG: dict[str, str] = {
     "dynamic_import_unresolved": (
         "Twój program wczytuje biblioteki w trakcie działania. "
         "Może się zdarzyć, że któraś nie trafi do EXE."
+    ),
+    "frozen_path_pattern": (
+        "Twój kod używa {pattern} — po spakowaniu wskazuje on katalog rozpakowania, "
+        "nie folder z EXE. Ścieżki budowane na jego podstawie mogą czytać lub pisać "
+        "w nieoczekiwane miejsca. EXElent nie przepisuje Twojego kodu; sprawdź te ścieżki "
+        "przed udostępnieniem EXE."
     ),
     "size_estimate": (
         "Gotowy program zajmie około {low}–{high} MB. Najwięcej miejsca zajmą: {packages}."
