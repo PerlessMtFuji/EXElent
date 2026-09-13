@@ -28,7 +28,11 @@ _NAMED = 3
 
 
 def should_ask(plan: DownloadPlan, settings: Settings) -> bool:
-    return bool(plan.would_download) and settings.ask_before_download
+    return (
+        plan.status in {"complete", "empty"}
+        and bool(plan.would_download)
+        and settings.ask_before_download
+    )
 
 
 def should_ask_offline(plan: DownloadPlan, settings: Settings, estimate_high_mb: int) -> bool:
@@ -43,7 +47,10 @@ def should_ask_offline(plan: DownloadPlan, settings: Settings, estimate_high_mb:
     od „preflight policzył i nie ma czego pobierać": w tym drugim przypadku
     lista rozwiązanych wersji jest niepusta, a pytanie byłoby o zero.
     """
-    return settings.ask_before_download and not plan.specs and estimate_high_mb > 0
+    unresolved_components = plan.status in {"pending", "offline", "error", "partial", "missing_uv"}
+    return settings.ask_before_download and (
+        (not plan.specs and estimate_high_mb > 0) or unresolved_components
+    )
 
 
 class DownloadDialog(QDialog):
@@ -67,7 +74,11 @@ class DownloadDialog(QDialog):
             names = ", ".join(spec.split("==")[0] for spec in plan.specs[:_NAMED])
         else:
             low, high = estimate
-            body = t("dialog_download_body_estimate", low=str(low), high=str(high))
+            body = (
+                t("dialog_download_body_estimate", low=str(low), high=str(high))
+                if high
+                else t("dialog_download_body_unknown")
+            )
             names = ", ".join(estimate_packages[:_NAMED])
 
         self.summary_label = QLabel(body)

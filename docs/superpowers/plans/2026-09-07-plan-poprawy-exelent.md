@@ -109,7 +109,7 @@ Problem: alias `open` i `Image.save` omijają heurystykę, a ONEFILE ustawia cwd
 - [x] Przyjąć zachowawczy domyślny tryb ONEDIR, dopóki polityka ONEFILE nie zapewnia trwałego cwd. Brak rozpoznanego zapisu nie jest dowodem, że program niczego nie zapisuje.
 - [x] Nie używać tymczasowego `_MEIPASS` jako domyślnego miejsca względnych zapisów. Dla ONEFILE ustalić jawny trwały cwd, np. katalog EXE; odmowa zapisu ma dać zrozumiałą diagnostykę.
 - [x] Powiązać odczyt zasobów z B07: źródła używające względnego `open('config.json')` muszą otrzymać zgodny układ. Jeśli pojedynczy EXE nie zapewnia tej zgodności, rekomendować ONEDIR i wyjaśnić przyczynę.
-- [ ] Nie przepisywać dowolnych ścieżek w cudzym kodzie ani nie przedstawiać heurystyki jako gwarancji. Jawne zapisy do `__file__`/`_MEIPASS` i inne nieobsługiwane wzorce opisać przed budowaniem, jeśli zostały rozpoznane.
+- [x] Nie przepisywać dowolnych ścieżek w cudzym kodzie ani nie przedstawiać heurystyki jako gwarancji. Jawne zapisy do `__file__`/`_MEIPASS` i inne nieobsługiwane wzorce opisać przed budowaniem, jeśli zostały rozpoznane.
 - [x] Wyjaśnić konsekwencje ręcznego wyboru ONEFILE oraz odmowy dostępu w docelowej lokalizacji. Zachować ochronę danych z poprzednich wersji.
 
 Akceptacja: rzeczywiste EXE dla aliasu `open`, `Path.open` i Pillow `.save` pozostawiają wynik po zakończeniu procesu, również po uruchomieniu z obcego cwd. Odczyt istniejących zasobów nadal działa. Test obejmuje zalecany tryb oraz ręcznie wybrany ONEFILE; przypadek bez gwarantowanej zgodności otrzymuje widoczne ograniczenie zamiast zapewnienia o bezpieczeństwie zapisu.
@@ -121,7 +121,7 @@ Pliki: [textconv.py](../../../exelent/analysis/textconv.py), [scanner.py](../../
 - [x] Dodać reprodukcję poprawnego Pythona z blokiem Markdown w napisie wielowierszowym: konwersja musi zachować `REAL PROGRAM`, nie uruchamiać `EXAMPLE`.
 - [x] Po dekodowaniu najpierw sprawdzić całe wejście kompilatorem składni. Poprawnego programu nie poddawać usuwaniu fences, etykiet, numeracji ani promptów.
 - [x] Dla niepoprawnego wejścia rozpoznawać otoczkę bez naruszania literałów. Niejednoznacznych fragmentów nie naprawiać przez zgadywanie.
-- [ ] Dla wielu bloków pokazać ich granice i sposób wyboru lub połączenia. Nie scalać automatycznie alternatywnych programów bez przeglądu.
+- [x] Dla wielu bloków pokazać ich granice i sposób wyboru lub połączenia. Nie scalać automatycznie alternatywnych programów bez przeglądu.
 - [x] Zachować kroki konwersji i mapę linii w analizie i planie, tak aby podgląd oraz późniejszy błąd wskazywały oryginalny TXT.
 - [x] Ujednolicić dekodowanie skanera i konwertera: UTF-8 BOM, UTF-16, wspierane starsze kodowania oraz kontrolowany błąd uszkodzonego BOM. Dla `.py` respektować deklarację kodowania.
 - [x] Zachować odtwarzanie podkatalogów i blokady kolizji TXT/PY; walidować docelową ścieżkę konwersji względem workspace.
@@ -243,7 +243,7 @@ Pliki: `ui/app.py`, nowy worker analizy, `analysis/scanner.py`, `analysis/projec
 - [x] Przewidywalne błędy odczytu, dekodowania i dostępu do katalogu zamieniać na diagnostykę z plikiem lub lokalizacją.
 - [x] Ujednolicić limity i wykluczenia także w wykrywaniu innych języków. Nie wykonywać dodatkowego nieograniczonego `rglob` po ograniczonym skanie.
 - [x] Rozpoznawanie prefiksu nie może po cichu zerować grafu importów dużego pliku; gdy analiza jest niepełna, zgłosić to.
-- [ ] Współdzielić sparsowane źródła między etapami, zamiast wielokrotnie tworzyć AST.
+- [x] Współdzielić sparsowane źródła między etapami, zamiast wielokrotnie tworzyć AST.
 
 Akceptacja: podczas kontrolowanej długiej analizy pętla Qt obsługuje zdarzenia, a użytkownik może anulować lub wybrać nowe wejście. Brak dostępu, znikający plik, uszkodzone kodowanie i przekroczenie limitu dają czytelne stany. Stary wynik nie zmienia nowego ekranu.
 
@@ -255,8 +255,8 @@ Pliki: `ui/preflight.py`, `ui/app.py`, `ui/screen_review.py`, `deps/sizes.py`, m
 - [x] Czyścić poprzedni wynik przy starcie. Nie pokazywać szacunku poprzedniego projektu podczas oczekiwania.
 - [x] Nie zastępować referencji do wątku, który nie zakończył się po `stop()`. Odrzucać spóźnione sygnały starych zadań.
 - [x] Odróżnić wynik kompletny, częściowy, brak cache, offline i błąd resolvera. Niewiadoma nie jest `0 B` ani „nic do pobrania”.
-- [ ] Rozdzielić transfer, zajętość środowiska i szacowany rozmiar artefaktu. Uwzględniać tylko brakujące dane cache oraz jasno opisywać udział uv, Pythona i narzędzi.
-- [ ] Używać docelowej zgodności wheel i zależności przechodnich. Nie przedstawiać rozmiaru EXE jako wielkości pobierania w dialogu.
+- [x] Rozdzielić transfer, zajętość środowiska i szacowany rozmiar artefaktu. Uwzględniać tylko brakujące dane cache oraz jasno opisywać udział uv, Pythona i narzędzi.
+- [x] Używać docelowej zgodności wheel i zależności przechodnich. Nie przedstawiać rozmiaru EXE jako wielkości pobierania w dialogu.
 
 Akceptacja: dopisanie modułu zmienia szacunek finalnego planu; spóźniony wynik A nie nadpisuje B. Częściowy cache zmniejsza transfer, nie deklarowany rozmiar aplikacji. Offline i timeout nie dają fałszywego zera. Wyliczanie ani oczekiwanie na nie nie blokuje obsługi GUI.
 
@@ -265,14 +265,14 @@ Akceptacja: dopisanie modułu zmienia szacunek finalnego planu; spóźniony wyni
 Pliki: `ui/screen_review.py`, `ui/screen_build.py`, `ui/app.py`, `ui/rows.py`, `i18n/`, CLI i raporty.
 
 - [x] **P1:** pokazywać `BuildResult.issues` również po sukcesie pakowania; udostępniać raport zawierający uwagi analizy, instalacji i backendu.
-- [ ] Rozróżnić „utworzono”, „utworzono z ostrzeżeniami” i potwierdzone uruchomienie. Sam przycisk „Uruchom” nie jest dowodem poprawności aplikacji.
-- [ ] Przed buildem prezentować zakres wejścia, entrypoint, konwersje, zasoby, zależności, target, tryb i pełny cel publikacji; umożliwić zmianę celu.
-- [ ] Udostępnić podgląd oryginału TXT, wyniku i zmian. Wyjaśnić ograniczenia ręcznych modułów i automatycznego rozpoznania zależności.
+- [x] Rozróżnić „utworzono”, „utworzono z ostrzeżeniami” i potwierdzone uruchomienie. Sam przycisk „Uruchom” nie jest dowodem poprawności aplikacji.
+- [x] Przed buildem prezentować zakres wejścia, entrypoint, konwersje, zasoby, zależności, target, tryb i pełny cel publikacji; umożliwić zmianę celu.
+- [x] Udostępnić podgląd oryginału TXT, wyniku i zmian. Wyjaśnić ograniczenia ręcznych modułów i automatycznego rozpoznania zależności.
 - [x] Rozróżniać blocker i ostrzeżenie tekstem oraz ikoną; wskazywać czynność pozwalającą rozwiązać problem.
-- [ ] Zapewnić przewijanie długiego przeglądu i dostępność akcji przy małym oknie oraz skalowaniu 100%, 150% i 200%.
+- [x] Zapewnić przewijanie długiego przeglądu i dostępność akcji przy małym oknie oraz skalowaniu 100%, 150% i 200%.
 - [x] Udostępniać log na żywo z ograniczonym buforem widoku, zachowując pełny log na dysku. Nie czekać z pierwszym zapisem logu do zakończenia PyInstallera.
 - [x] W ONEDIR wskazywać cały folder do udostępnienia oraz osobno EXE do uruchomienia. Wyjaśniać powód rekomendacji trybu.
-- [ ] Sprawdzić klawiaturę, fokus, długie ścieżki, zachowanie wyborów przy odświeżeniu języka i kompletność PL/EN, także launchera. Błędy otwarcia EXE/folderu mają dawać komunikat.
+- [x] Sprawdzić klawiaturę, fokus, długie ścieżki, zachowanie wyborów przy odświeżeniu języka i kompletność PL/EN, także launchera. Błędy otwarcia EXE/folderu mają dawać komunikat.
 
 Akceptacja: uwaga pozostaje widoczna po udanym pakowaniu w GUI, CLI i raporcie. Ręczne przejście PY, TXT, projektu z zasobami, konfliktu zależności, anulowania i ponownego builda kończy się jasnym wynikiem. Automatyzować istotne zachowania; oceny wyglądu nie zastępować testami odtwarzającymi konstrukcję widgetów.
 
@@ -433,15 +433,30 @@ Przegląd 2026-09-13 odnotował, że większość mechanizmów B01–B14 jest za
 i potwierdzona testami (876 passed). Zaznaczono kryteria odzwierciedlające działający
 kod i testy. Pozostałe otwarte pozycje:
 
-- **B01:** heurystyka wykrywania wzorców zapisu (`__file__`/`_MEIPASS`) przed budowaniem.
-- **B02:** prezentacja granic wielu bloków kodu w TXT.
-- **B11:** współdzielenie AST między etapami.
-- **B12:** rozdzielenie transferu/środowiska/artefaktu; docelowa zgodność wheel w szacunkach.
-- **B13:** rozróżnienie „z ostrzeżeniami" / podgląd TXT / przegląd zakresu przed buildem /
-  przewijanie i skalowanie GUI / klawiatura i fokus.
+- ~~**B01:** heurystyka wykrywania wzorców zapisu (`__file__`/`_MEIPASS`) przed budowaniem.~~ Commit `a18c444`.
+- ~~**B02:** prezentacja granic wielu bloków kodu w TXT.~~ Commit `a18c444`.
+- ~~**B11:** współdzielenie AST między etapami.~~ Commit `a18c444`.
+- ~~**B12:** rozdzielenie transferu/środowiska/artefaktu; docelowa zgodność wheel w szacunkach.~~ Odbiór 2026-09-13.
+- ~~**B13:** rozróżnienie „z ostrzeżeniami" / podgląd TXT / przegląd zakresu przed buildem /
+  przewijanie i skalowanie GUI / klawiatura i fokus.~~ Odbiór 2026-09-13.
 - **B15:** archiwizacja logów z nieudanych buildów.
 - **Sekcja 8:** dokumentacja PL/EN opisująca wdrożone zachowanie i jawne ograniczenia.
 - Ograniczenia Poetry (source tables, custom indexes) wykraczają poza obecny zakres.
+
+### Odbiór B12 i B13 — 2026-09-13
+
+- Preflight jest związany z finalnym planem, rozwiązuje pełne drzewo zależności dla
+  targetu CPython 3.12/Windows x64 i rozdziela transfer braków cache, dolne ograniczenie
+  środowiska oraz szacunek artefaktu. Stany częściowe i offline nie pokazują zera jako
+  wyniku pomiaru.
+- Przegląd pokazuje wejście, zakres, konwersje, zasoby, zależności, target, tryb i pełny
+  cel publikacji. Cel można zmienić, a konwersję TXT obejrzeć jako oryginał, wynik i diff.
+- Wynik odróżnia utworzenie, utworzenie z ostrzeżeniami i kontrolnie potwierdzone
+  uruchomienie. Ręczne uruchomienie z GUI nie jest automatycznie uznawane za weryfikację,
+  a błędy otwarcia EXE i folderu pozostają widoczne.
+- Układ przeglądu przewija treść przy zachowaniu przycisków akcji; testy obejmują skale
+  100%, 150% i 200%, długą ścieżkę, nazwy dostępności oraz zachowanie wyborów po zmianie
+  języka.
 - Preflight nadal wymaga sieci; dokumentacja warunków offline rebuild nie jest formalna.
 
 Nowe automatyczne wysyłanie EXE i diagnostyki do GitHub Artifacts zostało odrzucone

@@ -20,6 +20,7 @@ WOULD_DOWNLOAD = "would_download"
 PREPARED = "prepared"
 INSTALLED = "installed"
 PACKAGE = "package"
+UNCACHED_PACKAGE = "uncached_package"
 
 _UNITS = {"KiB": 1024, "MiB": 1024**2, "GiB": 1024**3}
 
@@ -36,6 +37,9 @@ _INSTALLED = re.compile(r"^Installed (?P<count>\d+) packages? in ")
 # Pozycja wyniku to "nazwa==wersja". Instalacja interpretera drukuje w tym
 # samym kształcie "cpython-... (python3.11.exe)", co pakietem nie jest.
 _PACKAGE = re.compile(r"^ \+ (?P<name>[^\s]+==[^\s]+)$")
+_UNCACHED_PACKAGE = re.compile(
+    r"^(?:DEBUG|TRACE) Identified uncached distribution: (?P<name>[^\s]+==[^\s]+)$"
+)
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,10 @@ def parse_line(line: str) -> UvEvent | None:
     match = _PACKAGE.match(stripped)
     if match:
         return UvEvent(PACKAGE, name=match["name"])
+
+    match = _UNCACHED_PACKAGE.match(stripped)
+    if match:
+        return UvEvent(UNCACHED_PACKAGE, name=match["name"])
 
     # PO `_PACKAGE`, bo obie zaczynają się od spacji i tylko kolejność je dzieli.
     match = _DONE.match(stripped)

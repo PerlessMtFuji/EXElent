@@ -29,6 +29,13 @@ class Severity(str, Enum):
     BLOCKER = "blocker"
 
 
+class VerificationStatus(str, Enum):
+    """Czy gotowy artefakt został faktycznie uruchomiony i sprawdzony."""
+
+    NOT_RUN = "not_run"
+    PASSED = "passed"
+
+
 def _freeze_data(data: Mapping[str, str]) -> MappingProxyType[str, str]:
     """Zamraża ``data`` Issue, żeby ``frozen=True`` nie kłamało.
 
@@ -313,3 +320,7 @@ class BuildResult:
     resolved_versions: tuple[tuple[str, str], ...] = ()
     # B08: identyfikator planu, który stworzył ten wynik.
     plan_id: str = ""
+    # Sam sukces PyInstallera oznacza utworzenie artefaktu. Tylko kontrolowany
+    # test zachowania może ustawić PASSED; kliknięcie „Uruchom” w GUI nie zna
+    # kodu wyjścia aplikacji użytkownika i nie podnosi tego statusu.
+    verification: VerificationStatus = VerificationStatus.NOT_RUN

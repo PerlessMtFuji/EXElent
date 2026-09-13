@@ -31,6 +31,12 @@ def test_question_when_there_is_something_to_download():
     assert should_ask(plan, Settings()) is True
 
 
+def test_partial_size_uses_the_unknown_transfer_dialog_not_a_false_zero():
+    plan = DownloadPlan(specs=("scipy==1",), would_download=1, status="partial")
+    assert should_ask(plan, Settings()) is False
+    assert should_ask_offline(plan, Settings(), estimate_high_mb=115) is True
+
+
 def test_dialog_shows_the_real_numbers(qtbot):
     plan = DownloadPlan(
         specs=("scipy==1.18.1", "numpy==2.5.2"), would_download=2, total_bytes=48 * 1024**2
@@ -71,6 +77,11 @@ def test_no_offline_question_without_anything_to_estimate():
     assert should_ask_offline(DownloadPlan(), Settings(), estimate_high_mb=0) is False
 
 
+def test_missing_uv_still_requires_consent_without_project_packages():
+    plan = DownloadPlan(status="missing_uv", uv_cached=False)
+    assert should_ask_offline(plan, Settings(), estimate_high_mb=0) is True
+
+
 def test_offline_question_respects_the_user_switch():
     settings = Settings(ask_before_download=False)
     assert should_ask_offline(DownloadPlan(), settings, estimate_high_mb=115) is False
@@ -84,6 +95,13 @@ def test_offline_dialog_says_it_is_an_estimate_not_a_measurement(qtbot):
     assert "60" in dialog.summary_label.text()
     assert "115" in dialog.summary_label.text()
     assert "scipy" in dialog.packages_label.text()
+
+
+def test_missing_tool_dialog_does_not_call_zero_an_exe_or_transfer_size(qtbot):
+    dialog = DownloadDialog(DownloadPlan(status="missing_uv"), estimate=(0, 0))
+    qtbot.addWidget(dialog)
+    assert "0–0" not in dialog.summary_label.text()
+    assert "0-0" not in dialog.summary_label.text()
 
 
 # --- okno ustawien: oba przelaczniki maja widoczny skutek ---

@@ -10,13 +10,15 @@ from __future__ import annotations
 import itertools
 import threading
 from collections.abc import Sequence
+from dataclasses import replace
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 
 from exelent.build.backend import CancelToken
-from exelent.constants import TARGET_PYTHON
+from exelent.constants import PYINSTALLER_SPEC, TARGET_PYTHON
 from exelent.deps.sizes import DownloadPlan, resolve_download_plan
 from exelent.runtime.bootstrap import uv_path
+from exelent.runtime.env import run_uv
 
 _THREAD_QUIT_TIMEOUT_MS = 5000
 
@@ -24,23 +26,36 @@ _THREAD_QUIT_TIMEOUT_MS = 5000
 _request_counter = itertools.count(1)
 
 
+def preflight_key(packages: Sequence[str], python_version: str = TARGET_PYTHON) -> str:
+    normalized = sorted({package.strip().lower() for package in packages if package.strip()})
+    return "\0".join((python_version, *normalized))
+
+
 class _Job(QObject):
     finished = Signal(int, object)  # (request_id, DownloadPlan)
 
     def __init__(
-        self, packages: Sequence[str], resolve, cancel: CancelToken, request_id: int
+        self,
+        packages: Sequence[str],
+        resolve,
+        cancel: CancelToken,
+        request_id: int,
+        request_key: str,
     ) -> None:
         super().__init__()
         self._packages = list(packages)
         self._resolve = resolve
         self._cancel = cancel
         self._request_id = request_id
+        self._request_key = request_key
 
     def run(self) -> None:
         try:
-            plan = self._resolve(self._packages, self._cancel)
+            plan = replace(
+                self._resolve(self._packages, self._cancel), request_key=self._request_key
+            )
         except Exception:  # noqa: BLE001 - liczba dla uzytkownika nie moze zabic okna
-            plan = DownloadPlan(status="error")
+            plan = DownloadPlan(status="error", request_key=self._request_key)
         self.finished.emit(self._request_id, plan)
 
 
@@ -56,6 +71,7 @@ class PreflightWorker(QObject):
         # B12: identyfikator żądania — spóźniony wynik starego żądania nie
         # nadpisuje nowego.
         self._current_request: int = 0
+        self._queued: tuple[tuple[str, ...], str, int] | None = None
         # Zdarzenie, a nie `QThread.wait`: wątek roboczy kręci własną pętlę
         # zdarzeń i kończy ją dopiero `quit()` z wątku głównego. Gdyby okno
         # czekało na `QThread.wait`, czekałoby na `quit()`, którego samo nie
@@ -81,46 +97,73 @@ class PreflightWorker(QObject):
             # Preflight NIE pobiera uv. To praca fazy budowania, ktora ma na to
             # wlasny pasek postepu — sciaganie 15 MB w tle ekranu 2, bez slowa
             # do uzytkownika, byloby niespodzianka.
-            return DownloadPlan(status="offline")
+            return DownloadPlan(status="missing_uv", uv_cached=False)
         # Wersja DOCELOWEGO Pythona, nie sciezka do `preflight-venv`, ktorego
         # nikt nie tworzyl: --dry-run rozwiazuje wersje kol dla wlasciwego
         # interpretera (te sama, ktorej uzyje build), gdy jest juz w cache uv;
         # bez cache uv i tak degradujemy do pustego planu.
-        return resolve_download_plan(uv=uv, python=TARGET_PYTHON, packages=packages, cancel=cancel)
+        python_probe = run_uv(
+            uv,
+            ["python", "find", TARGET_PYTHON, "--no-python-downloads"],
+            cancel=cancel,
+        )
+        plan = resolve_download_plan(
+            uv=uv,
+            python=TARGET_PYTHON,
+            packages=[*packages, PYINSTALLER_SPEC],
+            cancel=cancel,
+        )
+        return replace(
+            plan,
+            uv_cached=True,
+            python_cached=python_probe.returncode == 0,
+            includes_build_tools=True,
+        )
 
     def is_running(self) -> bool:
         return self._thread is not None
 
+    def matches(self, packages: Sequence[str], python_version: str = TARGET_PYTHON) -> bool:
+        return self._plan.request_key == preflight_key(packages, python_version)
+
     def start(self, packages: Sequence[str]) -> None:
-        self.stop()
-        self._current_request = next(_request_counter)
+        stopped = self.stop()
+        request_id = next(_request_counter)
+        self._current_request = request_id
         # B12: czyszczenie poprzedniego wyniku — nie pokazujemy szacunku
         # poprzedniego projektu podczas oczekiwania.
-        self._plan = DownloadPlan(status="pending")
-        if not packages:
-            self._plan = DownloadPlan()
-            self._done.set()
-            self.finished.emit(self._plan)
-            return
+        request_key = preflight_key(packages)
+        self._plan = DownloadPlan(status="pending", request_key=request_key)
         self._done.clear()
-        self._token = CancelToken()
-        self._thread = QThread()
-        self._job = _Job(packages, self._resolve, self._token, self._current_request)
-        self._job.moveToThread(self._thread)
+        if not stopped:
+            # Działającego QThread nie wolno porzucić ani nadpisać referencji.
+            # Ostatnia zmiana wygrywa i wystartuje, gdy stary job naprawdę wyjdzie.
+            self._queued = (tuple(packages), request_key, request_id)
+            return
+        self._launch(tuple(packages), request_key, request_id)
+
+    def _launch(self, packages: tuple[str, ...], request_key: str, request_id: int) -> None:
+        token = CancelToken()
+        thread = QThread()
+        job = _Job(packages, self._resolve, token, request_id, request_key)
+        self._token = token
+        self._thread = thread
+        self._job = job
+        job.moveToThread(thread)
         # DWA połączenia do jednego sygnału, celowo. Bezpośrednie zapisuje
         # wynik jeszcze w wątku roboczym, żeby `plan(wait_ms)` miał na co
         # czekać; kolejkowane sprząta wątek w wątku głównym, bo tylko stamtąd
         # wolno wołać `quit()`/`wait()` na własnym wątku.
-        self._job.finished.connect(self._store, Qt.ConnectionType.DirectConnection)
-        self._job.finished.connect(self._on_done)
-        self._thread.started.connect(self._job.run)
-        self._thread.start()
+        job.finished.connect(self._store, Qt.ConnectionType.DirectConnection)
+        job.finished.connect(self._on_done)
+        thread.started.connect(job.run)
+        thread.start()
 
     def _store(self, request_id: int, plan: DownloadPlan) -> None:
         # B12: tylko aktualny wynik trafia do _plan.
         if request_id == self._current_request:
             self._plan = plan
-        self._done.set()
+            self._done.set()
 
     def _on_done(self, request_id: int, plan: DownloadPlan) -> None:
         thread = self._thread
@@ -129,6 +172,11 @@ class PreflightWorker(QObject):
             thread.quit()
             thread.wait(_THREAD_QUIT_TIMEOUT_MS)
         self._job = None
+        if self._queued is not None:
+            packages, request_key, queued_id = self._queued
+            self._queued = None
+            self._launch(packages, request_key, queued_id)
+            return
         # B12: spóźniony wynik starego żądania — odrzucamy, nie emitujemy.
         if request_id != self._current_request:
             return
@@ -152,6 +200,7 @@ class PreflightWorker(QObject):
         sprawia tylko, że nikt już nie wie, że trzeba na niego poczekać, a
         Qt niszczy go przy wychodzeniu z programu.
         """
+        self._queued = None
         thread = self._thread
         if thread is None:
             self._done.set()

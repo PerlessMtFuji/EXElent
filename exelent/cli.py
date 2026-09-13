@@ -105,6 +105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ],
             # B06: rozstrzygnięte wersje paczek — umożliwiają odtworzenie środowiska.
             "resolved_versions": {name: version for name, version in result.resolved_versions},
+            "verification": result.verification.value,
         }
         try:
             args.report.write_text(
@@ -115,7 +116,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
 
     if result.ok and result.artifact:
-        print(f"\nGotowe: {result.artifact} ({result.size_bytes / 1024**2:.1f} MB)")
+        verified = result.verification.value == "passed"
+        warned = any(i.severity is Severity.WARNING for i in result.issues)
+        if verified and warned:
+            outcome = "utworzono z ostrzeżeniami; uruchomienie potwierdzone"
+        elif verified:
+            outcome = "utworzono i potwierdzono uruchomienie"
+        elif warned:
+            outcome = "utworzono z ostrzeżeniami; nie potwierdzono uruchomienia"
+        else:
+            outcome = "utworzono; nie potwierdzono uruchomienia"
+        print(f"\nGotowe ({outcome}): {result.artifact} ({result.size_bytes / 1024**2:.1f} MB)")
         if result.issues:
             print("Uwagi:", file=sys.stderr)
             _print_issues(result.issues, sys.stderr)

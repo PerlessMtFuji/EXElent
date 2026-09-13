@@ -1,6 +1,6 @@
 """Ile to zajmie: w EXE i w pobieraniu. To dwie różne liczby.
 
-Rozmiar POBIERANIA jest dokładny — bierze się z rozwiązanych wersji i z PyPI
+Rozmiar POBIERANIA bierze się z rozwiązanych wersji, braków cache i z PyPI
 (zadania 16–17). Rozmiar EXE jest szacunkiem z widełkami, bo PyInstaller
 wyrzuca z paczki to, czego kod nie dotyka: ten sam `pandas` waży inaczej w
 skrypcie czytającym jeden CSV, a inaczej w programie używającym połowy API.
@@ -15,21 +15,26 @@ from __future__ import annotations
 import functools
 import json
 import re
+import tempfile
 import urllib.request
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
+
+from packaging.tags import Tag, compatible_tags, cpython_tags
+from packaging.utils import InvalidWheelFilename, parse_wheel_filename
 
 from exelent.constants import TARGET_PYTHON
 from exelent.runtime.env import run_uv
-from exelent.runtime.uvlog import PACKAGE, WOULD_DOWNLOAD, parse_line
+from exelent.runtime.uvlog import PACKAGE, UNCACHED_PACKAGE, WOULD_DOWNLOAD, parse_line
 
 # Znacznik ABI koła, którego naprawdę użyje build: CPython w wersji docelowej,
 # 64-bitowy Windows. Koło dla innej wersji albo innego systemu opisuje plik,
 # którego nigdy nie pobierzemy.
-_TAG = f"cp{TARGET_PYTHON.replace('.', '')}"
 _PLATFORM = "win_amd64"
+_UV_PLATFORM = "x86_64-pc-windows-msvc"
 _PYPI = "https://pypi.org/pypi/{name}/{version}/json"
 _MAX_PARALLEL = 8
 
@@ -145,7 +150,23 @@ def estimate_exe_size(packages: Iterable[str]) -> tuple[int, int, tuple[str, ...
     return low, high, heaviest
 
 
-def wheel_size(payload: dict) -> int:
+@functools.lru_cache(maxsize=8)
+def _target_tags(python_version: str = TARGET_PYTHON, platform: str = _PLATFORM) -> tuple[Tag, ...]:
+    """Tagi wheel w tej samej kolejności preferencji co docelowy CPython."""
+    major, minor = (int(part) for part in python_version.split(".")[:2])
+    version = (major, minor)
+    exact = tuple(cpython_tags(python_version=version, platforms=[platform]))
+    universal = tuple(
+        compatible_tags(
+            python_version=version, interpreter=f"cp{major}{minor}", platforms=[platform]
+        )
+    )
+    return tuple(dict.fromkeys((*exact, *universal)))
+
+
+def wheel_size(
+    payload: dict, *, python_version: str = TARGET_PYTHON, platform: str = _PLATFORM
+) -> int:
     """Rozmiar pliku, który uv naprawdę pobierze dla tej wersji.
 
     Kolejność prób: koło dla naszego ABI i systemu → koło uniwersalne
@@ -154,14 +175,21 @@ def wheel_size(payload: dict) -> int:
     ekranu 2 nie.
     """
     urls = payload.get("urls") or []
-    wheels = [u for u in urls if u.get("packagetype") == "bdist_wheel"]
-    for candidate in wheels:
-        name = candidate.get("filename", "")
-        if _TAG in name and _PLATFORM in name:
-            return int(candidate.get("size") or 0)
-    for candidate in wheels:
-        if "none-any" in candidate.get("filename", ""):
-            return int(candidate.get("size") or 0)
+    rank = {tag: index for index, tag in enumerate(_target_tags(python_version, platform))}
+    compatible: list[tuple[int, dict]] = []
+    for candidate in urls:
+        if candidate.get("packagetype") != "bdist_wheel":
+            continue
+        try:
+            _name, _version, _build, tags = parse_wheel_filename(candidate.get("filename", ""))
+        except (InvalidWheelFilename, TypeError):
+            continue
+        matches = [rank[tag] for tag in tags if tag in rank]
+        if matches:
+            compatible.append((min(matches), candidate))
+    if compatible:
+        _best_rank, best = min(compatible, key=lambda item: item[0])
+        return int(best.get("size") or 0)
     for candidate in urls:
         if candidate.get("packagetype") == "sdist":
             return int(candidate.get("size") or 0)
@@ -175,30 +203,53 @@ def _fetch_release(spec: str, timeout: float) -> dict:
 
 
 def download_size(specs: Sequence[str], timeout: float = 5.0) -> int:
-    """Łączny rozmiar pobierania dla przypiętych `nazwa==wersja`.
+    """Łączny rozmiar zgodnych archiwów dla przypiętych `nazwa==wersja`.
 
     Zapytania idą równolegle, bo osiem kolejnych rundtripów do PyPI zajęłoby
     tyle, że ekran 2 zdążyłby się znudzić. KAŻDA porażka jest cicha i daje
     zero — wtedy warstwa wyżej sięga po szacunek z tabeli.
     """
 
-    def one(spec: str) -> int:
+    return sum(distribution_sizes(specs, timeout=timeout).values())
+
+
+def distribution_sizes(specs: Sequence[str], timeout: float = 5.0) -> dict[str, int]:
+    """Rozmiary zgodnych z targetem archiwów, bez gubienia tożsamości paczki."""
+
+    def one(spec: str) -> tuple[str, int]:
         try:
-            return wheel_size(_fetch_release(spec, timeout))
+            return spec, wheel_size(_fetch_release(spec, timeout))
         except (OSError, ValueError, KeyError):
-            return 0
+            return spec, 0
 
     if not specs:
-        return 0
+        return {}
     with ThreadPoolExecutor(max_workers=min(_MAX_PARALLEL, len(specs))) as pool:
-        return sum(pool.map(one, specs))
+        return dict(pool.map(one, specs))
 
 
 @dataclass(frozen=True)
 class DownloadPlan:
     specs: tuple[str, ...] = ()
+    # Pełne drzewo `specs` opisuje środowisko; ta lista zawiera wyłącznie
+    # archiwa, których uv nie znalazł w cache i rzeczywiście je pobierze.
+    missing_specs: tuple[str, ...] = ()
     would_download: int = 0
+    # Transfer sieciowy brakujących archiwów. Nazwa zostaje dla zgodności z
+    # istniejącym BuildPlan/progresem, ale nie opisuje rozmiaru EXE.
     total_bytes: int = 0
+    # Dolna granica zajętości pełnego, przechodniego środowiska: suma
+    # skompresowanych archiwów zgodnych wheel. Po rozpakowaniu środowisko może
+    # być większe, dlatego UI nie przedstawia tej wartości jako dokładnej.
+    environment_min_bytes: int = 0
+    # Składniki spoza paczek projektu. `None` znaczy, że preflight nie mógł
+    # tego sprawdzić; False oznacza realny transfer w fazie budowania.
+    uv_cached: bool | None = None
+    python_cached: bool | None = None
+    includes_build_tools: bool = False
+    # Odcisk paczek i targetu, dla których policzono wynik. UI odrzuca wynik
+    # po ręcznej zmianie modułów lub wersji docelowej.
+    request_key: str = ""
     # B12: status wyniku — pozwala odróżnić kompletny wynik od offline/błędu.
     # "complete": policzono, "empty": brak paczek (wciąż OK), "pending": trwa,
     # "offline": brak uv/sieci, "error": błąd resolvera, "cancelled": przerwano.
@@ -206,11 +257,32 @@ class DownloadPlan:
 
 
 def _default_run_dry(uv: Path, python: str | Path, packages: Sequence[str], *, cancel=None) -> str:
-    result = run_uv(
-        uv,
-        ["pip", "install", "--python", str(python), "--dry-run", "--color", "never", *packages],
-        cancel=cancel,
-    )
+    # Pusty target zapobiega uwzględnieniu przypadkowych paczek środowiska,
+    # z którego uruchomiono EXElent. Wersja i platforma są jawne, więc uv
+    # rozwiązuje dokładnie koła dla finalnego Windows/CPython, także gdy sam
+    # EXElent działa na innej wersji Pythona.
+    with tempfile.TemporaryDirectory(prefix="exelent-preflight-") as empty_target:
+        result = run_uv(
+            uv,
+            [
+                "pip",
+                "install",
+                "--target",
+                empty_target,
+                "--python-version",
+                str(python),
+                "--python-platform",
+                _UV_PLATFORM,
+                "--dry-run",
+                "--verbose",
+                "--color",
+                "never",
+                *packages,
+            ],
+            cancel=cancel,
+        )
+    if result.returncode != 0:
+        raise ValueError(result.stderr or result.stdout or "uv dry-run failed")
     return result.stderr or ""
 
 
@@ -237,11 +309,13 @@ def resolve_download_plan(
     # atrapą albo cudzą funkcją o własnym kształcie, a dokładanie jej
     # argumentu z zewnątrz zmieniałoby kontrakt punktu wstrzyknięcia.
     runner = run_dry or functools.partial(_default_run_dry, cancel=cancel)
-    measurer = measure or download_size
+    measurer = measure or distribution_sizes
     try:
         text = runner(uv, python, packages)
-    except (OSError, ValueError):
+    except OSError:
         return DownloadPlan(status="offline")
+    except ValueError:
+        return DownloadPlan(status="error")
 
     # Po anulowaniu uv wraca z niczym albo z połową odpowiedzi. Liczby dla
     # użytkownika i tak już nikt nie zobaczy, a każde zapytanie do PyPI
@@ -250,6 +324,7 @@ def resolve_download_plan(
         return DownloadPlan(status="cancelled")
 
     specs: list[str] = []
+    missing: list[str] = []
     would = 0
     for line in text.splitlines():
         event = parse_line(line)
@@ -257,10 +332,34 @@ def resolve_download_plan(
             continue
         if event.kind == PACKAGE:
             specs.append(event.name)
+        elif event.kind == UNCACHED_PACKAGE:
+            missing.append(event.name)
         elif event.kind == WOULD_DOWNLOAD:
             would = event.count
 
-    total = measurer(specs) if would else 0
+    measured = measurer(specs) if specs else {}
+    if isinstance(measured, Mapping):
+        environment = sum(measured.values())
+        transfer = sum(measured.get(spec, 0) for spec in missing) if would else 0
+    else:
+        # Zachowanie punktu wstrzyknięcia dla prostych atrap z wcześniejszych
+        # testów. Produkcyjny measurer zwraca mapę i nie wykonuje dwóch rund.
+        scalar_measurer = cast(Callable[[Sequence[str]], int], measurer)
+        environment = cast(int, measured)
+        transfer = scalar_measurer(missing) if would and missing else 0
+
+    # Starsze uv albo zmieniony format logu może podać samą liczbę bez nazw.
+    # Taki wynik jest częściowy: nie przypisujemy wtedy rozmiarów paczek z
+    # cache do transferu i nie pokazujemy fałszywie dokładnej wartości.
+    missing_sizes_known = not isinstance(measured, Mapping) or all(
+        measured.get(spec, 0) > 0 for spec in missing
+    )
+    status = "complete" if would == len(missing) and missing_sizes_known else "partial"
     return DownloadPlan(
-        specs=tuple(specs), would_download=would, total_bytes=total, status="complete"
+        specs=tuple(specs),
+        missing_specs=tuple(missing),
+        would_download=would,
+        total_bytes=transfer,
+        environment_min_bytes=environment,
+        status=status,
     )

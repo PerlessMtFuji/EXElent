@@ -253,15 +253,35 @@ CATALOG: dict[str, str] = {
     "download_checking": "checking size…",
     "download_size": "{count} packages — about {size} to download",
     "download_nothing": "Everything is already downloaded — the build starts right away",
+    "download_transfer": "Transfer: {count} missing packages, about {size}",
+    "download_transfer_cached": "Package transfer: 0 B — every archive is cached",
+    "download_transfer_unknown": "Transfer: could not be determined without guessing",
+    "download_environment_min": (
+        "Environment: at least {size} (compressed archives; larger after extraction)"
+    ),
+    "download_environment_unknown": "Environment: size unknown",
+    "download_artifact_estimate": "Finished program: estimated {low}–{high} MB",
+    "download_artifact_unknown": "Finished program: no reliable measurement for these packages",
+    "download_component_uv_cached": "uv is on disk",
+    "download_component_uv_missing": "uv must be downloaded",
+    "download_component_python_cached": "Python 3.12 is on disk",
+    "download_component_python_missing": "Python 3.12 must be downloaded",
+    "download_component_tools": "build tools included",
+    "download_components": "Components: {components}",
     "dialog_download_title": "Required extras",
     "dialog_download_body": (
         "Building this program needs {count} packages — about {size}. "
         "This happens once; later builds will be faster."
     ),
     "dialog_download_body_estimate": (
-        "Building this program needs extra packages. The exact size could not be "
-        "checked — the finished program will take about {low}–{high} MB. "
+        "Building this program may require downloading uv, Python, build tools, and "
+        "extras. The transfer size could not be checked. The finished program is "
+        "estimated at {low}–{high} MB; this range is not the download size. "
         "This happens once; later builds will be faster."
+    ),
+    "dialog_download_body_unknown": (
+        "Building this program may require downloading uv, Python, and build tools. "
+        "The transfer size could not be determined reliably."
     ),
     "dialog_download_ok": "Download and build",
     "dialog_download_cancel": "Cancel",
@@ -283,11 +303,31 @@ CATALOG: dict[str, str] = {
     "review_icon": "Icon",
     "review_pick_icon": "choose",
     "review_icon_filter": "Images (*.png *.jpg *.jpeg *.ico)",
-    "review_deps_title": "Add-ons needed — they will be downloaded automatically",
+    "review_deps_title": "Preparation and finished program sizes",
     "review_extra_modules": "Missing a module? Add it here",
     "review_extra_modules_placeholder": "e.g. my_plugin, package.submodule — separate with commas",
+    "review_extra_modules_help": (
+        "Added names become hidden imports. EXElent will try to map their first component "
+        "to a package, but private plug-ins may need their own manifest."
+    ),
     "single_file_extra": "Also including: {files}",
     "review_mode": "Result layout",
+    "review_target": "Target Python",
+    "review_destination": "Full publication location",
+    "review_destination_change": "Change publication location…",
+    "review_destination_pick": "Choose publication location",
+    "review_scope_title": "Scope accepted for the build",
+    "review_scope_source": "Input: {path}",
+    "review_scope_summary": (
+        "Sources: {sources} · TXT conversions: {conversions} · resources: {resources} · "
+        "project dependencies: {dependencies}"
+    ),
+    "review_preview_button": "Show original, result, and diff",
+    "review_preview_title": "Conversion preview — {file}",
+    "review_preview_original": "Original TXT",
+    "review_preview_result": "Python result",
+    "review_preview_diff": "Diff",
+    "review_preview_unavailable": "The original file can no longer be read.",
     "review_recommended_suffix": "(recommended)",
     "review_restore": "restore recommended",
     "review_build": "Create EXE",
@@ -314,7 +354,19 @@ CATALOG: dict[str, str] = {
     "build_back_to_review": "← Back to settings",
     "build_show_log": "Show details",
     "build_hide_log": "Hide details",
-    "build_success": "Done! {name} — {size}",
+    "build_success": "Created {name} — {size}. Its launch has not been verified.",
+    "build_success_warnings": (
+        "Created {name} with warnings — {size}. Its launch has not been verified."
+    ),
+    "build_success_verified": "Created {name} and verified its launch — {size}.",
+    "build_success_verified_warnings": (
+        "Created {name} with warnings and verified its launch — {size}."
+    ),
+    "build_launch_started": (
+        "The system started the program; EXElent has not verified its result."
+    ),
+    "build_run_failed": "The program could not be started: {error}",
+    "build_open_failed": "The result folder could not be opened: {error}",
     "build_failed_title": "It did not work",
     "build_failed_unknown": (
         "I do not recognise this error. Save a report or send it in — it will help fix EXElent."
