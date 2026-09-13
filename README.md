@@ -72,6 +72,26 @@ still relevant. EXElent checks syntax with the target Python before packaging;
 it does not automatically run your program to verify its behavior. Test the
 result yourself before sharing it.
 
+## How dependencies are handled
+
+EXElent reads `requirements.txt` (including `-r` and `-c` references),
+`pyproject.toml` (PEP 621 and Poetry) and detects imports in your code.
+When a requirements file exists, it is passed to the resolver as-is;
+imports found in code but absent from the manifest are added alongside it
+so nothing is silently left out.
+
+A constraints file (`-c`) restricts versions but does not install anything
+on its own. If your root `requirements.txt` references nested files, the
+root takes precedence. Environment markers are evaluated against the actual
+build target (CPython 3.12, Windows x64).
+
+**Known limitations:** Poetry source tables, custom package indexes and
+local path dependencies are not supported — only version constraints are
+read. When a Poetry version range (caret or tilde with prerelease) cannot
+be fully interpreted, only the minimum version is used and a warning is
+shown. `requires-python` incompatibility with the target produces a warning
+but does not block the build.
+
 ## Network and cache
 
 Builds target Windows with Python 3.12. EXElent downloads uv, a managed Python

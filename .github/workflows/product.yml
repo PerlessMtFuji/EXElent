@@ -18,3 +18,17 @@ jobs:
         env:
           EXELENT_TEST_EXE: ${{ github.workspace }}\dist\EXElent.exe
         run: pytest tests/test_product_smoke.py -v -m slow --basetemp=build/product-smoke --junitxml=build/product-smoke.xml
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-diagnostics
+          retention-days: 7
+          path: |
+            build/product-smoke.xml
+            build/product-smoke/**/context.json
+            build/product-smoke/**/cold.json
+            build/product-smoke/**/cold.log
+            build/product-smoke/**/invalid.json
+            build/product-smoke/**/warm.json
+            build/product-smoke/**/warm.log

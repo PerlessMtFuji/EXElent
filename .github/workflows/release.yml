@@ -28,6 +28,29 @@ jobs:
         env:
           EXELENT_TEST_EXE: ${{ github.workspace }}\dist\EXElent.exe
         run: pytest tests/test_product_smoke.py -v -m slow --basetemp=build/product-smoke --junitxml=build/product-smoke.xml
+      - name: Upload golden diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-golden-diagnostics
+          retention-days: 7
+          path: |
+            build/golden.xml
+            build/golden/**/EXElent/logs/*.log
+      - name: Upload product diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-product-diagnostics
+          retention-days: 7
+          path: |
+            build/product-smoke.xml
+            build/product-smoke/**/context.json
+            build/product-smoke/**/cold.json
+            build/product-smoke/**/cold.log
+            build/product-smoke/**/invalid.json
+            build/product-smoke/**/warm.json
+            build/product-smoke/**/warm.log
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/EXElent.exe
