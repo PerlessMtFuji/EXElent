@@ -157,13 +157,13 @@ Akceptacja: regresje trzech przypadków z tabeli dowodów; golden `src/` z absol
 
 Pliki: [scanner.py](../../../exelent/analysis/scanner.py), [resolve.py](../../../exelent/deps/resolve.py), modele, plan i środowisko.
 
-- [ ] Główny `requirements.txt` ma pierwszeństwo przed zagnieżdżonymi manifestami. Manifesty podkatalogów uwzględniać przez jawne referencje lub wybór; ich kolejność na dysku nie może zmieniać wyniku.
-- [ ] Przechowywać osobno wymagania instalacyjne i constraints. Wpis w `-c` ogranicza wersję, ale sam nie nakazuje instalacji.
-- [ ] Preferować przekazanie zachowanych manifestów i constraints do uv, z poprawną bazą ścieżek w kopii roboczej. Nie odtwarzać całej semantyki pip przez spłaszczanie linii.
-- [ ] Dla nieobsługiwanych opcji, lokalnych referencji, błędnych wymagań, cykli i brakujących plików zwracać diagnostykę; nie usuwać ich bez śladu.
-- [ ] Ocenić markery względem rzeczywistego targetu, bez sztywnego założenia patcha `.0`; sprawdzać również zgodność `requires-python` projektu.
-- [ ] Zachować PEP 621, zaimplementowaną obsługę Poetry i uwagi o importach spoza deklaracji. Sprawdzić ograniczenia Poetry: zakresy, prerelease, markery, warianty i lokalne ścieżki; niewspieranego warunku nie poszerzać po cichu.
-- [ ] Przechowywać pochodzenie zależności: manifest, import statyczny, dynamiczny lub wpis użytkownika.
+- [x] Główny `requirements.txt` ma pierwszeństwo przed zagnieżdżonymi manifestami. Manifesty podkatalogów uwzględniać przez jawne referencje lub wybór; ich kolejność na dysku nie może zmieniać wyniku.
+- [x] Przechowywać osobno wymagania instalacyjne i constraints. Wpis w `-c` ogranicza wersję, ale sam nie nakazuje instalacji.
+- [x] Preferować przekazanie zachowanych manifestów i constraints do uv, z poprawną bazą ścieżek w kopii roboczej. Nie odtwarzać całej semantyki pip przez spłaszczanie linii.
+- [x] Dla nieobsługiwanych opcji, lokalnych referencji, błędnych wymagań, cykli i brakujących plików zwracać diagnostykę; nie usuwać ich bez śladu.
+- [x] Ocenić markery względem rzeczywistego targetu, bez sztywnego założenia patcha `.0`; sprawdzać również zgodność `requires-python` projektu.
+- [x] Zachować PEP 621, zaimplementowaną obsługę Poetry i uwagi o importach spoza deklaracji. Sprawdzić ograniczenia Poetry: zakresy, prerelease, markery, warianty i lokalne ścieżki; niewspieranego warunku nie poszerzać po cichu.
+- [x] Przechowywać pochodzenie zależności: manifest, import statyczny, dynamiczny lub wpis użytkownika.
 
 Akceptacja: główny manifest wygrywa niezależnie od układu podkatalogów; samo `-c` nie instaluje `numpy`, lecz ogranicza jego wersję, jeśli jest potrzebne. Działają `-r`, extras, markery i przypięcia. Błędny lub niewspierany wpis jest widoczny. Semantyka constraints: [dokumentacja pip](https://pip.pypa.io/en/stable/user_guide/#constraints-files).
 
@@ -171,13 +171,13 @@ Akceptacja: główny manifest wygrywa niezależnie od układu podkatalogów; sam
 
 Pliki: [env.py](../../../exelent/runtime/env.py), [cli.py](../../../exelent/cli.py), plan i diagnostyka.
 
-- [ ] Po nieudanym rozwiązaniu całego zestawu zatrzymywać budowanie. Usunąć ścieżkę, w której udane instalacje osobno kasują znaczenie zbiorowego błędu.
-- [ ] Jeśli pojedyncze próby pozostaną narzędziem diagnostycznym, nie używać ich środowiska jako dowodu gotowości; wynik nadal musi zawierać pierwotny konflikt.
-- [ ] Instalować spójne rozwiązanie pełnego zestawu, uwzględniające narzędzia budowania. Po instalacji sprawdzać zgodność deklarowanych wersji, zależności przechodnich i docelowego interpretera.
-- [ ] Zachować rozróżnienie zależności wymaganych, opcjonalnych i nierozstrzygniętych. Nie traktować pominięcia wymaganej paczki jako ostrzeżenia pozwalającego na sukces.
-- [ ] Zapisywać rozstrzygnięte wersje i wersje narzędzi w raporcie builda, aby umożliwić odtworzenie problemu.
-- [ ] Zachować pełną diagnostykę instalacji, również gdy PyInstaller nie został uruchomiony.
-- [ ] Umożliwić pracę z kompletnym cache bez bezwarunkowej blokady za brak połączenia z `pypi.org`; brak wymaganego artefaktu offline ma dawać konkretny błąd.
+- [x] Po nieudanym rozwiązaniu całego zestawu zatrzymywać budowanie. Usunąć ścieżkę, w której udane instalacje osobno kasują znaczenie zbiorowego błędu.
+- [x] Jeśli pojedyncze próby pozostaną narzędziem diagnostycznym, nie używać ich środowiska jako dowodu gotowości; wynik nadal musi zawierać pierwotny konflikt.
+- [x] Instalować spójne rozwiązanie pełnego zestawu, uwzględniające narzędzia budowania. Po instalacji sprawdzać zgodność deklarowanych wersji, zależności przechodnich i docelowego interpretera.
+- [x] Zachować rozróżnienie zależności wymaganych, opcjonalnych i nierozstrzygniętych. Nie traktować pominięcia wymaganej paczki jako ostrzeżenia pozwalającego na sukces.
+- [x] Zapisywać rozstrzygnięte wersje i wersje narzędzi w raporcie builda, aby umożliwić odtworzenie problemu.
+- [x] Zachować pełną diagnostykę instalacji, również gdy PyInstaller nie został uruchomiony.
+- [x] Umożliwić pracę z kompletnym cache bez bezwarunkowej blokady za brak połączenia z `pypi.org`; brak wymaganego artefaktu offline ma dawać konkretny błąd.
 
 Akceptacja: konflikt dwóch pinów i konflikt zależności przechodnich blokują wywołanie backendu. Test rzeczywistego resolvera używa kontrolowanych lokalnych paczek, bez zależności od zmieniającego się indeksu. Poprawny zestaw przechodzi kontrolę spójności. Udokumentować stan cache i warunki powtórnego builda offline.
 
@@ -429,12 +429,15 @@ Dokumentacja kontroli procesów: [os.kill](https://docs.python.org/3/library/os.
 
 ### Zakres pozostały
 
-Nie ma podstaw do oznaczenia całych B01–B15 jako odebranych. Pozostają m.in. pełna
-semantyka manifestów/constraints i kontrola spójności środowiska (B05/B06), wybór
-zasobów i kolizje (B07), pełny kontrakt wersji planu (B08), ścisły protokół walidatora
+Nie ma podstaw do oznaczenia całych B01–B15 jako odebranych. B05 i B06 zostały
+domknięte (commit `a6a8785`, sesja 2026-09-13): diagnostyka błędnych specyfikacji,
+markery bez `.0`, Poetry prerelease, manifest/constraint passthrough, kontrola
+spójności wersji i rozstrzygnięte wersje w raporcie. Pozostaje m.in. wybór zasobów
+i kolizje (B07), pełny kontrakt wersji planu (B08), ścisły protokół walidatora
 i kontrola PYW (B09), wszystkie limity anulowania (B10), pełny zakres preflightu
 i przeglądu UI (B11–B13) oraz ręczna ocena GUI przy skalowaniu 100/150/200%.
 Offline pozostaje ograniczeniem: usługa nadal wymaga sieci w preflight.
+Ograniczenia Poetry (source tables, custom indexes) wykraczają poza obecny zakres.
 
 Nowe automatyczne wysyłanie EXE i diagnostyki do GitHub Artifacts zostało odrzucone
 przez automatyczny przegląd uprawnień (brak jawnej zgody na pliki i miejsce eksportu).
@@ -453,3 +456,32 @@ sprawdzony lokalnie). Retencja: 7 dni; wysyłanie po nieudanym przebiegu testów
 
 Pliki zawierają wyniki i diagnostykę programów testowych, wersje narzędzi oraz ścieżki
 runnera. To konkretny zakres do zatwierdzenia przed dodaniem kroku eksportu do workflow.
+
+### Odbiór B05 i B06 — 2026-09-13
+
+Commit: `a6a8785` (`feat: etap 2 — domknięcie kryteriów B05 i B06`).
+
+**B05 — zrealizowane kryteria:**
+- Pierwszeństwo głównego `requirements.txt` (mechanizm z `f75d7d6`, test `test_collect_manifest_paths_finds_r_and_c`).
+- Separacja wymagań i constraints; `-c` nie instaluje — ogranicza wersję (`test_manifest_paths_reach_build_plan`).
+- Passthrough manifestów i constraints do uv jako `-r`/`-c` (`test_manifest_paths_become_r_and_c_args`).
+- Diagnostyka błędnych specyfikacji: `requirements_invalid_spec` (PL/EN) dla `InvalidRequirement` w requirements.txt i pyproject.toml.
+- Markery: `python_full_version` używa `.99` zamiast `.0` — marker `>=3.12.5` nie wyklucza, `<3.12.2` wyklucza.
+- Diagnostyka `requires_python_mismatch` (istniejąca) sprawdza zgodność z targetem.
+- Poetry: `poetry_version_fallback` (PL/EN) dla prerelease caret/tilde; niewspierany warunek nie poszerza po cichu.
+- Pochodzenie zależności: pole `origin` na `Dependency` (manifest/import/dynamic/user).
+- Pozostałe ograniczenia: source tables, custom indexes i pełne mapowanie pakietów Poetry wykraczają poza zakres.
+
+**B06 — zrealizowane kryteria:**
+- Konflikt zbiorowy blokuje backend (mechanizm z `fc64af5`, testy lokalne `test_local_resolver.py`).
+- `_check_version_consistency` sprawdza zgodność zainstalowanych wersji z deklarowanymi (4 testy unit).
+- Rozstrzygnięte wersje zapisane na `BuildResult.resolved_versions` (`test_version_issues_are_set_on_build_env`).
+- `version_issues` z `BuildEnv` trafiają do `carried` issues w `build/service.py`.
+- Rozróżnienie wymaganych/opcjonalnych/nierozstrzygniętych (istniejące `failed_packages` vs ostrzeżenia).
+- Praca z cache offline (test `test_offline_flag_uses_cache` z B15).
+- Pozostałe ograniczenia: preflight nadal wymaga sieci; dokumentacja warunków offline rebuild nie jest formalna.
+
+**Wyniki testów:**
+- `pytest -m "not slow" -q`: **876 zaliczonych**, 42 odznaczone, 81,19 s.
+- `ruff check .`: bez błędów; `ruff format --check .`: 113 plików zgodnych.
+- Środowisko: Python 3.13.5, Windows 11 build 26100.
