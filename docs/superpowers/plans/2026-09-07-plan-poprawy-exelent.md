@@ -215,7 +215,7 @@ Pliki: [validate.py](../../../exelent/build/validate.py), [_targetcheck.py](../.
 - [x] Zapewnić dostępność kodu walidatora po spakowaniu EXElenta: jako jawny zasób albo kod przekazywany docelowemu interpreterowi. Nie polegać na istnieniu źródłowego `.py` obok modułu w zamrożonym produkcie.
 - [x] Rozdzielić wynik „składnia poprawna”, „składnia błędna”, „walidacja niewykonana/awaria” i „anulowano”. Brak skryptu, interpreter z błędem lub niepoprawny protokół nie mogą oznaczać `None` rozumianego jako sukces.
 - [x] Wprowadzić ustrukturyzowaną odpowiedź walidatora, zawierającą względną ścieżkę i linię; nie rozpoznawać błędu po dowolnym tabulatorze na stdout.
-- [ ] Walidować pełny zaakceptowany zestaw źródeł, w tym `.pyw` i konwersje, rzeczywistym docelowym interpreterem, z ograniczeniem czasu i anulowaniem.
+- [x] Walidować pełny zaakceptowany zestaw źródeł, w tym `.pyw` i konwersje, rzeczywistym docelowym interpreterem, z ograniczeniem czasu i anulowaniem.
 - [x] Zachować kontrolę modułów odrzuconych przez PyInstaller jako dodatkową ochronę, nie zastępstwo niewykonanego sprawdzenia.
 - [x] Sprawdzać strukturę artefaktu przed publikacją: oczekiwany niepusty EXE, właściwy typ pliku i zadeklarowane składniki. Stan „utworzono” oddzielić od „zweryfikowano uruchomienie”.
 
@@ -242,7 +242,7 @@ Pliki: `ui/app.py`, nowy worker analizy, `analysis/scanner.py`, `analysis/projec
 - [x] Starszy wynik ani sygnał zakończenia nie może zastąpić analizy nowego wyboru.
 - [x] Przewidywalne błędy odczytu, dekodowania i dostępu do katalogu zamieniać na diagnostykę z plikiem lub lokalizacją.
 - [x] Ujednolicić limity i wykluczenia także w wykrywaniu innych języków. Nie wykonywać dodatkowego nieograniczonego `rglob` po ograniczonym skanie.
-- [ ] Rozpoznawanie prefiksu nie może po cichu zerować grafu importów dużego pliku; gdy analiza jest niepełna, zgłosić to.
+- [x] Rozpoznawanie prefiksu nie może po cichu zerować grafu importów dużego pliku; gdy analiza jest niepełna, zgłosić to.
 - [ ] Współdzielić sparsowane źródła między etapami, zamiast wielokrotnie tworzyć AST.
 
 Akceptacja: podczas kontrolowanej długiej analizy pętla Qt obsługuje zdarzenia, a użytkownik może anulować lub wybrać nowe wejście. Brak dostępu, znikający plik, uszkodzone kodowanie i przekroczenie limitu dają czytelne stany. Stary wynik nie zmienia nowego ekranu.
@@ -435,8 +435,7 @@ kod i testy. Pozostałe otwarte pozycje:
 
 - **B01:** heurystyka wykrywania wzorców zapisu (`__file__`/`_MEIPASS`) przed budowaniem.
 - **B02:** prezentacja granic wielu bloków kodu w TXT.
-- **B09:** walidacja pełnego zestawu źródeł (w tym `.pyw` i konwersje) docelowym interpreterem.
-- **B11:** zgłaszanie niepełnej analizy dużego pliku; współdzielenie AST między etapami.
+- **B11:** współdzielenie AST między etapami.
 - **B12:** rozdzielenie transferu/środowiska/artefaktu; docelowa zgodność wheel w szacunkach.
 - **B13:** rozróżnienie „z ostrzeżeniami" / podgląd TXT / przegląd zakresu przed buildem /
   przewijanie i skalowanie GUI / klawiatura i fokus.
