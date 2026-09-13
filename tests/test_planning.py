@@ -588,3 +588,13 @@ def test_manifest_paths_reach_build_plan(tmp_path):
     plan = make_plan(analyze_project(root))
     assert "requirements.txt" in plan.manifest_paths
     assert "pins.txt" in plan.constraint_paths
+
+
+def test_import_missing_from_manifest_reaches_supplemental_packages(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import six\nimport idna\n"})
+    (root / "requirements.txt").write_text("six\n", encoding="utf-8")
+
+    plan = make_plan(analyze_project(root))
+
+    assert plan.packages == ("idna", "six")
+    assert plan.supplemental_packages == ("idna",)
