@@ -710,3 +710,61 @@ def test_constraint_preserves_origin(tmp_path):
     main.write_text(f"-c {constraints.name}\nrequests>=2.0\n", encoding="utf-8")
     deps = resolve_dependencies(_s(""), set(), requirements_path=main)
     assert deps[0].origin == "manifest"
+
+
+# --- B05: diagnostyka niepoprawnych wymagań ---
+
+
+def test_invalid_requirement_spec_is_reported(tmp_path):
+    """B05: niepoprawna linia wymagań daje diagnostykę, nie ciche pominięcie."""
+    main = tmp_path / "requirements.txt"
+    main.write_text("requests>=2.0\n!!!not-a-valid-spec\nrich\n", encoding="utf-8")
+    issues: list = []
+    deps = resolve_dependencies(_s(""), set(), requirements_path=main, issues=issues)
+    assert _names(deps) == {"requests>=2.0", "rich"}
+    assert "requirements_invalid_spec" in {i.code for i in issues}
+
+
+def test_invalid_requirement_in_pyproject_is_reported(tmp_path):
+    """B05: niepoprawna deklaracja w pyproject.toml daje diagnostykę."""
+    pp = tmp_path / "pyproject.toml"
+    pp.write_text(
+        '[project]\nname = "x"\ndependencies = ["requests", "!!!broken"]\n',
+        encoding="utf-8",
+    )
+    issues: list = []
+    deps = resolve_dependencies(_s(""), set(), pyproject_path=pp, issues=issues)
+    assert _names(deps) == {"requests"}
+    assert "requirements_invalid_spec" in {i.code for i in issues}
+
+
+# --- B05: python_full_version nie zakłada patcha .0 ---
+
+
+def test_marker_python_full_version_high_patch_is_kept():
+    """B05: marker `python_full_version >= '3.12.5'` nie wyklucza zależności
+    — bo uv zainstaluje patch >= 5, nie .0."""
+    issues: list = []
+    deps = resolve_dependencies(
+        _s(""), set(), "dep; python_full_version >= '3.12.5'\n", issues=issues
+    )
+    assert _names(deps) == {"dep"}
+
+
+def test_marker_python_full_version_old_patch_excludes():
+    """B05: marker `python_full_version < '3.12.2'` wyklucza zależność
+    — bo docelowy Python jest nowszy."""
+    deps = resolve_dependencies(_s(""), set(), "dep; python_full_version < '3.12.2'\n")
+    assert deps == ()
+
+
+# --- B05: diagnostyka Poetry prerelease fallback ---
+
+
+def test_poetry_prerelease_caret_gives_diagnostic(tmp_path):
+    """B05: `^1.0.0rc1` nie da się obliczyć górnej granicy karetowej
+    — diagnostyka zamiast cichego poszerzenia."""
+    pp = _poetry(tmp_path, 'mylib = "^1.0.0rc1"\n')
+    issues: list = []
+    resolve_dependencies(_s(""), set(), pyproject_path=pp, issues=issues)
+    assert "poetry_version_fallback" in {i.code for i in issues}

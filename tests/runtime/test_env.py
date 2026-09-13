@@ -431,3 +431,125 @@ def test_resolved_versions_empty_when_freeze_fails(monkeypatch, tmp_path):
     result = create_build_env(tmp_path / "src", [], noop_progress)
 
     assert result.resolved_versions == ()
+
+
+# --- B06: kontrola spójności zadeklarowanych i zainstalowanych wersji ---
+
+
+def test_version_consistency_detects_mismatch():
+    """B06: zainstalowana wersja spoza zadeklarowanego zakresu daje ostrzeżenie."""
+    from exelent.runtime.env import _check_version_consistency
+
+    resolved = (("numpy", "2.0.0"), ("requests", "2.31.0"))
+    packages = ["numpy>=1.24,<2.0", "requests>=2.0"]
+    issues = _check_version_consistency(resolved, packages)
+    codes = {i.code for i in issues}
+    assert "version_mismatch" in codes
+    mismatch = next(i for i in issues if i.code == "version_mismatch")
+    assert mismatch.data["package"] == "numpy"
+    assert mismatch.data["installed"] == "2.0.0"
+
+
+def test_version_consistency_passes_when_in_range():
+    """B06: zainstalowana wersja w zadeklarowanym zakresie — brak ostrzeżenia."""
+    from exelent.runtime.env import _check_version_consistency
+
+    resolved = (("numpy", "1.26.4"), ("requests", "2.31.0"))
+    packages = ["numpy>=1.24,<2.0", "requests>=2.0"]
+    issues = _check_version_consistency(resolved, packages)
+    assert not issues
+
+
+def test_version_consistency_ignores_unresolved():
+    """B06: paczka nieobecna w zainstalowanych — pomijana bez alarmu."""
+    from exelent.runtime.env import _check_version_consistency
+
+    resolved = (("requests", "2.31.0"),)
+    packages = ["requests>=2.0", "numpy>=1.24"]
+    issues = _check_version_consistency(resolved, packages)
+    assert not issues
+
+
+def test_version_consistency_ignores_invalid_spec():
+    """B06: niepoprawny specyfikator nie wywala kontroli."""
+    from exelent.runtime.env import _check_version_consistency
+
+    resolved = (("badpkg", "1.0"),)
+    packages = ["!!!invalid"]
+    issues = _check_version_consistency(resolved, packages)
+    assert not issues
+
+
+# --- B06: manifest_paths i constraint_paths docierają do uv ---
+
+
+def test_manifest_paths_become_r_and_c_args(monkeypatch, tmp_path):
+    """B06: manifest_paths i constraint_paths z planu docierają do uv jako
+    argumenty `-r`/`-c`, a nie jako gołe nazwy paczek."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(env, "ensure_uv", lambda _p, cancel=None: tmp_path / "uv.exe")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "requirements.txt").write_text("requests\n", encoding="utf-8")
+    (workspace / "constraints.txt").write_text("requests<3.0\n", encoding="utf-8")
+
+    install_calls: list[list[str]] = []
+
+    def fake_run(uv, args, *, cwd=None, cancel=None):
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(env, "run_uv", fake_run)
+    monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv(calls=install_calls))
+
+    create_build_env(
+        tmp_path / "src",
+        ["requests"],
+        noop_progress,
+        workspace=workspace,
+        manifest_paths=("requirements.txt",),
+        constraint_paths=("constraints.txt",),
+    )
+
+    pip_call = next(args for args in install_calls if args[:2] == ["pip", "install"])
+    assert "-r" in pip_call
+    r_idx = pip_call.index("-r")
+    assert "requirements.txt" in pip_call[r_idx + 1]
+    assert "-c" in pip_call
+    c_idx = pip_call.index("-c")
+    assert "constraints.txt" in pip_call[c_idx + 1]
+    # Gołe nazwy paczek (poza PyInstallerem) NIE powinny być w argumentach.
+    assert "requests" not in pip_call[pip_call.index("--python") + 2 :]
+
+
+# --- B06: version_issues propagowane przez BuildEnv ---
+
+
+def test_version_issues_are_set_on_build_env(monkeypatch, tmp_path):
+    """B06: version_issues z kontroli spójności trafiają do BuildEnv."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(env, "ensure_uv", lambda _p, cancel=None: tmp_path / "uv.exe")
+
+    # Freeze zwraca wersję SPOZA zakresu deklaracji.
+    freeze_output = "numpy==2.0.0\npyinstaller==6.16.0\n"
+
+    def fake_run(uv, args, *, cwd=None, cancel=None):
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        Result.stdout = freeze_output if args[:2] == ["pip", "freeze"] else ""
+        return Result()
+
+    monkeypatch.setattr(env, "run_uv", fake_run)
+    monkeypatch.setattr(env, "_stream_uv", _fake_stream_uv())
+
+    result = create_build_env(tmp_path / "src", ["numpy>=1.24,<2.0"], noop_progress)
+
+    assert result.version_issues
+    codes = {i.code for i in result.version_issues}
+    assert "version_mismatch" in codes

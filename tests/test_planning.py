@@ -547,3 +547,44 @@ def test_path_traversal_blocked_in_materialization(tmp_path):
     assert _validate_rel_path("C:\\Windows\\system32\\cmd.exe") is False
     assert _validate_rel_path("") is False
     assert _validate_rel_path("..") is False
+
+
+# --- B05: zbieranie ścieżek manifestów i constraints ---
+
+
+def test_collect_manifest_paths_finds_r_and_c(tmp_path):
+    """B05: _collect_manifest_paths zbiera ścieżki manifestów i constraints
+    z drzewa `-r`/`-c` w requirements.txt."""
+    from exelent.planning import _collect_manifest_paths
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "base.txt").write_text("flask\n", encoding="utf-8")
+    (root / "pins.txt").write_text("flask==2.3.0\n", encoding="utf-8")
+    main = root / "requirements.txt"
+    main.write_text("-r base.txt\n-c pins.txt\nrequests\n", encoding="utf-8")
+
+    manifests, constraints = _collect_manifest_paths(main, root)
+    assert "requirements.txt" in manifests
+    assert "base.txt" in manifests
+    assert "pins.txt" in constraints
+    assert "pins.txt" not in manifests
+
+
+def test_collect_manifest_paths_none_when_no_requirements():
+    """B05: brak requirements.txt daje puste krotki."""
+    from exelent.planning import _collect_manifest_paths
+
+    manifests, constraints = _collect_manifest_paths(None, Path("."))
+    assert manifests == ()
+    assert constraints == ()
+
+
+def test_manifest_paths_reach_build_plan(tmp_path):
+    """B05/B08: ścieżki manifestów i constraints są w planie."""
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    (root / "requirements.txt").write_text("-c pins.txt\nrequests>=2.0\n", encoding="utf-8")
+    (root / "pins.txt").write_text("requests<3.0\n", encoding="utf-8")
+    plan = make_plan(analyze_project(root))
+    assert "requirements.txt" in plan.manifest_paths
+    assert "pins.txt" in plan.constraint_paths

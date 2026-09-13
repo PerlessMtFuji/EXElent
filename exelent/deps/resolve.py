@@ -29,9 +29,14 @@ _TARGET_MARKER_ENV = {
     "platform_system": "Windows",
     "platform_machine": "AMD64",
     "python_version": TARGET_PYTHON,
-    "python_full_version": f"{TARGET_PYTHON}.0",
+    # B05: nie zakładamy patcha `.0` — uv instaluje najnowszy dostępny
+    # (np. 3.12.11), więc marker `python_full_version >= '3.12.5'` musi
+    # się zgodzić. Używamy wysokiego patcha, który jest powyżej każdego
+    # realnego wydania 3.12.x — w razie wątpliwości WŁĄCZAMY zależność
+    # (uv odrzuci ją sam, gdy marker nie pasuje do zainstalowanego).
+    "python_full_version": f"{TARGET_PYTHON}.99",
     "implementation_name": "cpython",
-    "implementation_version": f"{TARGET_PYTHON}.0",
+    "implementation_version": f"{TARGET_PYTHON}.99",
     "platform_python_implementation": "CPython",
 }
 
@@ -195,13 +200,15 @@ def _deps_from_pyproject(path: Path, issues: list[Issue]) -> tuple[Dependency, .
         declared = project.get("dependencies")
         if declared is None:
             return None
-        return _deps_from_manifest([spec for spec in declared if isinstance(spec, str)])
+        return _deps_from_manifest(
+            [spec for spec in declared if isinstance(spec, str)], issues=issues
+        )
     tool = data.get("tool")
     poetry = tool.get("poetry") if isinstance(tool, dict) else None
     if isinstance(poetry, dict):
         poetry_deps = poetry.get("dependencies")
         if isinstance(poetry_deps, dict):
-            return _deps_from_poetry(poetry_deps)
+            return _deps_from_poetry(poetry_deps, issues)
     return None
 
 
@@ -215,14 +222,25 @@ def _text_lines(text: str) -> list[str]:
     return lines
 
 
-def _dep_from_requirement_line(line: str) -> Dependency | None:
+def _dep_from_requirement_line(line: str, issues: list[Issue] | None = None) -> Dependency | None:
     """Jedna linia manifestu -> Dependency, albo None gdy marker ją wyklucza
-    dla docelowej platformy lub gdy linia jest niepoprawna."""
+    dla docelowej platformy lub gdy linia jest niepoprawna.
+
+    B05: niepoprawna linia daje diagnostykę zamiast cichego pominięcia.
+    """
     if _is_direct_reference(line):
         return Dependency(import_name=line, package=line, heavy=False, origin="manifest")
     try:
         req = Requirement(line)
     except InvalidRequirement:
+        if issues is not None:
+            issues.append(
+                Issue(
+                    "requirements_invalid_spec",
+                    Severity.WARNING,
+                    {"spec": line[:120]},
+                )
+            )
         return None
     if req.marker is not None and not req.marker.evaluate(_TARGET_MARKER_ENV):
         return None
@@ -291,11 +309,13 @@ def _apply_constraints(deps: dict[str, Dependency], constraint_lines: list[str])
 
 
 def _deps_from_manifest(
-    lines: list[str], constraint_lines: list[str] | None = None
+    lines: list[str],
+    constraint_lines: list[str] | None = None,
+    issues: list[Issue] | None = None,
 ) -> tuple[Dependency, ...]:
     by_package: dict[str, Dependency] = {}
     for line in lines:
-        dep = _dep_from_requirement_line(line)
+        dep = _dep_from_requirement_line(line, issues)
         if dep is not None:
             by_package.setdefault(dep.package, dep)
     if constraint_lines:
@@ -342,11 +362,14 @@ def _poetry_tilde_range(version: str) -> str:
     return f">={version},<{upper}"
 
 
-def _poetry_version_spec(constraint: str) -> str:
+def _poetry_version_spec(constraint: str, issues: list[Issue] | None = None) -> str:
     """Wersja w składni Poetry -> specyfikator PEP 440 (pusty = dowolna).
 
     Goła wersja bez operatora znaczy w Poetry DOKŁADNIE tę wersję (`==`), a nie
-    zakres — inaczej niż w npm."""
+    zakres — inaczej niż w npm.
+
+    B05: nieobsługiwany warunek nie jest po cichu poszerzany — daje diagnostykę.
+    """
     c = constraint.strip()
     if c in ("", "*"):
         return ""
@@ -355,14 +378,31 @@ def _poetry_version_spec(constraint: str) -> str:
         try:
             return f">={base},<{_poetry_caret_upper(base)}"
         except ValueError:
-            # Wersja z przedrostkiem nienumerycznym (prerelease) — bezpieczna
-            # dolna granica zamiast wywalania całej analizy.
+            # Wersja z przedrostkiem nienumerycznym (prerelease) — nie da się
+            # obliczyć górnej granicy. Zamiast po cichu poszerzać do `>=base`,
+            # zwracamy dolną granicę i zgłaszamy ograniczenie (B05).
+            if issues is not None:
+                issues.append(
+                    Issue(
+                        "poetry_version_fallback",
+                        Severity.WARNING,
+                        {"constraint": c},
+                    )
+                )
             return f">={base}"
     if c.startswith("~"):
         base = c[1:]
         try:
             return _poetry_tilde_range(base)
         except ValueError:
+            if issues is not None:
+                issues.append(
+                    Issue(
+                        "poetry_version_fallback",
+                        Severity.WARNING,
+                        {"constraint": c},
+                    )
+                )
             return f">={base}"
     if c.startswith(_PEP440_OPERATORS) or "," in c:
         return c
@@ -385,16 +425,18 @@ def _poetry_python_matches(constraint: str) -> bool:
         return True
 
 
-def _poetry_entry_to_requirement(name: str, spec: object) -> str | None:
+def _poetry_entry_to_requirement(
+    name: str, spec: object, issues: list[Issue] | None = None
+) -> str | None:
     """Jeden wpis `[tool.poetry.dependencies]` -> linia PEP 508 albo `None`
     (wpis, którego świadomie nie instalujemy)."""
     if isinstance(spec, str):
-        return f"{name}{_poetry_version_spec(spec)}"
+        return f"{name}{_poetry_version_spec(spec, issues)}"
     if isinstance(spec, list):
         # Wiele ograniczeń (różna wersja dla różnych Pythonów) — bierzemy
         # pierwsze pasujące do docelowego 3.12.
         for entry in spec:
-            line = _poetry_entry_to_requirement(name, entry)
+            line = _poetry_entry_to_requirement(name, entry, issues)
             if line is not None:
                 return line
         return None
@@ -429,7 +471,7 @@ def _poetry_entry_to_requirement(name: str, spec: object) -> str | None:
         if names:
             extras = f"[{','.join(names)}]"
     version_spec = spec.get("version")
-    version = _poetry_version_spec(version_spec) if isinstance(version_spec, str) else ""
+    version = _poetry_version_spec(version_spec, issues) if isinstance(version_spec, str) else ""
     line = f"{name}{extras}{version}"
     markers = spec.get("markers")
     if isinstance(markers, str) and markers:
@@ -437,7 +479,7 @@ def _poetry_entry_to_requirement(name: str, spec: object) -> str | None:
     return line
 
 
-def _deps_from_poetry(table: Mapping) -> tuple[Dependency, ...]:
+def _deps_from_poetry(table: Mapping, issues: list[Issue] | None = None) -> tuple[Dependency, ...]:
     """Zależności z `[tool.poetry.dependencies]`. Klucz `python` to wersja
     interpretera, nie pakiet — pomijamy go. Markery, extras i referencje
     bezpośrednie rozstrzyga już `_deps_from_manifest` na gotowych liniach."""
@@ -445,10 +487,10 @@ def _deps_from_poetry(table: Mapping) -> tuple[Dependency, ...]:
     for name, spec in table.items():
         if name.lower() == "python":
             continue
-        line = _poetry_entry_to_requirement(name, spec)
+        line = _poetry_entry_to_requirement(name, spec, issues)
         if line is not None:
             lines.append(line)
-    return _deps_from_manifest(lines)
+    return _deps_from_manifest(lines, issues=issues)
 
 
 def _handles_import_error(handler: ast.ExceptHandler) -> bool:
@@ -672,9 +714,9 @@ def resolve_dependencies(
     if requirements_path is not None:
         constraints: list[str] = []
         req_lines = _manifest_lines(requirements_path, set(), [], 0, sink, constraints=constraints)
-        manifest_deps = _deps_from_manifest(req_lines, constraints or None)
+        manifest_deps = _deps_from_manifest(req_lines, constraints or None, issues=sink)
     elif requirements_text is not None:
-        manifest_deps = _deps_from_manifest(_text_lines(requirements_text))
+        manifest_deps = _deps_from_manifest(_text_lines(requirements_text), issues=sink)
     elif pyproject_path is not None:
         # `None` stąd = pyproject nieautorytatywny (dynamic/Poetry/nieczytelny).
         manifest_deps = _deps_from_pyproject(pyproject_path, sink)
