@@ -17,6 +17,7 @@ from exelent.runtime.uvlog import (
     PACKAGE,
     PREPARED,
     RESOLVED,
+    UNCACHED_PACKAGE,
     WOULD_DOWNLOAD,
     parse_line,
 )
@@ -80,6 +81,12 @@ def test_package_line_carries_name_and_version():
     event = parse_line(" + python-dateutil==2.9.0.post0")
     assert event.kind == PACKAGE
     assert event.name == "python-dateutil==2.9.0.post0"
+
+
+def test_verbose_dry_run_identifies_the_uncached_distribution():
+    event = parse_line("DEBUG Identified uncached distribution: scipy==1.18.1")
+    assert event.kind == UNCACHED_PACKAGE
+    assert event.name == "scipy==1.18.1"
 
 
 @pytest.mark.parametrize(

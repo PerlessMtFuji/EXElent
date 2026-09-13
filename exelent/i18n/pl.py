@@ -263,15 +263,35 @@ CATALOG: dict[str, str] = {
     "download_checking": "sprawdzam rozmiar…",
     "download_size": "{count} paczek — około {size} do pobrania",
     "download_nothing": "Wszystko już pobrane — budowanie ruszy od razu",
+    "download_transfer": "Transfer: {count} brakujących paczek, około {size}",
+    "download_transfer_cached": "Transfer paczek: 0 B — wszystkie archiwa są w cache",
+    "download_transfer_unknown": "Transfer: nie udało się ustalić bez zgadywania",
+    "download_environment_min": (
+        "Środowisko: co najmniej {size} (skompresowane archiwa; po rozpakowaniu będzie większe)"
+    ),
+    "download_environment_unknown": "Środowisko: rozmiar nieznany",
+    "download_artifact_estimate": "Gotowy program: szacunkowo {low}–{high} MB",
+    "download_artifact_unknown": "Gotowy program: brak wiarygodnego pomiaru dla tych paczek",
+    "download_component_uv_cached": "uv jest na dysku",
+    "download_component_uv_missing": "uv trzeba pobrać",
+    "download_component_python_cached": "Python 3.12 jest na dysku",
+    "download_component_python_missing": "Python 3.12 trzeba pobrać",
+    "download_component_tools": "narzędzia budowania uwzględnione",
+    "download_components": "Składniki: {components}",
     "dialog_download_title": "Potrzebne dodatki",
     "dialog_download_body": (
         "Do zbudowania programu trzeba pobrać {count} paczek — około {size}. "
         "Pobieranie odbywa się raz; następne budowania będą szybsze."
     ),
     "dialog_download_body_estimate": (
-        "Do zbudowania programu trzeba pobrać dodatki. Nie udało się sprawdzić "
-        "dokładnego rozmiaru — gotowy program zajmie około {low}–{high} MB. "
+        "Do zbudowania programu może być potrzebne pobranie uv, Pythona, narzędzi "
+        "i dodatków. Nie udało się sprawdzić wielkości transferu. Gotowy program "
+        "zajmie szacunkowo {low}–{high} MB; te widełki nie są wielkością pobierania. "
         "Pobieranie odbywa się raz; następne budowania będą szybsze."
+    ),
+    "dialog_download_body_unknown": (
+        "Do zbudowania programu może być potrzebne pobranie uv, Pythona i narzędzi "
+        "budowania. Nie udało się wiarygodnie ustalić wielkości transferu."
     ),
     "dialog_download_ok": "Pobierz i buduj",
     "dialog_download_cancel": "Anuluj",
@@ -293,11 +313,31 @@ CATALOG: dict[str, str] = {
     "review_icon": "Ikona",
     "review_pick_icon": "wybierz",
     "review_icon_filter": "Obrazy (*.png *.jpg *.jpeg *.ico)",
-    "review_deps_title": "Potrzebne dodatki — zostaną pobrane automatycznie",
+    "review_deps_title": "Rozmiary przygotowania i gotowego programu",
     "review_extra_modules": "Brakuje modułu? Dopisz go tutaj",
     "review_extra_modules_placeholder": ("np. moja_wtyczka, pakiet.podmoduł — oddziel przecinkami"),
+    "review_extra_modules_help": (
+        "Dopisane nazwy trafiają do hidden imports. EXElent spróbuje mapować ich pierwszy "
+        "człon na paczkę, ale prywatne wtyczki mogą wymagać własnego manifestu."
+    ),
     "single_file_extra": "Dołączam też: {files}",
     "review_mode": "Postać wyniku",
+    "review_target": "Docelowy Python",
+    "review_destination": "Pełne miejsce publikacji",
+    "review_destination_change": "Zmień miejsce publikacji…",
+    "review_destination_pick": "Wybierz miejsce publikacji",
+    "review_scope_title": "Zakres przyjęty do budowania",
+    "review_scope_source": "Wejście: {path}",
+    "review_scope_summary": (
+        "Źródła: {sources} · konwersje TXT: {conversions} · zasoby: {resources} · "
+        "zależności projektu: {dependencies}"
+    ),
+    "review_preview_button": "Pokaż oryginał, wynik i różnicę",
+    "review_preview_title": "Podgląd konwersji — {file}",
+    "review_preview_original": "Oryginał TXT",
+    "review_preview_result": "Wynik Python",
+    "review_preview_diff": "Różnica",
+    "review_preview_unavailable": "Nie można już odczytać oryginalnego pliku.",
     "review_recommended_suffix": "(zalecane)",
     "review_restore": "przywróć zalecane",
     "review_build": "Stwórz EXE",
@@ -324,7 +364,19 @@ CATALOG: dict[str, str] = {
     "build_back_to_review": "← Wróć do ustawień",
     "build_show_log": "Pokaż szczegóły",
     "build_hide_log": "Ukryj szczegóły",
-    "build_success": "Gotowe! {name} — {size}",
+    "build_success": "Utworzono {name} — {size}. Uruchomienie nie zostało potwierdzone.",
+    "build_success_warnings": (
+        "Utworzono {name} z ostrzeżeniami — {size}. Uruchomienie nie zostało potwierdzone."
+    ),
+    "build_success_verified": "Utworzono i sprawdzono uruchomienie {name} — {size}.",
+    "build_success_verified_warnings": (
+        "Utworzono {name} z ostrzeżeniami i sprawdzono uruchomienie — {size}."
+    ),
+    "build_launch_started": (
+        "System rozpoczął uruchamianie programu; EXElent nie potwierdza jego wyniku."
+    ),
+    "build_run_failed": "Nie udało się uruchomić programu: {error}",
+    "build_open_failed": "Nie udało się otworzyć folderu wyniku: {error}",
     "build_failed_title": "Nie udało się",
     "build_failed_unknown": (
         "Nie rozpoznaję tego błędu. Zapisz raport albo zgłoś go — pomożesz naprawić EXElent."

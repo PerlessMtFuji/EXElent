@@ -7,9 +7,11 @@ w systemie osieroconego procesu.
 """
 
 import threading
+from dataclasses import replace
 
 import pytest
 
+from exelent.deps.sizes import DownloadPlan
 from exelent.i18n import CATALOGS, set_language
 from exelent.models import AppKind, BuildPlan, BuildResult, OutputMode
 from exelent.runtime import Progress
@@ -147,6 +149,10 @@ def _plan(tmp_path):
 @pytest.fixture
 def fake_build(monkeypatch):
     """Udawany `execute_build`, ktory stoi az do zwolnienia."""
+    # Testuje drogę przez ekrany, nie modalny dialog pobierania. B12 sprawdza
+    # teraz narzędzia także dla projektu bez zależności, więc wyłączamy zgodę
+    # jawnie tak samo, jak może to zrobić użytkownik w ustawieniach.
+    save_settings(Settings(ask_before_download=False))
     zwolnij = threading.Event()
     wystartowal = threading.Event()
     stan = {"anulowany": False}
@@ -197,6 +203,26 @@ def test_progress_from_the_worker_reaches_the_screen(window, qtbot, fake_build, 
         fake_build["zwolnij"].set()
     assert window.screen_build.bar.value() > 0
     assert window.screen_build.summary_label.text() != ""
+
+
+def test_changed_final_plan_restarts_preflight_for_its_packages(
+    window, qtbot, fake_build, monkeypatch, tmp_path
+):
+    starts = []
+    monkeypatch.setattr(window.preflight, "matches", lambda *_a: False)
+    monkeypatch.setattr(window.preflight, "start", lambda packages: starts.append(tuple(packages)))
+    monkeypatch.setattr(
+        window.preflight,
+        "plan",
+        lambda **_kwargs: DownloadPlan(specs=("requests==2.0",), status="complete"),
+    )
+    plan = replace(_plan(tmp_path), packages=("requests",))
+
+    window.screen_review.build_requested.emit(plan)
+    assert starts == [("requests",)]
+    assert fake_build["wystartowal"].wait(timeout=5)
+    with qtbot.waitSignal(window.worker.finished, timeout=5000):
+        fake_build["zwolnij"].set()
 
 
 def test_the_stop_button_stops_the_running_build(window, qtbot, fake_build, tmp_path):

@@ -121,6 +121,29 @@ def test_wheel_size_falls_back_to_a_pure_python_wheel():
     assert wheel_size(payload) == 11053
 
 
+def test_wheel_size_accepts_abi3_but_rejects_a_newer_cpython_wheel():
+    payload = {
+        "urls": [
+            {
+                "packagetype": "bdist_wheel",
+                "filename": "demo-1.0-cp313-cp313-win_amd64.whl",
+                "size": 99,
+            },
+            {
+                "packagetype": "bdist_wheel",
+                "filename": "demo-1.0-cp39-abi3-win_amd64.whl",
+                "size": 42,
+            },
+            {
+                "packagetype": "bdist_wheel",
+                "filename": "demo-1.0-py3-none-any.whl",
+                "size": 10,
+            },
+        ]
+    }
+    assert wheel_size(payload, python_version="3.12") == 42
+
+
 def test_wheel_size_falls_back_to_sdist_as_a_last_resort():
     payload = json.loads((FIXTURES / "pypi_sdist_only.json").read_text(encoding="utf-8"))
     assert wheel_size(payload) == 90000
@@ -159,6 +182,29 @@ def test_dry_run_yields_pinned_specs_and_the_missing_count():
     assert plan.would_download == 8
     assert "scipy==1.18.1" in plan.specs
     assert len(plan.specs) == 14
+    assert plan.status == "partial", "stary zapis bez nazw cache nie może udawać pełnego"
+
+
+def test_transfer_measures_only_uncached_specs_but_environment_covers_the_tree():
+    transcript = (
+        "DEBUG Identified uncached distribution: scipy==1.18.1\n"
+        "Resolved 2 packages in 12ms\n"
+        "Would download 1 package\n"
+        " + numpy==2.5.2\n"
+        " + scipy==1.18.1"
+    )
+    measured = {"numpy==2.5.2": 12, "scipy==1.18.1": 36}
+    plan = resolve_download_plan(
+        uv=Path("uv.exe"),
+        python="3.12",
+        packages=["scipy"],
+        run_dry=lambda *_a, **_k: transcript,
+        measure=lambda specs: {spec: measured[spec] for spec in specs},
+    )
+    assert plan.status == "complete"
+    assert plan.missing_specs == ("scipy==1.18.1",)
+    assert plan.total_bytes == 36
+    assert plan.environment_min_bytes == 48
 
 
 def test_nothing_to_download_when_everything_is_cached():
@@ -185,6 +231,17 @@ def test_resolution_failure_degrades_to_an_empty_plan():
     )
     assert plan.specs == ()
     assert plan.total_bytes == 0
+    assert plan.status == "offline"
+
+
+def test_resolver_rejection_is_not_mislabeled_as_offline():
+    def rejected(*_args, **_kwargs):
+        raise ValueError("requirements are unsatisfiable")
+
+    plan = resolve_download_plan(
+        uv=Path("uv.exe"), python="3.12", packages=["demo"], run_dry=rejected
+    )
+    assert plan.status == "error"
 
 
 def test_dry_run_receives_the_cancel_token(monkeypatch):
@@ -197,11 +254,16 @@ def test_dry_run_receives_the_cancel_token(monkeypatch):
 
     def fake_run_uv(uv, args, *, cwd=None, cancel=None):
         seen["cancel"] = cancel
-        return SimpleNamespace(stderr="")
+        seen["args"] = args
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
 
     monkeypatch.setattr(sizes_module, "run_uv", fake_run_uv)
     token = CancelToken()
 
-    resolve_download_plan(Path("uv.exe"), Path("python.exe"), ["six"], cancel=token)
+    resolve_download_plan(Path("uv.exe"), "3.12", ["six"], cancel=token)
 
     assert seen["cancel"] is token
+    assert "--python-version" in seen["args"]
+    assert seen["args"][seen["args"].index("--python-version") + 1] == "3.12"
+    assert "--python-platform" in seen["args"]
+    assert "--target" in seen["args"]

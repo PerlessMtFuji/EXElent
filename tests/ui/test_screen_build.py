@@ -10,7 +10,15 @@ import pytest
 from PySide6.QtWidgets import QFileDialog, QWidget
 
 from exelent.i18n import CATALOGS, current_language, set_language, t
-from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, Severity
+from exelent.models import (
+    AppKind,
+    BuildPlan,
+    BuildResult,
+    Issue,
+    OutputMode,
+    Severity,
+    VerificationStatus,
+)
 from exelent.runtime import Progress
 from exelent.ui import screen_build as screen_build_module
 from exelent.ui.screen_build import BuildScreen
@@ -557,6 +565,53 @@ def test_success_without_issues_hides_the_label(screen, tmp_path):
     """Pusty blok nie powinien się pojawiać, gdy nie ma ostrzeżeń."""
     screen.on_finished(BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048))
     assert _visible(screen.issues_label, screen) is False
+
+
+def test_success_headline_distinguishes_warnings_and_verified_launch(screen, tmp_path):
+    artifact = _artifact(tmp_path)
+    screen.on_finished(BuildResult(ok=True, artifact=artifact, size_bytes=2048))
+    assert "nie zostało potwierdzone" in screen.summary_label.text()
+
+    warning = Issue("dependency_not_declared", Severity.WARNING, {"package": "requests"})
+    screen.on_finished(BuildResult(ok=True, artifact=artifact, size_bytes=2048, issues=(warning,)))
+    assert "z ostrzeżeniami" in screen.summary_label.text()
+
+    screen.on_finished(
+        BuildResult(
+            ok=True,
+            artifact=artifact,
+            size_bytes=2048,
+            verification=VerificationStatus.PASSED,
+        )
+    )
+    assert "sprawdzono uruchomienie" in screen.summary_label.text()
+
+
+def test_launch_failure_is_visible_instead_of_raising(screen, monkeypatch, tmp_path):
+    artifact = _artifact(tmp_path)
+    screen.on_finished(
+        BuildResult(ok=True, artifact=artifact, executable_path=artifact, size_bytes=2048)
+    )
+    monkeypatch.setattr(
+        screen_build_module.subprocess,
+        "Popen",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("odmowa")),
+    )
+    screen.run_button.click()
+    assert "odmowa" in screen.issues_label.text()
+    assert _visible(screen.issues_label, screen) is True
+
+
+def test_open_folder_failure_is_visible_instead_of_raising(screen, monkeypatch, tmp_path):
+    artifact = _artifact(tmp_path)
+    screen.on_finished(BuildResult(ok=True, artifact=artifact, size_bytes=2048))
+    monkeypatch.setattr(
+        screen_build_module.subprocess,
+        "run",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("explorer niedostępny")),
+    )
+    screen.open_folder_button.click()
+    assert "explorer niedostępny" in screen.issues_label.text()
 
 
 def test_issues_cleared_on_new_build(screen, tmp_path):

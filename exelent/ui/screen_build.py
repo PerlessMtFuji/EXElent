@@ -18,7 +18,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
-    QHBoxLayout,
+    QGridLayout,
     QLabel,
     QPlainTextEdit,
     QProgressBar,
@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from exelent.diagnostics.report import github_issue_url, tail, write_report
 from exelent.i18n import describe, t
-from exelent.models import BuildPlan, BuildResult
+from exelent.models import BuildPlan, BuildResult, Severity, VerificationStatus
 from exelent.ui.format import human_duration, human_size, human_speed
 
 # Ile ostatnich linii logu pokazujemy w oknie. Log PyInstallera bywa
@@ -94,18 +94,17 @@ class BuildScreen(QWidget):
         self.report_button.clicked.connect(self._save_report)
         self.github_button.clicked.connect(self._open_github)
 
-        actions = QHBoxLayout()
-        for button in (
-            self.back_button,
-            self.cancel_button,
-            self.open_folder_button,
-            self.run_button,
-            self.report_button,
-            self.github_button,
-        ):
-            actions.addWidget(button)
-        actions.addStretch(1)
-        actions.addWidget(self.again_button)
+        # Dwa krótkie rzędy mieszczą się przy dużym skalowaniu tekstu; jeden
+        # poziomy rząd siedmiu akcji wychodził poza małe okno.
+        actions = QGridLayout()
+        actions.addWidget(self.back_button, 0, 0)
+        actions.addWidget(self.cancel_button, 0, 1)
+        actions.addWidget(self.open_folder_button, 0, 2)
+        actions.addWidget(self.run_button, 0, 3)
+        actions.addWidget(self.report_button, 1, 0)
+        actions.addWidget(self.github_button, 1, 1)
+        actions.setColumnStretch(2, 1)
+        actions.addWidget(self.again_button, 1, 3)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(40, 40, 40, 28)
@@ -120,6 +119,12 @@ class BuildScreen(QWidget):
         outer.addWidget(self.log_view, stretch=1)
         outer.addStretch(1)
         outer.addLayout(actions)
+
+        self.setTabOrder(self.cancel_button, self.open_folder_button)
+        self.setTabOrder(self.open_folder_button, self.run_button)
+        self.setTabOrder(self.run_button, self.report_button)
+        self.setTabOrder(self.report_button, self.github_button)
+        self.setTabOrder(self.github_button, self.again_button)
 
         self._show_running()
 
@@ -254,14 +259,22 @@ class BuildScreen(QWidget):
         self._show_failure(result)
 
     def _show_success(self, result: BuildResult) -> None:
+        artifact = result.artifact
+        if artifact is None:
+            return
         self.bar.setValue(100)
         self._set_phase("done")
+        has_warnings = any(issue.severity is Severity.WARNING for issue in result.issues)
+        if result.verification is VerificationStatus.PASSED and has_warnings:
+            summary_key = "build_success_verified_warnings"
+        elif result.verification is VerificationStatus.PASSED:
+            summary_key = "build_success_verified"
+        elif has_warnings:
+            summary_key = "build_success_warnings"
+        else:
+            summary_key = "build_success"
         self.summary_label.setText(
-            t(
-                "build_success",
-                name=result.artifact.name,
-                size=human_size(result.size_bytes),
-            )
+            t(summary_key, name=artifact.name, size=human_size(result.size_bytes))
         )
         # B13: ostrzeżenia analizy i backendu widoczne RÓWNIEŻ po sukcesie.
         # Sam przycisk „Uruchom" nie jest dowodem poprawności aplikacji.
@@ -355,7 +368,10 @@ class BuildScreen(QWidget):
             if selectable.is_file()
             else ["explorer", str(result.artifact)]
         )
-        subprocess.run(arguments, check=False)
+        try:
+            subprocess.run(arguments, check=False)
+        except OSError as exc:
+            self._show_action_error("build_open_failed", exc)
 
     def _run_artifact(self) -> None:
         """Uruchamia gotowy program. Działa w ONEFILE i ONEDIR.
@@ -366,7 +382,20 @@ class BuildScreen(QWidget):
         swoje zasoby leżące obok."""
         exe = self._result.executable_path if self._result else None
         if exe is not None and exe.is_file():
-            subprocess.Popen([str(exe)], cwd=str(exe.parent))
+            try:
+                subprocess.Popen([str(exe)], cwd=str(exe.parent))
+            except OSError as exc:
+                self._show_action_error("build_run_failed", exc)
+                return
+            self._append_status(t("build_launch_started"))
+
+    def _append_status(self, text: str) -> None:
+        previous = self.issues_label.text()
+        self.issues_label.setText("\n".join(part for part in (previous, text) if part))
+        self.issues_label.setVisible(True)
+
+    def _show_action_error(self, key: str, exc: OSError) -> None:
+        self._append_status(t(key, error=str(exc)))
 
     def _plan_summary(self) -> str:
         """Kontekst zgłoszenia. Nazwa PROJEKTU, nie artefaktu.

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from exelent.deps.sizes import DownloadPlan
-from exelent.ui.preflight import PreflightWorker
+from exelent.ui.preflight import PreflightWorker, preflight_key
 
 
 @pytest.fixture
@@ -19,12 +19,16 @@ def worker(qtbot):
     w.stop()
 
 
-def test_no_dependencies_means_no_network_call(qtbot, worker, monkeypatch):
+def test_no_project_dependencies_still_checks_the_build_tool(qtbot, worker, monkeypatch):
     called = []
-    monkeypatch.setattr(worker, "_resolve", lambda packages, cancel: called.append(packages))
+    monkeypatch.setattr(
+        worker,
+        "_resolve",
+        lambda packages, cancel: called.append(packages) or DownloadPlan(),
+    )
     with qtbot.waitSignal(worker.finished, timeout=2000) as blocker:
         worker.start([])
-    assert called == []
+    assert called == [[]]
     assert blocker.args[0].would_download == 0
 
 
@@ -37,7 +41,7 @@ def test_missing_uv_degrades_quietly(qtbot, worker, monkeypatch):
         worker.start(["scipy"])
     plan = blocker.args[0]
     assert plan.would_download == 0
-    assert plan.status == "offline"
+    assert plan.status == "missing_uv"
 
 
 def test_result_reaches_the_signal(qtbot, worker, monkeypatch):
@@ -47,7 +51,13 @@ def test_result_reaches_the_signal(qtbot, worker, monkeypatch):
     monkeypatch.setattr(worker, "_resolve", lambda packages, cancel: expected)
     with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
         worker.start(["scipy"])
-    assert blocker.args[0] == expected
+    assert blocker.args[0] == DownloadPlan(
+        specs=expected.specs,
+        would_download=expected.would_download,
+        total_bytes=expected.total_bytes,
+        status=expected.status,
+        request_key=preflight_key(["scipy"]),
+    )
 
 
 def test_waiting_for_the_plan_has_a_deadline(qtbot, worker, monkeypatch):
@@ -82,7 +92,48 @@ def test_waiting_returns_the_real_plan_when_it_arrives_in_time(qtbot, worker, mo
     monkeypatch.setattr(worker, "_resolve", lambda packages, cancel: time.sleep(0.05) or expected)
     worker.start(["six"])
 
-    assert worker.plan(wait_ms=5000) == expected
+    actual = worker.plan(wait_ms=5000)
+    assert actual.total_bytes == expected.total_bytes
+    assert actual.request_key == preflight_key(["six"])
+
+
+def test_plan_matches_only_the_same_packages_and_target(qtbot, worker, monkeypatch):
+    monkeypatch.setattr(worker, "_resolve", lambda _p, _c: DownloadPlan())
+    worker.start(["six", "Requests>=2"])
+    qtbot.waitUntil(lambda: not worker.is_running(), timeout=5000)
+
+    assert worker.matches(["requests>=2", "six"], "3.12") is True
+    assert worker.matches(["six"], "3.12") is False
+    assert worker.matches(["requests>=2", "six"], "3.13") is False
+
+
+def test_new_request_waits_for_an_old_thread_that_did_not_stop(qtbot, worker, monkeypatch):
+    import threading
+
+    release = threading.Event()
+    calls = []
+
+    def resolve(packages, _cancel):
+        calls.append(tuple(packages))
+        if packages == ["old"]:
+            release.wait(10)
+        return DownloadPlan(specs=(f"{packages[0]}==1",), status="complete")
+
+    monkeypatch.setattr(worker, "_resolve", resolve)
+    worker.start(["old"])
+    qtbot.waitUntil(lambda: calls == [("old",)], timeout=5000)
+
+    # Skrócony timeout wymusza kolejkę zamiast porzucenia referencji do QThread.
+    original_stop = worker.stop
+    monkeypatch.setattr(worker, "stop", lambda: original_stop(timeout_ms=20))
+    worker.start(["new"])
+    assert worker.is_running() is True
+    assert worker.plan().status == "pending"
+
+    release.set()
+    qtbot.waitUntil(lambda: calls == [("old",), ("new",)], timeout=5000)
+    qtbot.waitUntil(lambda: not worker.is_running(), timeout=5000)
+    assert worker.plan().specs == ("new==1",)
 
 
 def test_stop_cancels_a_resolve_that_watches_the_token(qtbot, worker, monkeypatch):

@@ -6,6 +6,9 @@ a to, co uzytkownik poprawi, ma naprawde trafic do planu — testy pilnuja
 obu polowek tej obietnicy osobno.
 """
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,8 +16,10 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFileDialog, QWidget
 
 from exelent.analysis.project import analyze_project
+from exelent.deps.sizes import DownloadPlan
 from exelent.i18n import CATALOGS, current_language, set_language, t
 from exelent.models import AppKind, OutputMode
+from exelent.ui import screen_review as screen_review_module
 from exelent.ui import theme
 from exelent.ui.screen_review import ReviewScreen
 
@@ -192,6 +197,39 @@ def test_dependency_section_comes_back_for_the_next_project(screen, tmp_path):
     _load(screen, tmp_path, {"main.py": "import os"})
     _load(screen, tmp_path / "drugi", {"main.py": "import requests"})
     assert screen.deps_box.isVisibleTo(screen) is True
+
+
+def test_preflight_separates_transfer_environment_and_artifact(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "import pandas\n"})
+    screen.show_download_plan(
+        DownloadPlan(
+            specs=("pandas==3.0.5", "numpy==2.5.2"),
+            missing_specs=("numpy==2.5.2",),
+            would_download=1,
+            total_bytes=12 * 1024**2,
+            environment_min_bytes=32 * 1024**2,
+            uv_cached=True,
+            python_cached=False,
+            includes_build_tools=True,
+            status="complete",
+        )
+    )
+    text = screen.deps_size_label.text()
+    assert "Transfer:" in text
+    assert "Środowisko:" in text
+    assert "Gotowy program:" in text
+    assert "12.0 MB" in text
+    assert "32.0 MB" in text
+    assert "Python 3.12" in text
+
+
+def test_partial_preflight_never_reports_a_false_zero(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "import pandas\n"})
+    screen.show_download_plan(
+        DownloadPlan(specs=("pandas==3.0.5",), would_download=1, status="partial")
+    )
+    assert "Transfer: nie udało" in screen.deps_size_label.text()
+    assert "0 B" not in screen.deps_size_label.text()
 
 
 # --- ostrzezenia ---
@@ -473,6 +511,145 @@ def test_extra_modules_do_not_survive_the_next_project(screen, qtbot, tmp_path):
     with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
         screen.build_button.click()
     assert blocker.args[0].hidden_imports == ()
+
+
+# --- pełny przegląd B13 ---
+
+
+def test_review_shows_input_target_destination_and_scope(screen, tmp_path):
+    root = _load(
+        screen,
+        tmp_path,
+        {"main.py": "import requests\n", "config.toml": "[app]\nname='x'\n"},
+    )
+    assert str(root) in screen.scope_source_label.text()
+    assert "3.12" in screen.target_label.text()
+    assert str(root.parent) in screen.destination_label.text()
+    summary = screen.scope_summary_label.text()
+    assert "Zasoby: 1" in summary or "zasoby: 1" in summary
+    assert "zależności projektu: 1" in summary
+
+
+def test_user_can_change_the_full_publication_destination(screen, qtbot, monkeypatch, tmp_path):
+    _load(screen, tmp_path, {"main.py": "print(1)\n"})
+    destination = tmp_path / "gotowy wynik"
+    destination.mkdir()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", staticmethod(lambda *_a, **_k: str(destination))
+    )
+    screen.destination_button.click()
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    assert blocker.args[0].dest_dir == destination
+
+
+def test_txt_preview_contains_original_result_and_diff(screen, monkeypatch, tmp_path):
+    _load(screen, tmp_path, {"kod.txt": "```python\nprint('wynik')\n```\n"})
+    seen = {}
+
+    def fake_exec(dialog):
+        seen["original"] = dialog.original_view.toPlainText()
+        seen["result"] = dialog.result_view.toPlainText()
+        seen["diff"] = dialog.diff_view.toPlainText()
+        return 0
+
+    monkeypatch.setattr(screen_review_module.TextPreviewDialog, "exec", fake_exec)
+    assert screen.preview_box.isVisibleTo(screen) is True
+    screen.preview_button.click()
+    assert "```python" in seen["original"]
+    assert seen["result"] == "print('wynik')"
+    assert "--- kod.txt" in seen["diff"]
+    assert "+++ kod.py" in seen["diff"]
+
+
+def test_long_review_scrolls_while_actions_stay_available(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "import pandas\n"})
+    screen.resize(520, 300)
+    screen.layout().activate()
+    screen.scroll_area.widget().layout().activate()
+    assert screen.scroll_area.widget().sizeHint().height() > screen.scroll_area.viewport().height()
+    assert screen.build_button.isHidden() is False
+
+
+@pytest.mark.parametrize("scale", ["1", "1.5", "2"])
+def test_review_actions_remain_available_at_supported_scale_factors(tmp_path, scale):
+    root = _project(tmp_path, {"main.py": "import pandas\n"})
+    script = """
+import sys
+from pathlib import Path
+from PySide6.QtWidgets import QApplication
+from exelent.analysis.project import analyze_project
+from exelent.ui.screen_review import ReviewScreen
+
+app = QApplication([])
+screen = ReviewScreen()
+screen.resize(520, 300)
+screen.load(analyze_project(Path(sys.argv[1])))
+screen.show()
+app.processEvents()
+assert screen.devicePixelRatioF() >= float(sys.argv[2])
+assert screen.build_button.isVisible()
+assert screen.scroll_area.verticalScrollBar().maximum() > 0
+"""
+    env = os.environ.copy()
+    env.update(
+        LOCALAPPDATA=str(tmp_path / "state"),
+        QT_QPA_PLATFORM="offscreen",
+        QT_SCALE_FACTOR=scale,
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(root), scale],
+        cwd=Path(__file__).parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_long_destination_wraps_and_controls_have_accessible_names(screen, tmp_path):
+    root = tmp_path / ("bardzo-dlugi-katalog-" * 8)
+    _load(screen, root, {"main.py": "print(1)\n"})
+
+    assert screen.destination_label.wordWrap() is True
+    assert str(root.parent) in screen.destination_label.text()
+    for control in (
+        screen.entry_combo,
+        screen.kind_combo,
+        screen.name_edit,
+        screen.icon_button,
+        screen.mode_combo,
+        screen.destination_button,
+        screen.extra_edit,
+        screen.back_button,
+        screen.build_button,
+    ):
+        assert control.accessibleName()
+
+
+def test_language_refresh_preserves_user_choices(screen, qtbot, tmp_path):
+    _load(screen, tmp_path, {"main.py": "print(1)\n", "other.py": "print(2)\n"})
+    screen.entry_combo.setCurrentIndex(1)
+    screen.kind_combo.setCurrentIndex(screen.kind_combo.findData(AppKind.WINDOWED))
+    screen.mode_combo.setCurrentIndex(screen.mode_combo.findData(OutputMode.ONEFILE))
+    screen.name_edit.setText("Wybrana nazwa")
+    screen.extra_edit.setText("moja_wtyczka")
+    chosen_dest = tmp_path / "cel"
+    screen._dest_dir = chosen_dest
+    screen._custom_dest = True
+
+    set_language("en")
+    screen.retranslate()
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    plan = blocker.args[0]
+    assert plan.entry.name == "other.py"
+    assert plan.exe_name == "Wybrana nazwa"
+    assert plan.output_mode is OutputMode.ONEFILE
+    assert plan.dest_dir == chosen_dest
+    assert "moja_wtyczka" in plan.hidden_imports
 
 
 # --- wiersz faktu ---

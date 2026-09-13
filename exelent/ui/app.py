@@ -180,6 +180,11 @@ class MainWindow(QMainWindow):
         czasowo oczekiwaniem na preflight, żeby kliknięcie nie zawisło na
         sieci ani po cichu nie pominęło pytania.
         """
+        # Zmiany na ekranie 2 (zwłaszcza ręcznie dopisany moduł) tworzą plan
+        # z inną listą paczek niż początkowa analiza. Szacunek starego zakresu
+        # nie może przejść do dialogu ani paska postępu nowego builda.
+        if not self.preflight.matches(plan.packages, plan.python_version):
+            self.preflight.start(plan.packages)
         download = self.preflight.plan(wait_ms=PREFLIGHT_WAIT_MS)
         settings = load_settings()
         dialog = self._download_dialog(plan, download, settings)
