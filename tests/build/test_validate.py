@@ -68,6 +68,22 @@ def test_nonzero_without_protocol_line_is_a_failure_not_success(tmp_path, monkey
     assert issue.code == "validation_failed"
 
 
+def test_pyw_file_with_syntax_error_is_caught(tmp_path):
+    """B09: walidacja obejmuje .pyw, nie tylko .py — program GUI z bledem
+    skladni musi zostac odrzucony PRZED pakowaniem."""
+    ws = _workspace(tmp_path, {"app.pyw": "def f(:\n    pass\n"})
+    issue = validate_target_syntax(Path(sys.executable), ws, python_version="3.12")
+    assert issue is not None
+    assert issue.code == "target_syntax_error"
+    assert "app.pyw" in issue.data["file"]
+
+
+def test_valid_pyw_file_passes(tmp_path):
+    """B09: poprawny .pyw przechodzi walidacje."""
+    ws = _workspace(tmp_path, {"app.pyw": "import tkinter\n"})
+    assert validate_target_syntax(Path(sys.executable), ws, python_version="3.12") is None
+
+
 def test_compiler_stage_error_is_caught_where_ast_parse_would_miss_it(tmp_path):
     """`return` poza funkcja: `ast.parse` (walidacja deweloperska) przepuszcza,
     a KOMPILATOR odrzuca. To dokladnie ta luka, przez ktora PyInstaller wyrzucal

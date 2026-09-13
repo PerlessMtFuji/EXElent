@@ -61,7 +61,7 @@ def main():
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d != "__pycache__"]
         for name in filenames:
-            if not name.endswith(".py"):
+            if not name.endswith((".py", ".pyw")):
                 continue
             path = os.path.join(dirpath, name)
             with open(path, "rb") as handle:

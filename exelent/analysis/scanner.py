@@ -73,10 +73,10 @@ def looks_like_python(text: str) -> bool:
     return len(_CODE_HINT.findall(text)) >= 1
 
 
-def _read_head(path: Path, limit: int = 64_000) -> str:
+def _read_head(path: Path, limit: int = 64_000) -> tuple[str, bool]:
     """Czyta co najwyżej `limit` bajtów — do rozpoznania rodzaju pliku.
 
-    Czytamy tylko potrzebny prefiks, nie cały plik.
+    Czytamy tylko potrzebny prefiks, nie cały plik. Zwraca ``(tekst, obcięto)``.
 
     Dekodujemy przez `decode_bytes` — TĄ SAMĄ funkcją co konwerter — więc TXT w
     UTF-16/BOM jest widziany jako program, a nie jako śmieć z twardego utf-8
@@ -86,12 +86,13 @@ def _read_head(path: Path, limit: int = 64_000) -> str:
     try:
         with open(path, "rb") as handle:
             raw = handle.read(limit)
+            truncated = len(raw) == limit and handle.read(1) != b""
     except OSError:
-        return ""
+        return "", False
     try:
-        return decode_bytes(raw)[0]
+        return decode_bytes(raw)[0], truncated
     except UnicodeDecodeError:
-        return raw.decode("utf-8", errors="replace")
+        return raw.decode("utf-8", errors="replace"), truncated
 
 
 def _module_imports(code: str) -> list[tuple[int, str | None, tuple[str, ...]]]:
@@ -197,14 +198,17 @@ def local_import_closure(
     *,
     extra_roots: tuple[Path, ...] = (),
     initial_code: str | None = None,
-) -> tuple[tuple[Path, ...], bool]:
+) -> tuple[tuple[Path, ...], bool, tuple[Path, ...]]:
     """Moduły lokalne, których potrzebuje `entry`, wraz z ich własnymi.
 
-    Zwraca `(pliki_bez_entry, przekroczono_limit)`. Po przekroczeniu limitu
-    wynikiem jest PUSTA krotka, a nie obcięta lista: wciągnięcie losowej
-    połowy łańcucha importów dałoby EXE, które wywala się u odbiorcy na
-    brakującym module — czyli awarię gorszą i późniejszą niż uczciwe
-    „nie dam rady, zostaje sam plik".
+    Zwraca ``(pliki_bez_entry, przekroczono_limit, obcięte_pliki)``.
+    Po przekroczeniu limitu wynikiem jest PUSTA krotka, a nie obcięta lista:
+    wciągnięcie losowej połowy łańcucha importów dałoby EXE, które wywala się
+    u odbiorcy na brakującym module — czyli awarię gorszą i późniejszą niż
+    uczciwe „nie dam rady, zostaje sam plik".
+
+    ``obcięte_pliki`` to pliki, których prefiks (1 MB) nie pokrył całej treści
+    — ich importy mogą być niekompletne (B11).
 
     `extra_roots`: dodatkowe korzenie importów (np. `root/src/` dla układu
     `src/`). `initial_code`: kod pliku głównego, gdy odczyt z dysku nie daje
@@ -213,6 +217,7 @@ def local_import_closure(
     seen: set[Path] = {entry}
     queue = [entry]
     found: list[Path] = []
+    truncated_files: list[Path] = []
     first = True
 
     while queue:
@@ -221,19 +226,21 @@ def local_import_closure(
             code = initial_code
             first = False
         else:
-            code = _read_head(current, limit=1_000_000)
+            code, was_truncated = _read_head(current, limit=1_000_000)
+            if was_truncated:
+                truncated_files.append(current)
             first = False
         for level, module, names in _module_imports(code):
             for target in _import_targets(current, root, level, module, names, extra_roots):
                 if target in seen:
                     continue
                 if len(found) >= limit:
-                    return (), True
+                    return (), True, ()
                 seen.add(target)
                 found.append(target)
                 queue.append(target)
 
-    return tuple(found), False
+    return tuple(found), False, tuple(truncated_files)
 
 
 def scan_directory(
@@ -277,7 +284,7 @@ def scan_directory(
                 # pyproject projektu bije ten z podkatalogu.
                 pyproject = path
             elif suffix == ".txt":
-                if looks_like_python(_read_head(path)):
+                if looks_like_python(_read_head(path)[0]):
                     texts.append(path)
                 else:
                     data.append(path)
@@ -324,7 +331,7 @@ def scan_single_file(path: Path) -> ScanResult:
 
     if suffix in {".py", ".pyw"}:
         py = (path,)
-    elif suffix == ".txt" and looks_like_python(_read_head(path)):
+    elif suffix == ".txt" and looks_like_python(_read_head(path)[0]):
         texts = (path,)
 
     try:
@@ -346,7 +353,7 @@ def scan_single_file(path: Path) -> ScanResult:
         except OSError:
             pass
 
-    extra, truncated = local_import_closure(
+    extra, truncated, _trunc_files = local_import_closure(
         path,
         path.parent,
         initial_code=initial_code,

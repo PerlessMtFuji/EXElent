@@ -13,8 +13,9 @@ def test_read_head_reads_only_the_prefix_not_the_whole_file(tmp_path):
     Czytamy tylko `limit` bajtow, nawet gdy plik jest znacznie wiekszy."""
     big = tmp_path / "duzy.txt"
     big.write_bytes(b"A" * 500_000)
-    head = _read_head(big, limit=1000)
+    head, truncated = _read_head(big, limit=1000)
     assert head == "A" * 1000
+    assert truncated is True
 
 
 def _make(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -157,7 +158,7 @@ def test_local_import_closure_follows_neighbours_transitively(tmp_path):
     (tmp_path / "util.py").write_text("X = 1\n", encoding="utf-8")
     (tmp_path / "obcy.py").write_text("Y = 2\n", encoding="utf-8")
 
-    found, truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert set(found) == {tmp_path / "helper.py", tmp_path / "util.py"}
     assert truncated is False
@@ -168,7 +169,7 @@ def test_local_import_closure_resolves_packages(tmp_path):
     (tmp_path / "pakiet").mkdir()
     (tmp_path / "pakiet" / "__init__.py").write_text("rzecz = 1\n", encoding="utf-8")
 
-    found, _truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, _truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert found == (tmp_path / "pakiet" / "__init__.py",)
 
@@ -178,7 +179,7 @@ def test_local_import_closure_ignores_installed_packages(tmp_path):
     to zaleznosc do zainstalowania, a tym zajmuje sie `resolve_dependencies`."""
     (tmp_path / "main.py").write_text("import requests\nimport os\n", encoding="utf-8")
 
-    found, _truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, _truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert found == ()
 
@@ -188,7 +189,7 @@ def test_local_import_closure_survives_a_cycle(tmp_path):
     (tmp_path / "a.py").write_text("import b\n", encoding="utf-8")
     (tmp_path / "b.py").write_text("import a\n", encoding="utf-8")
 
-    found, _truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, _truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert set(found) == {tmp_path / "a.py", tmp_path / "b.py"}
 
@@ -201,7 +202,7 @@ def test_local_import_closure_stops_at_the_limit(tmp_path):
         nxt = f"import m{i + 1}\n" if i < 9 else "X = 1\n"
         (tmp_path / f"m{i}.py").write_text(nxt, encoding="utf-8")
 
-    found, truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=3)
+    found, truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=3)
 
     assert truncated is True
     assert found == ()
@@ -215,7 +216,7 @@ def test_local_import_closure_follows_dotted_submodule(tmp_path):
     (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (tmp_path / "pkg" / "child.py").write_text("x = 1\n", encoding="utf-8")
 
-    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert set(found) == {tmp_path / "pkg" / "__init__.py", tmp_path / "pkg" / "child.py"}
 
@@ -226,7 +227,7 @@ def test_local_import_closure_follows_dotted_import(tmp_path):
     (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (tmp_path / "pkg" / "child.py").write_text("x = 1\n", encoding="utf-8")
 
-    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert set(found) == {tmp_path / "pkg" / "__init__.py", tmp_path / "pkg" / "child.py"}
 
@@ -238,7 +239,7 @@ def test_local_import_closure_follows_from_package_submodule(tmp_path):
     (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (tmp_path / "pkg" / "child.py").write_text("y = 1\n", encoding="utf-8")
 
-    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert set(found) == {tmp_path / "pkg" / "__init__.py", tmp_path / "pkg" / "child.py"}
 
@@ -247,7 +248,7 @@ def test_local_import_closure_follows_relative_bare_import(tmp_path):
     (tmp_path / "main.py").write_text("from . import helper\n", encoding="utf-8")
     (tmp_path / "helper.py").write_text("X = 1\n", encoding="utf-8")
 
-    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert set(found) == {tmp_path / "helper.py"}
 
@@ -256,7 +257,7 @@ def test_local_import_closure_follows_relative_module(tmp_path):
     (tmp_path / "main.py").write_text("from .sub import y\n", encoding="utf-8")
     (tmp_path / "sub.py").write_text("y = 1\n", encoding="utf-8")
 
-    found, _ = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert set(found) == {tmp_path / "sub.py"}
 
@@ -269,7 +270,7 @@ def test_local_import_closure_relative_does_not_escape_the_root(tmp_path):
     proj.mkdir()
     (proj / "main.py").write_text("from .. import outside\n", encoding="utf-8")
 
-    found, _ = local_import_closure(proj / "main.py", proj, limit=50)
+    found, _, _trunc = local_import_closure(proj / "main.py", proj, limit=50)
 
     assert found == ()
 
@@ -278,7 +279,7 @@ def test_local_import_closure_ignores_unparsable_files(tmp_path):
     (tmp_path / "main.py").write_text("import zepsuty\n", encoding="utf-8")
     (tmp_path / "zepsuty.py").write_text("def (\n", encoding="utf-8")
 
-    found, truncated = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+    found, truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
 
     assert found == (tmp_path / "zepsuty.py",)
     assert truncated is False
