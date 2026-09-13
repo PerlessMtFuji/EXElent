@@ -20,6 +20,7 @@ from exelent.analysis.entrypoint import (
     local_module_names,
     rank_entry_candidates,
 )
+from exelent.analysis.parsed import ParsedSources
 from exelent.analysis.scanner import scan_directory, scan_single_file
 from exelent.analysis.textconv import NO_CODE, convert_text_to_python
 from exelent.constants import EXCLUDED_DIRS, MAX_SCAN_FILES
@@ -188,6 +189,22 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             # zostać dwoma osobnymi modułami.
             converted[rel] = result.code
             sources[virtual] = result.code
+            if result.code_blocks:
+                # Wiele bloków kodu w jednym TXT (B02): informujemy użytkownika
+                # o granicach i sposobie połączenia, żeby mógł ocenić, czy
+                # bloki to kontynuacja jednego programu, czy alternatywy.
+                ranges = ", ".join(f"{b.start_line}–{b.end_line}" for b in result.code_blocks)
+                issues.append(
+                    Issue(
+                        "txt_multiple_blocks",
+                        Severity.WARNING,
+                        {
+                            "file": txt.name,
+                            "count": str(len(result.code_blocks)),
+                            "ranges": ranges,
+                        },
+                    )
+                )
             if "fence_label" in result.steps:
                 # Cicha zmiana cudzego pliku jest gorsza niz brak zmiany.
                 # Pozostale kroki konwersji (ogrodzenia, numery linii, prompty)
@@ -217,24 +234,32 @@ def analyze_project(root: Path) -> ProjectAnalysis:
         else:
             issues.append(Issue("txt_syntax_error", txt_severity, data))
 
+    # B11: opakowujemy kompletny dict w ParsedSources — jedno parsowanie
+    # na plik, współdzielone przez wszystkie etapy analizy.
+    parsed = ParsedSources(sources)
+
     # Realne pliki .py nie przechodzily dotad zadnej kontroli skladni: analiza
     # (`_trees`) po cichu pomijala nieparsowalne drzewa, wiec niepoprawny program
     # przechodzil przez caly potok i przewracal sie dopiero jako uruchomiony EXE
     # (build zglaszal "sukces"). Konwersje TXT sa juz sprawdzone przez
     # convert_text_to_python, wiec walidujemy tylko oryginalne pliki .py.
     for py in scan.py_files:
-        if py not in sources:
+        if py not in parsed:
             continue  # B11: plik nieodczytany — diagnostyka już dodana
-        try:
-            ast.parse(sources[py])
-        except SyntaxError as exc:
-            issues.append(
-                Issue(
-                    "py_syntax_error",
-                    Severity.BLOCKER,
-                    {"file": py.name, "line": str(exc.lineno or 0), "detail": exc.msg or ""},
+        tree = parsed.tree(py)
+        if tree is None:
+            # ast.parse zwrocil None (SyntaxError) — parsujemy ponownie,
+            # zeby wyciagnac komunikat bledu.
+            try:
+                ast.parse(parsed[py])
+            except SyntaxError as exc:
+                issues.append(
+                    Issue(
+                        "py_syntax_error",
+                        Severity.BLOCKER,
+                        {"file": py.name, "line": str(exc.lineno or 0), "detail": exc.msg or ""},
+                    )
                 )
-            )
 
     for name, files in _module_name_collisions(scan.py_files, root):
         issues.append(
@@ -248,7 +273,7 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             )
         )
 
-    if not sources:
+    if not parsed:
         other = _detect_other_language(scan)
         if other:
             issues.append(Issue("other_language", Severity.BLOCKER, {"suffix": other}))
@@ -268,7 +293,7 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             issues=tuple(issues),
         )
 
-    candidates = rank_entry_candidates(root, sources)
+    candidates = rank_entry_candidates(root, parsed)
     certain = entry_is_certain(candidates)
     if not certain:
         issues.append(
@@ -282,25 +307,25 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             )
         )
 
-    app_kind, kind_certain = detect_app_kind(sources)
+    app_kind, kind_certain = detect_app_kind(parsed)
     # Tryb wyjscia nie jest juz zgadywany z tresci (B01): zalecany jest zawsze
     # ONEDIR, bo tylko on gwarantuje trwaly zapis ORAZ odczyt zasobow lezacych
     # obok EXE. ONEFILE zostaje recznym wyborem uzytkownika na ekranie przegladu.
     output_mode = OutputMode.ONEDIR
-    issues.extend(collect_code_issues(sources))
+    issues.extend(collect_code_issues(parsed))
 
     # Ukryte importy muszą być znane PRZED resolverem: dynamiczny
     # `importlib.import_module('PIL.Image')` zasila zarówno `--hidden-import`
     # PyInstallera, jak i listę paczek do instalacji (B04).
-    hidden_imports = collect_hidden_imports(sources)
+    hidden_imports = collect_hidden_imports(parsed)
 
     # Ścieżka, a nie sam tekst: resolver rozwija `-r`/`-c` względem katalogu
     # manifestu. `dep_issues` niesie diagnostykę manifestu (cykl, brak
     # pliku, nieczytelny pyproject).
     dep_issues: list[Issue] = []
     dependencies = resolve_dependencies(
-        sources,
-        local_module_names(root, sources),
+        parsed,
+        local_module_names(root, parsed),
         requirements_path=scan.requirements,
         pyproject_path=scan.pyproject,
         hidden_imports=hidden_imports,

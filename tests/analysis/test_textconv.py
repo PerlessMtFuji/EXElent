@@ -331,3 +331,44 @@ def test_line_map_is_populated_for_fenced_success():
     assert result.ok
     assert result.code == "x = 1\ny = 2"
     assert result.line_map == (2, 3)
+
+
+# --- B02: granice wielu blokow kodu ---
+
+
+def test_single_fence_block_reports_no_code_blocks():
+    """Jeden blok to trywialne wycięcie — code_blocks jest puste."""
+    raw = "Oto program:\n```python\nprint('hi')\n```\nMiłego dnia!"
+    result = convert_text_to_python(raw.encode())
+    assert result.ok
+    assert result.code_blocks == ()
+
+
+def test_multiple_fence_blocks_report_boundaries():
+    """Wiele bloków — code_blocks opisuje granice każdego (B02)."""
+    raw = "```python\nimport sys\n```\ntekst\n```python\nprint(sys.argv)\n```"
+    result = convert_text_to_python(raw.encode())
+    assert result.ok
+    assert len(result.code_blocks) == 2
+    b1, b2 = result.code_blocks
+    assert b1.start_line == 2 and b1.end_line == 2  # "import sys" is on line 2
+    assert b2.start_line == 6 and b2.end_line == 6  # "print(sys.argv)" is on line 6
+
+
+def test_three_fence_blocks_all_reported():
+    """Trzy bloki — wszystkie trzy mają swoje granice."""
+    raw = (
+        "Blok 1:\n```python\na = 1\nb = 2\n```\n"
+        "Blok 2:\n```python\nc = 3\n```\n"
+        "Blok 3:\n```python\nprint(a + b + c)\n```\n"
+    )
+    result = convert_text_to_python(raw.encode())
+    assert result.ok
+    assert len(result.code_blocks) == 3
+
+
+def test_valid_python_has_no_code_blocks():
+    """Poprawny Python nie przechodzi przez strip_fences — brak code_blocks."""
+    result = convert_text_to_python(b"x = 1\nprint(x)\n")
+    assert result.ok
+    assert result.code_blocks == ()

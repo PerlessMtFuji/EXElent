@@ -114,6 +114,18 @@ class ScanResult:
 
 
 @dataclass(frozen=True)
+class CodeBlockSpan:
+    """Granice jednego bloku kodu w oryginalnym TXT (1-based, inclusive).
+
+    Uzywane, gdy konwersja TXT wyciela wiele bloków ogrodzonych (```python)
+    i laczy je w jeden plik PY. Pokazuje uzytkownikowi, skad pochodza
+    poszczegolne czesci wyniku i jak zostaly polaczone (B02)."""
+
+    start_line: int
+    end_line: int
+
+
+@dataclass(frozen=True)
 class ConversionResult:
     ok: bool
     code: str | None = None
@@ -126,6 +138,10 @@ class ConversionResult:
     # przesuwa numeracje, wiec `error_line` bez tej mapy wskazywalby linie w
     # wycietym kodzie, ktorej uzytkownik nie znajdzie w swoim pliku.
     line_map: tuple[int, ...] = ()
+    # Granice bloków kodu wyciętych z TXT (B02). Puste, gdy wejście nie miało
+    # ogrodzeń lub zawierało tylko jeden blok. Gdy jest więcej niż jeden —
+    # warstwa prezentacji pokazuje ich granice i wyjaśnia sposób połączenia.
+    code_blocks: tuple[CodeBlockSpan, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
+from exelent.analysis.parsed import ParsedSources
 from exelent.models import AppKind, Issue, Severity
 
 GUI_MODULES = frozenset(
@@ -42,14 +43,16 @@ EXTERNAL_TOOLS = frozenset({"ffmpeg", "ffprobe", "tesseract", "magick", "pandoc"
 _SECRET = re.compile(r"['\"](?:sk-|ghp_|AIza|xox[bap]-)[A-Za-z0-9_\-]{16,}['\"]")
 
 
+def _ensure_parsed(sources: Mapping[Path, str]) -> ParsedSources:
+    """Opakowuje zwykly dict w ParsedSources jesli trzeba (B11)."""
+    if isinstance(sources, ParsedSources):
+        return sources
+    return ParsedSources(sources)
+
+
 def _trees(sources: Mapping[Path, str]) -> list[ast.AST]:
-    trees = []
-    for code in sources.values():
-        try:
-            trees.append(ast.parse(code))
-        except SyntaxError:
-            continue
-    return trees
+    parsed = _ensure_parsed(sources)
+    return parsed.trees()
 
 
 def _top_imports(sources: Mapping[Path, str]) -> set[str]:
@@ -109,6 +112,53 @@ def collect_hidden_imports(sources: Mapping[Path, str]) -> tuple[str, ...]:
     return tuple(sorted(set(literals)))
 
 
+def _is_meipass_access(node: ast.AST) -> bool:
+    """Rozpoznaje ``sys._MEIPASS`` i ``getattr(sys, '_MEIPASS', ...)``."""
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == "_MEIPASS"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "sys"
+    ):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "sys"
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value == "_MEIPASS"
+    )
+
+
+def _frozen_path_patterns(sources: Mapping[Path, str]) -> list[str]:
+    """Wykrywa uzycie ``__file__`` i ``sys._MEIPASS`` w kodzie uzytkownika.
+
+    Oba wzorce odwoluja sie do lokalizacji, ktora zmienia sie po spakowaniu
+    przez PyInstaller: ``__file__`` wskazuje na katalog rozpakowania w trybie
+    ONEFILE (nie na katalog EXE), a ``_MEIPASS`` nie istnieje przy normalnym
+    uruchomieniu. Program, ktory na ich podstawie buduje sciezki do zapisu lub
+    odczytu zasobow, moze dzialac inaczej niz zamierzal autor.
+
+    Nie przepisujemy sciezek w cudzym kodzie (B01). Zamiast tego informujemy
+    uzytkownika PRZED budowaniem, ze te wzorce zostaly rozpoznane, i opisujemy
+    ograniczenia — bez przedstawiania heurystyki jako gwarancji.
+    """
+    found: list[str] = []
+    for tree in _trees(sources):
+        for node in ast.walk(tree):
+            # __file__ uzyte jako wartosc (nie w przypisaniu lewostronnym)
+            if isinstance(node, ast.Name) and node.id == "__file__":
+                if "__file__" not in found:
+                    found.append("__file__")
+            # sys._MEIPASS lub getattr(sys, '_MEIPASS', ...)
+            elif "_MEIPASS" not in found and _is_meipass_access(node):
+                found.append("_MEIPASS")
+    return found
+
+
 def collect_code_issues(sources: Mapping[Path, str]) -> tuple[Issue, ...]:
     issues: list[Issue] = []
     imports = _top_imports(sources)
@@ -127,5 +177,8 @@ def collect_code_issues(sources: Mapping[Path, str]) -> tuple[Issue, ...]:
     _, unresolved = _dynamic_imports(sources)
     if unresolved:
         issues.append(Issue("dynamic_import_unresolved", Severity.WARNING))
+
+    for pattern in _frozen_path_patterns(sources):
+        issues.append(Issue("frozen_path_pattern", Severity.WARNING, {"pattern": pattern}))
 
     return tuple(issues)

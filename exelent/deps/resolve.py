@@ -12,6 +12,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 
+from exelent.analysis.parsed import ParsedSources
 from exelent.constants import TARGET_PYTHON
 from exelent.deps.aliases import ALIASES
 from exelent.deps.sizes import is_heavy
@@ -559,10 +560,11 @@ def _deps_from_imports(
     package_optional: dict[str, bool] = {}
     package_import_names: dict[str, set[str]] = {}
 
-    for code in sources.values():
-        try:
-            tree = ast.parse(code)
-        except SyntaxError:
+    # B11: korzystamy z cache AST jesli sources to ParsedSources
+    parsed = sources if isinstance(sources, ParsedSources) else ParsedSources(sources)
+    for path in sources:
+        tree = parsed.tree(path)
+        if tree is None:
             continue
         optional_lines = _optional_import_lines(tree)
         for node in ast.walk(tree):
