@@ -23,6 +23,15 @@ jobs:
           python-version: "3.12"
       - run: pip install -e .[dev]
       - run: pytest tests/test_golden_builds.py tests/test_local_resolver.py -v -m slow --basetemp=build/golden --junitxml=build/golden.xml
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-diagnostics
+          retention-days: 7
+          path: |
+            build/golden.xml
+            build/golden/**/EXElent/logs/*.log
 
   self-build-as-tool:
     uses: ./.github/workflows/product.yml

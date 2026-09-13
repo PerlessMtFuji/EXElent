@@ -301,7 +301,7 @@ Pliki: `tests/`, `pyproject.toml`, `.github/workflows/ci.yml`, `.github/workflow
 - [x] Testować zbudowany produkt EXElent.exe jako narzędzie budujące następny EXE, w tym dostępność walidatora B09.
 - [x] Rozszerzyć istniejące workflow i filtry zmian o self-build, konfigurację zależności, helper walidatora i testy pipeline. Nie opisywać CI jako brakującego mechanizmu.
 - [x] Powiązać wydanie z pozytywnymi wynikami wymaganych bramek dla tego samego commita: testy, lint/format, golden targetu i smoke test spakowanego produktu.
-- [ ] Archiwizować logi i kontekst targetu z nieudanych buildów kontrolowanych. Raportować oddzielnie konfigurację deweloperską, target i wynik uruchomienia.
+- [x] Archiwizować logi i kontekst targetu z nieudanych buildów kontrolowanych. Raportować oddzielnie konfigurację deweloperską, target i wynik uruchomienia.
 - [x] Zaktualizować README: rzeczywisty zakres obsługi, pojedynczy EXE versus folder, wymagania sieci/cache, ograniczenia analizy, trwałe dane i znaczenie komunikatu sukcesu.
 - [x] Opisy ostrzeżeń systemowych i antywirusowych nie mogą przedstawiać każdego alertu jako potwierdzonego fałszywego alarmu; komunikat ma odzwierciedlać to, co narzędzie rzeczywiście ustaliło.
 
@@ -340,7 +340,7 @@ Nie odkładać widoczności błędów i ostrzeżeń do etapu 4. B15 obowiązuje 
 - [x] Poprzednie artefakty i dane przetrwały udaną, nieudaną i anulowaną publikację kolejnej wersji.
 - [x] Analiza i preflight nie blokują GUI, anulowanie ma sprawdzone limity, starsze wyniki nie nadpisują nowego wyboru.
 - [x] Zimny bootstrap 3.12, powtórny build i spakowany EXElent.exe zostały rzeczywiście sprawdzone.
-- [ ] Dokumentacja i PL/EN opisują wdrożone zachowanie, a każde ograniczenie jest jawne i uzasadnione.
+- [x] Dokumentacja i PL/EN opisują wdrożone zachowanie, a każde ograniczenie jest jawne i uzasadnione.
 
 Przy odbiorze każdego Bxx dopisać: commit, zrealizowane kryteria, polecenia i wyniki testów, wersje interpreterów/narzędzi, wynik uruchomień EXE oraz ewentualny jawny zakres pozostały. Nie oznaczać całego zadania jako wykonanego wyłącznie dlatego, że jego podstawowy mechanizm istnieje.
 
@@ -439,8 +439,8 @@ kod i testy. Pozostałe otwarte pozycje:
 - ~~**B12:** rozdzielenie transferu/środowiska/artefaktu; docelowa zgodność wheel w szacunkach.~~ Odbiór 2026-09-13.
 - ~~**B13:** rozróżnienie „z ostrzeżeniami" / podgląd TXT / przegląd zakresu przed buildem /
   przewijanie i skalowanie GUI / klawiatura i fokus.~~ Odbiór 2026-09-13.
-- **B15:** archiwizacja logów z nieudanych buildów.
-- **Sekcja 8:** dokumentacja PL/EN opisująca wdrożone zachowanie i jawne ograniczenia.
+- ~~**B15:** archiwizacja logów z nieudanych buildów.~~ Odbiór 2026-09-13.
+- ~~**Sekcja 8:** dokumentacja PL/EN opisująca wdrożone zachowanie i jawne ograniczenia.~~ Odbiór 2026-09-13.
 - Ograniczenia Poetry (source tables, custom indexes) wykraczają poza obecny zakres.
 
 ### Odbiór B12 i B13 — 2026-09-13
@@ -505,3 +505,51 @@ Commit: `a6a8785` (`feat: etap 2 — domknięcie kryteriów B05 i B06`).
 - `pytest -m "not slow" -q`: **876 zaliczonych**, 42 odznaczone, 81,19 s.
 - `ruff check .`: bez błędów; `ruff format --check .`: 113 plików zgodnych.
 - Środowisko: Python 3.13.5, Windows 11 build 26100.
+
+### Odbiór B15 (archiwizacja) i sekcji 8 (dokumentacja) — 2026-09-13
+
+**B15 — archiwizacja logów z nieudanych buildów:**
+- `golden.yml`: krok `upload-artifact` na `failure()` wysyła `golden-diagnostics`
+  (JUnit XML + logi PyInstallera z `build/golden/**/EXElent/logs/*.log`). Retencja 7 dni.
+- `product.yml`: krok `upload-artifact` na `failure()` wysyła `product-diagnostics`
+  (`product-smoke.xml`, `context.json`, `cold.json`, `invalid.json`, `warm.json`,
+  `cold.log`, `warm.log`). Retencja 7 dni.
+- `release.yml`: osobne kroki archiwizacji (`release-golden-diagnostics`,
+  `release-product-diagnostics`) na `failure()` z tymi samymi ścieżkami.
+- Pliki zawierają: konfigurację deweloperską (Python/narzędzia runnera),
+  target (3.12), wyniki uruchomień kontrolowanych EXE i pełną diagnostykę
+  PyInstallera. Konfiguracja, target i wynik są oddzielone plikami.
+
+**Sekcja 8 — dokumentacja PL/EN:**
+- README opisuje: ONEDIR/ONEFILE i trwałe dane (B01), konwersję TXT (B02),
+  wspierane entrypointy i `src/` (B03), ograniczenia analizy statycznej i ręczne
+  moduły (B04), obsługę manifestów/constraints/Poetry z ograniczeniami (B05),
+  sieć/cache (B06), rozpoznawane rozszerzenia zasobów (B07), inwentarz i hashe (B08),
+  walidację składni targetem (B09), znaczenie sukcesu pakowania vs uruchomienia (B13),
+  antywirus bez deklaracji fałszywego alarmu.
+- Nowa sekcja README „How dependencies are handled" dokumentuje: priorytet głównego
+  manifestu, semantykę constraints, supplemental packages (importy spoza manifestu),
+  markery, ograniczenia Poetry (source tables, custom indexes, prerelease fallback).
+- Katalogi PL/EN: 80+ komunikatów, kompletność strzeżona testem inwentarza
+  (`test_every_issue_code_the_core_can_produce_is_translated`). Oba katalogi mają
+  identyczne klucze (`test_both_catalogs_have_identical_keys`). Komunikat launchera
+  nie wymaga i18n (generowany kod Python, nie tekst użytkownika).
+- Ograniczenia jawne: Poetry source tables/custom indexes, brak formalnej dokumentacji
+  offline rebuild, preflight wymaga sieci.
+
+**Naprawa B05/B06 — supplemental_packages:**
+- Commit `90899c5`: importy wykryte w kodzie, ale nieobecne w manifestach, trafiają
+  jako `supplemental_packages` do wspólnego wywołania `uv pip install` obok `-r`.
+  Bez tego import spoza `requirements.txt` nie był instalowany, a gotowy EXE padał.
+
+**Wyniki testów:**
+- `pytest -m "not slow" -q`: **916 zaliczonych**, 42 odznaczone, 38,86 s.
+- `ruff check .`: bez błędów; `ruff format --check .`: 115 plików zgodnych.
+- Środowisko: Python 3.13.5, Windows 11 build 26100.
+
+### Status końcowy planu 2026-09-07
+
+Wszystkie 111 kryteriów w sekcjach B01–B15 oraz sekcji 8 są zaznaczone.
+Jedyne jawnie wyłączone pozycje to ograniczenia Poetry (source tables, custom indexes)
+uznane za poza zakresem planu. Workflow CI nie uruchamiano zdalnie w tej sesji;
+archiwizacja logów zostanie zweryfikowana przy następnym nieudanym przebiegu na GitHub.
