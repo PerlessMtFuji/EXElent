@@ -508,11 +508,12 @@ def test_manifest_paths_become_r_and_c_args(monkeypatch, tmp_path):
 
     create_build_env(
         tmp_path / "src",
-        ["requests"],
+        ["requests", "idna"],
         noop_progress,
         workspace=workspace,
         manifest_paths=("requirements.txt",),
         constraint_paths=("constraints.txt",),
+        supplemental_packages=("idna",),
     )
 
     pip_call = next(args for args in install_calls if args[:2] == ["pip", "install"])
@@ -524,6 +525,7 @@ def test_manifest_paths_become_r_and_c_args(monkeypatch, tmp_path):
     assert "constraints.txt" in pip_call[c_idx + 1]
     # Gołe nazwy paczek (poza PyInstallerem) NIE powinny być w argumentach.
     assert "requests" not in pip_call[pip_call.index("--python") + 2 :]
+    assert "idna" in pip_call[pip_call.index("--python") + 2 :]
 
 
 # --- B06: version_issues propagowane przez BuildEnv ---

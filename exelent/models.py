@@ -301,6 +301,10 @@ class BuildPlan:
     manifest_paths: tuple[str, ...] = ()
     # B08: ścieżki plików constraints zachowane z analizy (B05).
     constraint_paths: tuple[str, ...] = ()
+    # Paczki wykryte w kodzie lub dopisane ręcznie, których nie deklaruje
+    # manifest. Gdy uv dostaje `-r`, te specyfikacje nadal muszą trafić do
+    # wspólnej instalacji, inaczej gotowy EXE nie zawiera importowanego modułu.
+    supplemental_packages: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

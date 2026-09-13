@@ -364,6 +364,7 @@ def create_build_env(
     workspace: Path | None = None,
     manifest_paths: Sequence[str] = (),
     constraint_paths: Sequence[str] = (),
+    supplemental_packages: Sequence[str] = (),
 ) -> BuildEnv:
     uv = ensure_uv(progress, cancel=cancel)
     _raise_if_cancelled(cancel)
@@ -414,14 +415,15 @@ def create_build_env(
     # B05: gdy mamy zachowane manifesty, przekazujemy je do uv przez `-r`,
     # dzięki czemu uv samodzielnie obsługuje pełną semantykę (hashowanie,
     # ścieżki `-r`/`-c`, indeks). PyInstaller jest ZAWSZE potrzebny i nie
-    # leży w manifeście, więc dochodzi jako oddzielny spec. Gdy manifestu
-    # nie ma, wracamy do listy specyfikacji z analizy.
+    # leży w manifeście, więc dochodzi jako oddzielny spec. Importy wykryte
+    # poza manifestem też dochodzą jawnie. Gdy manifestu nie ma, wracamy do
+    # pełnej listy specyfikacji z analizy.
     wanted = [PYINSTALLER_SPEC, *packages]
     install_args: list[str] = ["pip", "install", "--python", str(python)]
     if manifest_paths and workspace is not None:
-        # Manifest + constraint → argumenty `-r`/`-c` zamiast gołych nazw.
-        # PyInstaller wchodzi jawnie na początku; reszta przez manifest.
-        install_args.append(PYINSTALLER_SPEC)
+        # Manifest + constraint zachowują semantykę źródła wymagań, a importy
+        # pominięte w manifeście nadal uczestniczą w tym samym rozwiązaniu.
+        install_args.extend((PYINSTALLER_SPEC, *supplemental_packages))
         for rel in manifest_paths:
             install_args += ["-r", str(workspace / rel)]
         for rel in constraint_paths:

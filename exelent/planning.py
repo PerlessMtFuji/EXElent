@@ -546,6 +546,10 @@ def make_plan(
             [d.package for d in analysis.dependencies if not d.optional]
             + [d.package for d in extra_deps]
         ),
+        supplemental_packages=_dedup(
+            [d.package for d in analysis.dependencies if not d.optional and d.origin != "manifest"]
+            + [d.package for d in extra_deps]
+        ),
         data_files=analysis.scan.data_files,
         # Policzone raz, w zadaniu 8, na prawdziwych treściach plików
         # (łącznie z tymi skonwertowanymi z `.txt`, których nie ma na dysku),

@@ -171,6 +171,7 @@ def _build(
         workspace=workspace,
         manifest_paths=plan.manifest_paths,
         constraint_paths=plan.constraint_paths,
+        supplemental_packages=plan.supplemental_packages,
     )
     if env.failed_packages:
         return BuildResult(
