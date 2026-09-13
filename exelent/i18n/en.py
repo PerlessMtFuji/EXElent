@@ -100,6 +100,14 @@ CATALOG: dict[str, str] = {
         "The library {package} was installed as version {installed}, but {declared} was "
         "declared. Make sure the program works with this version."
     ),
+    "requirements_invalid_spec": (
+        'The requirement "{spec}" could not be understood and was skipped — '
+        "the list of packages may be incomplete."
+    ),
+    "poetry_version_fallback": (
+        'The Poetry version constraint "{constraint}" could not be fully interpreted — '
+        "only a minimum version was used. Check that the installed version is correct."
+    ),
     "requires_python_mismatch": (
         'The project declares requires-python = "{declared}", which does not include '
         "the target Python {target}. The build may still work, but the program was not "

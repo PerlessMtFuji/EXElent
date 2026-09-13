@@ -106,6 +106,14 @@ CATALOG: dict[str, str] = {
         "Biblioteka {package} została zainstalowana w wersji {installed}, a zadeklarowana "
         "była {declared}. Upewnij się, że program działa z tą wersją."
     ),
+    "requirements_invalid_spec": (
+        "Wymaganie „{spec}” nie mogło zostać odczytane i zostało pominięte — "
+        "lista bibliotek może być niepełna."
+    ),
+    "poetry_version_fallback": (
+        "Ograniczenie wersji Poetry „{constraint}” nie mogło być w pełni zinterpretowane — "
+        "użyto jedynie wersji minimalnej. Sprawdź, czy zainstalowana wersja jest poprawna."
+    ),
     "requires_python_mismatch": (
         "Projekt deklaruje requires-python = „{declared}”, co nie obejmuje docelowego "
         "Pythona {target}. Budowanie może się udać, ale program nie był projektowany "
