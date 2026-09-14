@@ -39,7 +39,10 @@ def _read(path: Path) -> str | None:
     a pozostałe pliki mają być nadal widoczne.
     """
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
+        # utf-8-sig: automatycznie zdejmuje BOM (U+FEFF) z początku pliku.
+        # Plik z BOM jest legalnym UTF-8 (PEP 263, kodowanie `utf-8-sig`),
+        # ale `ast.parse` odrzuca U+FEFF jako „invalid non-printable character".
+        return path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return None
 

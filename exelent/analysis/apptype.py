@@ -40,6 +40,14 @@ GUI_MODULES = frozenset(
 SERVER_MODULES = frozenset({"flask", "fastapi", "django", "aiohttp", "bottle", "starlette"})
 EXTERNAL_TOOLS = frozenset({"ffmpeg", "ffprobe", "tesseract", "magick", "pandoc", "yt-dlp"})
 
+# Packages whose internal submodules are not fully detected by PyInstaller's
+# default analysis.  When the user imports one of these top-level names,
+# we tell PyInstaller to recursively collect the listed subpackage trees
+# (``--collect-submodules``).  Entries are the *import* name, not the pip name.
+PACKAGE_COLLECT_SUBMODULES: dict[str, tuple[str, ...]] = {
+    "scipy": ("scipy._external.array_api_compat",),
+}
+
 _SECRET = re.compile(r"['\"](?:sk-|ghp_|AIza|xox[bap]-)[A-Za-z0-9_\-]{16,}['\"]")
 
 
@@ -55,13 +63,38 @@ def _trees(sources: Mapping[Path, str]) -> list[ast.AST]:
     return parsed.trees()
 
 
+def _is_dead_branch(node: ast.If) -> bool:
+    """Blok ``if TYPE_CHECKING:`` lub ``if False:`` — nie wykonuje się w runtime."""
+    test = node.test
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Constant) and test.value is False
+    )
+
+
+def _dead_import_lines(tree: ast.AST) -> set[int]:
+    """Linie importów w martwych gałęziach (``if TYPE_CHECKING`` / ``if False``)."""
+    dead: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and _is_dead_branch(node):
+            for child in ast.walk(ast.Module(body=node.body, type_ignores=[])):
+                if isinstance(child, ast.Import | ast.ImportFrom):
+                    dead.add(child.lineno)
+    return dead
+
+
 def _top_imports(sources: Mapping[Path, str]) -> set[str]:
     names: set[str] = set()
     for tree in _trees(sources):
+        dead_lines = _dead_import_lines(tree)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
+            if isinstance(node, ast.Import) and node.lineno not in dead_lines:
                 names.update(a.name.split(".")[0] for a in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and not node.level
+                and node.lineno not in dead_lines
+            ):
                 names.add(node.module.split(".")[0])
     return names
 
@@ -110,6 +143,21 @@ def _dynamic_imports(sources: Mapping[Path, str]) -> tuple[list[str], bool]:
 def collect_hidden_imports(sources: Mapping[Path, str]) -> tuple[str, ...]:
     literals, _ = _dynamic_imports(sources)
     return tuple(sorted(set(literals)))
+
+
+def package_submodule_collections(top_imports: set[str]) -> tuple[str, ...]:
+    """Subpackage trees that need ``--collect-submodules`` for *top_imports*.
+
+    PyInstaller's default analysis misses lazily-loaded or vendored internal
+    subpackages in some libraries.  ``--collect-submodules`` tells it to
+    enumerate and bundle them recursively — more resilient than listing each
+    submodule path individually, since it tracks the installed version.
+    """
+    entries: list[str] = []
+    for pkg, subs in PACKAGE_COLLECT_SUBMODULES.items():
+        if pkg in top_imports:
+            entries.extend(subs)
+    return tuple(sorted(set(entries)))
 
 
 def _is_meipass_access(node: ast.AST) -> bool:

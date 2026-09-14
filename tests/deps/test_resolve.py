@@ -114,6 +114,36 @@ def test_alias_collision_optional_when_all_guarded():
     assert deps[0].optional is True
 
 
+def test_type_checking_import_is_skipped():
+    code = (
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    import nonexistent_typecheck_dep\n"
+        "print('ok')\n"
+    )
+    deps = resolve_dependencies(_s(code), set())
+    assert not any(d.package == "nonexistent_typecheck_dep" for d in deps)
+
+
+def test_if_false_import_is_skipped():
+    code = "if False:\n    import nonexistent_dead_branch_dep\nprint('ok')\n"
+    deps = resolve_dependencies(_s(code), set())
+    assert not any(d.package == "nonexistent_dead_branch_dep" for d in deps)
+
+
+def test_dead_branches_do_not_mask_live_imports():
+    code = (
+        "from typing import TYPE_CHECKING\n"
+        "import requests\n"
+        "if TYPE_CHECKING:\n"
+        "    import nonexistent_typecheck_dep\n"
+        "if False:\n"
+        "    import nonexistent_dead_branch_dep\n"
+    )
+    deps = resolve_dependencies(_s(code), set())
+    assert _names(deps) == {"requests"}
+
+
 def test_direct_reference_requirement_passes_through_unchanged():
     deps = resolve_dependencies(_s(""), set(), "git+https://github.com/x/y.git\n")
     assert _names(deps) == {"git+https://github.com/x/y.git"}
