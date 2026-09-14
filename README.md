@@ -8,10 +8,23 @@ share the **whole folder**, including its libraries and data. The recipient
 double-clicks the `.exe` inside — they do not install Python or open a terminal,
 they do not have to know what any of this is.
 
-![EXElent](docs/screenshot.png)
+![EXElent — drop your code](docs/screenshot.png)
 
 *The interface follows your Windows language: Polish and English are both
 built in.*
+
+### Review what EXElent understood
+
+![Review screen](docs/screenshot_review.png)
+
+Every guess is visible and editable before the build starts: entry point,
+GUI vs console, output layout, dependencies.
+
+### Build
+
+![Building](docs/screenshot_building.png)
+
+![Build complete](docs/screenshot_build.png)
 
 ## Who this is for
 
@@ -27,7 +40,7 @@ over email or chat, and EXElent handles it without you renaming anything.
 
 ## Download and run
 
-1. Go to the [releases page](https://github.com/exelent-app/exelent/releases/latest).
+1. Go to the [releases page](https://github.com/PerlessMtFuji/EXElent/releases/latest).
 2. Download `EXElent.exe`.
 3. Double-click it. There is nothing to install.
 
@@ -162,7 +175,7 @@ GitHub. Using that button is the most useful thing you can do, because the
 report carries the log.
 
 You can also open an issue by hand at
-[github.com/exelent-app/exelent](https://github.com/exelent-app/exelent/issues).
+[github.com/PerlessMtFuji/EXElent](https://github.com/PerlessMtFuji/EXElent/issues).
 
 ## License
 
