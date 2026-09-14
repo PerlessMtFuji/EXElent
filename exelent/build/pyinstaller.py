@@ -147,6 +147,9 @@ def build_arguments(
     for module in (spec.collect_module, *plan.hidden_imports):
         args += ["--hidden-import", module]
 
+    for subpkg in plan.collect_submodules:
+        args += ["--collect-submodules", subpkg]
+
     for data in plan.data_files:
         # Data files must point at the workspace copy, not the user's
         # original folder: the whole point of the workspace is that the

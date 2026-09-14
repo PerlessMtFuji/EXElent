@@ -273,6 +273,10 @@ class BuildPlan:
     packages: tuple[str, ...] = ()
     data_files: tuple[Path, ...] = ()
     hidden_imports: tuple[str, ...] = ()
+    # Subpackage trees that PyInstaller should recursively collect
+    # (``--collect-submodules``).  Derived from PACKAGE_COLLECT_SUBMODULES when
+    # a known library (e.g. scipy) is among the detected imports.
+    collect_submodules: tuple[str, ...] = ()
     python_version: str = "3.12"
     single_file: Path | None = None
     extra_sources: tuple[Path, ...] = ()

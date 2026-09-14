@@ -97,6 +97,18 @@ def test_extra_hidden_imports_are_included():
     assert "requests" in args
 
 
+def test_collect_submodules_flags_are_emitted():
+    plan = _plan(collect_submodules=("scipy._external.array_api_compat",))
+    args = build_arguments(plan, Path("C:/w"), Path("C:/w/l.py"), None)
+    idx = args.index("--collect-submodules")
+    assert args[idx + 1] == "scipy._external.array_api_compat"
+
+
+def test_no_collect_submodules_when_empty():
+    args = build_arguments(_plan(), Path("C:/w"), Path("C:/w/l.py"), None)
+    assert "--collect-submodules" not in args
+
+
 def test_icon_is_passed_when_present():
     args = build_arguments(_plan(), Path("C:/w"), Path("C:/w/l.py"), Path("C:/w/i.ico"))
     assert args[args.index("--icon") + 1] == str(Path("C:/w/i.ico"))
