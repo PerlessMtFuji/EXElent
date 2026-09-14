@@ -1,0 +1,11 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="256" height="256" rx="56" fill="#2C3E50"/>
+  <!-- Isometric cube -->
+  <path d="M128 48 L204 88 L204 168 L128 208 L52 168 L52 88 Z" fill="#34495E" stroke="#4B8BBE" stroke-width="4"/>
+  <!-- Top face -->
+  <path d="M128 48 L204 88 L128 128 L52 88 Z" fill="#4B8BBE" opacity="0.85"/>
+  <!-- Right face -->
+  <path d="M204 88 L204 168 L128 208 L128 128 Z" fill="#306998" opacity="0.7"/>
+  <!-- Left face -->
+  <path d="M52 88 L128 128 L128 208 L52 168 Z" fill="#3B7CB8" opacity="0.5"/>
+</svg>
