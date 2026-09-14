@@ -75,6 +75,54 @@ def test_dest_falls_back_to_desktop_when_source_readonly(tmp_path, monkeypatch):
     assert "Desktop" in str(dest) or "Pulpit" in str(dest)
 
 
+# --- projekt w katalogu domowym → wynik na Pulpit, nie w ~/ ---
+
+
+def test_project_in_home_prefers_desktop_over_home(tmp_path, monkeypatch):
+    """Projekt bezpośrednio w katalogu domowym nie powinien tworzyć wyniku
+    w ~/, bo laik nie zagląda tam ręcznie i nie znajdzie pliku EXE."""
+    home = tmp_path / "dom"
+    root = _make(home / "projekt", {"main.py": "print(1)"})
+    desktop = tmp_path / "Pulpit"
+    desktop.mkdir()
+
+    monkeypatch.setattr(planning, "_home_dir", lambda: home)
+    monkeypatch.setattr(planning, "_desktop_dir", lambda: desktop)
+
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent == desktop
+    assert dest.parent != home
+
+
+def test_project_in_deep_subfolder_still_lands_next_to_source(tmp_path, monkeypatch):
+    """Projekt w Documents/projekty/kalkulator — wynik obok, nie na Pulpicie."""
+    home = tmp_path / "dom"
+    root = _make(home / "Documents" / "projekty" / "kalkulator", {"main.py": "print(1)"})
+    desktop = tmp_path / "Pulpit"
+    desktop.mkdir()
+
+    monkeypatch.setattr(planning, "_home_dir", lambda: home)
+    monkeypatch.setattr(planning, "_desktop_dir", lambda: desktop)
+
+    dest = default_dest_dir(root, "Kalkulator")
+    assert dest.parent == root.parent  # obok projektu, nie na Pulpicie
+
+
+def test_downloads_is_a_fallback_when_desktop_missing(tmp_path, monkeypatch):
+    """Gdy Pulpit nie istnieje, Pobrane są lepsze niż katalog domowy."""
+    home = tmp_path / "dom"
+    root = _make(home / "projekt", {"main.py": "print(1)"})
+    downloads = home / "Downloads"
+    downloads.mkdir(parents=True)
+
+    monkeypatch.setattr(planning, "_home_dir", lambda: home)
+    monkeypatch.setattr(planning, "_desktop_dir", lambda: None)
+    monkeypatch.setattr(planning, "_downloads_dir", lambda: downloads)
+
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent == downloads
+
+
 def test_invalid_exe_name_characters_are_replaced(tmp_path):
     root = _make(tmp_path / "p", {"main.py": ""})
     plan = make_plan(analyze_project(root), exe_name="a/b:c*d?")
@@ -140,6 +188,21 @@ def test_no_extra_modules_leaves_plan_unchanged(tmp_path):
     plan = make_plan(analyze_project(root))
     assert plan.hidden_imports == ()
     assert plan.packages == ("requests",)
+
+
+# --- collect_submodules derived from detected packages ---
+
+
+def test_scipy_triggers_collect_submodules(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import scipy"})
+    plan = make_plan(analyze_project(root))
+    assert "scipy._external.array_api_compat" in plan.collect_submodules
+
+
+def test_no_scipy_means_empty_collect_submodules(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    plan = make_plan(analyze_project(root))
+    assert plan.collect_submodules == ()
 
 
 def test_make_plan_without_entry_raises_value_error(tmp_path):
@@ -242,6 +305,7 @@ def test_cloud_folder_is_still_used_when_there_is_no_local_alternative(tmp_path,
 
     monkeypatch.setenv("OneDrive", str(onedrive))
     monkeypatch.setattr(planning, "_desktop_dir", lambda: None)
+    monkeypatch.setattr(planning, "_downloads_dir", lambda: None)
     monkeypatch.setattr(planning, "_home_dir", lambda: onedrive / "Dokumenty")
 
     dest = default_dest_dir(root, "Program")
@@ -283,6 +347,7 @@ def test_fallback_never_points_at_a_directory_that_does_not_exist(tmp_path, monk
     home.mkdir()
 
     monkeypatch.setattr(planning, "_known_folder_desktop", lambda: tmp_path / "nie-ma-takiego")
+    monkeypatch.setattr(planning, "_downloads_dir", lambda: None)
     monkeypatch.setattr(planning, "_home_dir", lambda: home)
     monkeypatch.setattr(planning, "_is_writable", lambda p: Path(p) != root.parent)
 

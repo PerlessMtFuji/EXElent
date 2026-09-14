@@ -14,6 +14,7 @@ from collections.abc import Iterable, Sequence
 from contextlib import suppress
 from pathlib import Path
 
+from exelent.analysis.apptype import package_submodule_collections
 from exelent.analysis.entrypoint import local_module_names
 from exelent.build.launcher import LAUNCHER_FILENAME
 from exelent.deps.resolve import resolve_extra_modules
@@ -169,23 +170,25 @@ _CLOUD_DIR_NAMES = (
 # gdy uzytkownik zmienil nazwe katalogu.
 _CLOUD_ENV_VARS = ("OneDrive", "OneDriveConsumer", "OneDriveCommercial")
 
-# Pulpit uzytkownika wg Windows. Znany folder, nie zgadywana nazwa — patrz
-# `_known_folder_desktop`.
+# Znane foldery Windows — GUID wg KNOWNFOLDERID. Uzywane do zapytania
+# SHGetKnownFolderPath zamiast zgadywania nazwy katalogu (patrz docstring
+# `_known_folder_desktop`).
 _FOLDERID_DESKTOP = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"
+_FOLDERID_DOWNLOADS = "{374DE290-123F-4565-9164-39C4925E467B}"
 
 
 def _home_dir() -> Path:
     return Path(os.path.expanduser("~"))
 
 
-def _known_folder_desktop() -> Path | None:
-    r"""Prawdziwa sciezka Pulpitu prosto z Windows.
+def _known_folder(folderid: str) -> Path | None:
+    """Prawdziwa sciezka Known Folder prosto z Windows Shell API.
 
     Zgadywanie nazwy nie dziala w obie strony. Na dysku pulpit nazywa sie
     ZAWSZE `Desktop` — polskie „Pulpit" to nazwa wyswietlana z `desktop.ini`,
     wiec ramie sprawdzajace `~/Pulpit` bylo martwym kodem. Odwrotnie przy
     OneDrive Known Folder Move, wlaczanym domyslnie w polskim OOBE: pulpit
-    przenosi sie do `%USERPROFILE%\OneDrive\Pulpit`, a `~/Desktop` potrafi
+    przenosi sie do `%USERPROFILE%\\OneDrive\\Pulpit`, a `~/Desktop` potrafi
     zniknac. `_collect_artifact` robi `mkdir(parents=True)`, wiec zgadniety
     katalog po prostu POWSTAJE, EXE laduje w miejscu, ktorego uzytkownik nie
     oglada, a build melduje sukces. Znany folder zna obie sytuacje.
@@ -206,7 +209,7 @@ def _known_folder_desktop() -> Path | None:
 
         ole32 = ctypes.windll.ole32
         guid = _Guid()
-        if ole32.CLSIDFromString(_FOLDERID_DESKTOP, ctypes.byref(guid)) != 0:
+        if ole32.CLSIDFromString(folderid, ctypes.byref(guid)) != 0:
             return None
         buffer = ctypes.c_wchar_p()
         if (
@@ -224,6 +227,11 @@ def _known_folder_desktop() -> Path | None:
         return None
 
 
+def _known_folder_desktop() -> Path | None:
+    """Pulpit wg Windows Known Folder — cienka owijka dla kompatybilnosci."""
+    return _known_folder(_FOLDERID_DESKTOP)
+
+
 def _desktop_dir() -> Path | None:
     """Pulpit, ale tylko jesli naprawde istnieje na dysku."""
     known = _known_folder_desktop()
@@ -231,6 +239,29 @@ def _desktop_dir() -> Path | None:
         return known
     guess = _home_dir() / "Desktop"
     return guess if guess.exists() else None
+
+
+def _downloads_dir() -> Path | None:
+    """Pobrane, ale tylko jesli naprawde istnieje na dysku.
+
+    Na Windows Pobrane moga byc przeniesione przez OneDrive KFM, wiec
+    najpierw pytamy Shell API, a dopiero potem probujemy ~/Downloads.
+    """
+    known = _known_folder(_FOLDERID_DOWNLOADS)
+    if known is not None and known.exists():
+        return known
+    guess = _home_dir() / "Downloads"
+    return guess if guess.exists() else None
+
+
+def _is_home_or_above(path: Path) -> bool:
+    """Czy sciezka jest katalogiem domowym uzytkownika lub jego rodzicem.
+
+    Katalog domowy (np. C:\\Users\\MeMeMe) nie jest miejscem, w ktorym laik
+    spodziewa sie znalezc wynik — widzi go dopiero po otwarciu Eksploratora
+    i recznym wejsciu w profil. Pulpit i Pobrane sa widoczne od razu.
+    """
+    return _home_dir().is_relative_to(path)
 
 
 def _looks_like_cloud_name(name: str) -> bool:
@@ -261,11 +292,16 @@ def _dest_candidates(root: Path) -> tuple[tuple[Path, bool], ...]:
     """Kandydaci na katalog wynikowy, od najlepszego. Flaga: „omijaj chmure".
 
     Rodzic katalogu zrodlowego jest pierwszy, bo wynik ma lezec obok projektu.
-    Odpada, gdy projekt lezy w korzeniu dysku: `Path("F:/").parent` to znowu
-    `Path("F:/")`, wiec „obok" nie istnieje, a sonda zapisywalnosci pisalaby
-    wprost do katalogu zrodlowego — dokladnie tego, czego zabrania §7. Wynik
-    ladowalby w jego wnetrzu i przy kazdej kolejnej przebudowie byl kopiowany
-    razem z projektem, wiec EXE puchloby z buildu na build.
+    Odpada w dwoch sytuacjach:
+
+    1. Projekt lezy w korzeniu dysku: `Path("F:/").parent` to znowu
+       `Path("F:/")`, wiec „obok" nie istnieje, a sonda zapisywalnosci
+       pisalaby wprost do katalogu zrodlowego — dokladnie tego, czego
+       zabrania §7.
+
+    2. Rodzic jest katalogiem domowym uzytkownika lub wyzej (np. C:\\Users
+       lub C:\\Users\\MeMeMe): laik nie zaglada do profilu recznie i nie
+       znajdzie tam pliku EXE. Pulpit i Pobrane sa widoczne od razu.
 
     Chmury omijamy tylko przy rodzicu. Pulpit jest miejscem WYBRANYM przez
     projekt, bo uzytkownik na niego patrzy; gdy Windows przeniosl go do
@@ -274,11 +310,14 @@ def _dest_candidates(root: Path) -> tuple[tuple[Path, bool], ...]:
     """
     root = Path(root)
     candidates: list[tuple[Path, bool]] = []
-    if root.parent != root:
+    if root.parent != root and not _is_home_or_above(root.parent):
         candidates.append((root.parent, True))
     desktop = _desktop_dir()
     if desktop is not None:
         candidates.append((desktop, False))
+    downloads = _downloads_dir()
+    if downloads is not None:
+        candidates.append((downloads, False))
     candidates.append((_home_dir(), False))
     return tuple(candidates)
 
@@ -529,6 +568,12 @@ def make_plan(
     # build wykonuje DOKŁADNIE plan, więc dopisania muszą być już w nim.
     extra_hidden, extra_deps = resolve_extra_modules(extra_modules, _local_module_names(analysis))
 
+    # Packages whose internal submodules escape PyInstaller's default analysis
+    # (e.g. scipy._external.array_api_compat).  Derived from the detected
+    # import names — both from static analysis and manually added modules.
+    all_import_names = {d.import_name for d in analysis.dependencies} | set(extra_modules)
+    collect_subs = package_submodule_collections(all_import_names)
+
     # B05/B08: ścieżki manifestów i constraints do przekopiowania do workspace.
     manifest_paths, constraint_paths = _collect_manifest_paths(
         analysis.scan.requirements, analysis.root
@@ -555,6 +600,7 @@ def make_plan(
         # (łącznie z tymi skonwertowanymi z `.txt`, których nie ma na dysku),
         # plus ręczne dopisania użytkownika.
         hidden_imports=_dedup([*analysis.hidden_imports, *extra_hidden]),
+        collect_submodules=collect_subs,
         single_file=analysis.single_file,
         extra_sources=analysis.extra_sources,
         total_download_bytes=total_download_bytes,
