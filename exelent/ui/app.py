@@ -7,15 +7,25 @@ budujący: ekran 3 pokazuje postęp, ale nie jest właścicielem wątku.
 
 from __future__ import annotations
 
+import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QStackedWidget
 
-from exelent.analysis.project import analyze_project
 from exelent.constants import APP_NAME
+from exelent.deps.sizes import estimate_exe_size
 from exelent.i18n import set_language, system_language
+from exelent.models import Issue, Severity
+from exelent.runtime.paths import clean_current_session, clean_stale_sessions, register_session
+from exelent.runtime.procs import kill_tree
+from exelent.settings import load_settings, save_settings
+from exelent.ui.analysis_worker import AnalysisWorker
+from exelent.ui.dialog_download import DownloadDialog, should_ask, should_ask_offline
+from exelent.ui.dialog_settings import SettingsDialog
+from exelent.ui.preflight import PreflightWorker
 from exelent.ui.screen_build import BuildScreen
 from exelent.ui.screen_drop import DropScreen
 from exelent.ui.screen_review import ReviewScreen
@@ -26,37 +36,74 @@ SCREEN_DROP = 0
 SCREEN_REVIEW = 1
 SCREEN_BUILD = 2
 
+# Ile okno czeka na preflight po kliknięciu „Stwórz EXE". Spec §9.2: krótki
+# limit, po którym pokazujemy szacunek z tabeli. Kliknięcie nie ma prawa
+# zawiesić okna na zapytaniu sieciowym, a wolne łącze to dokładnie ten
+# przypadek, dla którego powstało zgłoszenie 4.
+PREFLIGHT_WAIT_MS = 1500
+
+
+def _force_shutdown() -> None:
+    """Kończy program razem z całym jego potomstwem, bez sprzątania Qt.
+
+    Ostatnia deska ratunku dla zamykanego okna, którego wątek roboczy nie
+    wyszedł w limicie. Najpierw drzewo procesów — inaczej `uv` albo
+    PyInstaller zostają w tle jako sieroty i trzymają pliki — a `os._exit`
+    jest tu tylko zabezpieczeniem: taskkill z `/T` zabija także nas.
+    """
+    kill_tree(os.getpid())
+    os._exit(1)
+
 
 class MainWindow(QMainWindow):
     language_changed = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
+        # Atrybut, a nie wywołanie wprost: test musi umieć podstawić coś, co
+        # nie zabije samego pytesta.
+        self.hard_exit = _force_shutdown
         # Język PIERWSZY, przed ekranami. Ekrany biorą swoje napisy z `t()` w
         # konstruktorze, więc ustawiony po nich zostawiał angielskiemu
         # użytkownikowi polskie okno: sprawdzone — nagłówek ekranu 1 zostawał
         # polski przy `current_language() == "en"`.
-        set_language(system_language())
+        #
+        # Wybór zapisany bije język systemu; `None` znaczy „idź za systemem".
+        settings = load_settings()
+        set_language(settings.language or system_language())
         self.setWindowTitle(APP_NAME)
         self.resize(900, 620)
         self.setMinimumSize(760, 540)
 
         self.screen_drop = DropScreen()
         self.screen_drop.folder_chosen.connect(self._on_folder_chosen)
+        self.screen_drop.settings_requested.connect(self._on_settings)
         self.screen_review = ReviewScreen()
         self.screen_review.build_requested.connect(self._on_build_requested)
+        self.screen_review.back_requested.connect(self._on_back_to_drop)
         self.screen_build = BuildScreen()
         self.screen_build.restart_requested.connect(self._on_restart)
+        self.screen_build.back_to_review.connect(self._on_back_to_review)
 
-        # JEDEN worker na całe życie okna, podpięty RAZ. Worker tworzony przy
-        # każdym buildzie dokładałby kolejne połączenie do „Przerwij" (po trzech
-        # buildach przycisk anulowałby trzy workery naraz) i zostawiał po sobie
-        # obiekty wątków. Worker umie zacząć od nowa, bo token anulowania
-        # powstaje w `start`, a nie w konstruktorze.
+        # Jeden worker na życie okna, podpięty raz — tworzenie przy każdym
+        # buildzie dublowałoby połączenia sygnałów.
         self.worker = BuildWorker()
         self.worker.progress.connect(self.screen_build.on_progress)
         self.worker.finished.connect(self.screen_build.on_finished)
         self.screen_build.cancel_button.clicked.connect(self.worker.cancel)
+
+        # Ostrzeżenia analizy z ekranu 2 — build wykonuje gotowy plan,
+        # więc ostrzeżenia z analizy trzeba przekazać osobno.
+        self._carried: tuple[Issue, ...] = ()
+
+        # Analiza w tle — jeden worker na życie okna, jak BuildWorker.
+        self._analysis_worker = AnalysisWorker()
+        self._analysis_worker.finished.connect(self._on_analysis_done)
+
+        # Rozmiar pobierania liczy sie w tle ekranu 2. Nigdy nie blokuje
+        # budowania: pusty wynik znaczy tylko tyle, ze liczba sie nie policzyla.
+        self.preflight = PreflightWorker()
+        self.preflight.finished.connect(self.screen_review.show_download_plan)
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.screen_drop)
@@ -64,7 +111,24 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.screen_build)
         self.setCentralWidget(self.stack)
 
+        # `language_changed` istniał w kodzie od początku i NIKT go nie
+        # słuchał — jedyną drogą do angielskiej wersji była zmiana języka
+        # systemu. Ekrany dostają teraz swoje napisy z powrotem.
+        self.language_changed.connect(self._retranslate)
+
         self.setStyleSheet(build_stylesheet(is_system_dark()))
+
+    def _on_settings(self) -> None:
+        dialog = SettingsDialog(load_settings(), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.chosen()
+        save_settings(chosen)
+        self.set_language(chosen.language or system_language())
+
+    def _retranslate(self, _lang: str) -> None:
+        for screen in (self.screen_drop, self.screen_review, self.screen_build):
+            screen.retranslate()
 
     def go_to(self, index: int) -> None:
         """Zmienia ekran.
@@ -78,26 +142,99 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
 
     def _on_folder_chosen(self, folder: Path) -> None:
-        """Analiza i przejście na ekran 2.
+        """B11: analiza w tle — pętla Qt nie zamraża się przy dużych projektach.
 
-        Analiza czyta AST plików z dysku, nie sieć, a skan ma twarde limity
-        (`MAX_SCAN_FILES`/`MAX_SCAN_BYTES`), więc mieści się w wątku głównym.
-        Katalog, którego nie da się przeczytać, nie jest awarią: analiza wraca
-        wtedy z blokadą, którą ekran 2 pokazuje zdaniem.
+        Ekran 1 pokazuje stan ładowania, a wynik przychodzi przez sygnał
+        `_on_analysis_done`. Jeśli użytkownik wybierze nowy folder w trakcie,
+        worker automatycznie odrzuci spóźniony wynik poprzedniego żądania.
         """
-        self.screen_review.load(analyze_project(folder))
+        self.screen_drop.set_analyzing(True)
+        self._analysis_worker.start(folder)
+
+    def _on_analysis_done(self, analysis) -> None:
+        """Wynik analizy w tle — przejście na ekran 2."""
+        self.screen_drop.set_analyzing(False)
+        self._carried = tuple(i for i in analysis.issues if i.severity is not Severity.BLOCKER)
+        self.screen_review.load(analysis)
+        self.preflight.start([d.package for d in analysis.dependencies if not d.optional])
         self.go_to(SCREEN_REVIEW)
 
+    def _download_dialog(self, plan, download, settings) -> DownloadDialog | None:
+        """Okno zgody dla tego builda albo `None`, gdy nie ma o co pytać.
+
+        Dwie drogi, bo preflight ma trzy możliwe odpowiedzi: policzył i coś
+        brakuje (pytamy dokładną liczbą), policzył i nic nie brakuje (nie
+        pytamy), nie zdążył albo odpadł (pytamy szacunkiem z tabeli §7.2).
+        """
+        if should_ask(download, settings):
+            return DownloadDialog(download, self)
+        low, high, heaviest = estimate_exe_size(plan.packages)
+        if should_ask_offline(download, settings, high):
+            return DownloadDialog(download, self, estimate=(low, high), estimate_packages=heaviest)
+        return None
+
     def _on_build_requested(self, plan) -> None:
-        """Ekran 3 czyszczony PRZED pokazaniem, build startuje po przejściu."""
+        """Ekran 3 czyszczony PRZED pokazaniem, build startuje po przejściu.
+
+        Przed tym wszystkim pytanie o zgodę na pobieranie — z ograniczonym
+        czasowo oczekiwaniem na preflight, żeby kliknięcie nie zawisło na
+        sieci ani po cichu nie pominęło pytania.
+        """
+        # Zmiany na ekranie 2 (zwłaszcza ręcznie dopisany moduł) tworzą plan
+        # z inną listą paczek niż początkowa analiza. Szacunek starego zakresu
+        # nie może przejść do dialogu ani paska postępu nowego builda.
+        if not self.preflight.matches(plan.packages, plan.python_version):
+            self.preflight.start(plan.packages)
+        download = self.preflight.plan(wait_ms=PREFLIGHT_WAIT_MS)
+        settings = load_settings()
+        dialog = self._download_dialog(plan, download, settings)
+        if dialog is not None:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return  # zostajemy na ekranie 2, nic nie ruszylo
+            if dialog.dont_ask_again():
+                save_settings(replace(settings, ask_before_download=False))
+
+        plan = replace(plan, total_download_bytes=download.total_bytes)
         self.screen_build.start(plan)
         self.go_to(SCREEN_BUILD)
-        self.worker.start(plan)
+        self.worker.start(plan, self._carried)
+
+    def _on_back_to_drop(self) -> None:
+        """Powrót na start bez budowania.
+
+        Lista ostatnich jest odświeżana, bo projekt wybrany przed chwilą już do
+        niej trafił (`DropScreen._choose` woła `recent.remember` przed emisją),
+        a ekran 1 czytał ją ostatnio przy uruchamianiu programu.
+        """
+        if self.worker.is_running():
+            return
+        self._analysis_worker.stop()
+        self.preflight.stop()
+        self.screen_drop.set_analyzing(False)
+        self.screen_drop.refresh_recent()
+        self.go_to(SCREEN_DROP)
+
+    def _on_back_to_review(self) -> None:
+        """Powrót na ekran 2 z ZACHOWANĄ analizą.
+
+        Ekran 2 jest widgetem długożyjącym i trzyma ostatnią `ProjectAnalysis`
+        w swoim polu, więc poprawienie nazwy po nieudanym buildzie nie kosztuje
+        ponownego skanu katalogu.
+
+        Blokada przy trwającym buildzie nie jest ostrożnością na wyrost:
+        `BuildWorker.start` odrzuca drugi build po cichu, więc użytkownik
+        dostałby ekran postępu, który nigdy nie ruszy.
+        """
+        if self.worker.is_running():
+            return
+        self.go_to(SCREEN_REVIEW)
 
     def _on_restart(self) -> None:
         """Powrót na start. Lista ostatnich projektów jest odświeżana, bo
         właśnie doszedł do niej projekt zbudowany przed chwilą — ekran 1 czytał
         ją ostatnio przy uruchamianiu programu."""
+        if self.worker.is_running():
+            return
         self.screen_drop.refresh_recent()
         self.go_to(SCREEN_DROP)
 
@@ -106,11 +243,27 @@ class MainWindow(QMainWindow):
 
         Bez tego Qt niszczy działający `QThread` przy wychodzeniu (abort), a
         proces PyInstallera zostaje w systemie jako sierota trzymająca pliki
-        otwarte — dokładnie to, przed czym broni się `_kill_tree`. Nazwa metody
+        otwarte — dokładnie to, przed czym broni się `kill_tree`. Nazwa metody
         jest narzucona przez Qt (camelCase), to nadpisanie `QWidget`.
+
+        Kiedy grzeczna droga zawiedzie — robota tkwi w wywołaniu, które nie
+        pyta o anulowanie — zostaje twarde zakończenie. Oddanie sterowania Qt
+        z żywym wątkiem kończy się `abort()`, a w programie okienkowym nie ma
+        gdzie tego pokazać: użytkownik zamyka okno i zostaje z procesem, który
+        dalej siedzi w tle.
         """
-        self.worker.shutdown()
+        stopped_analysis = self._analysis_worker.stop()
+        stopped_preflight = self.preflight.stop()
+        stopped_build = self.worker.shutdown()
         super().closeEvent(event)
+        if not (stopped_analysis and stopped_preflight and stopped_build):
+            self.hard_exit()
+            return
+        # Grzeczne zamkniecie: watki wyszly, wiec zaden proces nie trzyma juz
+        # plikow tej sesji. Kasujemy katalog roboczy TEJ sesji (kopia kodu,
+        # venv, scratch PyInstallera) — sesja innej instancji zostaje nietknieta
+        # Best-effort: sprzątanie nie może wstrzymać zamknięcia okna.
+        clean_current_session()
 
     def set_language(self, lang: str) -> None:
         set_language(lang)
@@ -118,6 +271,8 @@ class MainWindow(QMainWindow):
 
 
 def run_gui(argv: list[str]) -> int:
+    register_session()
+    clean_stale_sessions()
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     window = MainWindow()

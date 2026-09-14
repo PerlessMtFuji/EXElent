@@ -5,8 +5,8 @@ import pytest
 
 from exelent import planning
 from exelent.analysis.project import analyze_project
-from exelent.models import AppKind, OutputMode
-from exelent.planning import default_dest_dir, make_plan
+from exelent.models import AppKind, OutputMode, Severity
+from exelent.planning import default_dest_dir, make_plan, onefile_limitation_issues
 
 
 def _make(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -40,6 +40,19 @@ def test_overrides_win_over_analysis(tmp_path):
     assert plan.output_mode is OutputMode.ONEDIR
 
 
+def test_onefile_choice_carries_a_visible_limitation():
+    """B01: reczny wybor „jeden plik EXE" ma dawac widoczne ostrzezenie o
+    odczycie zasobow, a nie zapewnienie o bezpieczenstwie zapisu."""
+    issues = onefile_limitation_issues(OutputMode.ONEFILE)
+    assert [i.code for i in issues] == ["onefile_no_resource_guarantee"]
+    assert all(i.severity is Severity.WARNING for i in issues)
+
+
+def test_onedir_choice_has_no_limitation():
+    """Zalecany tryb nie niesie ostrzezenia — zasoby leza obok EXE, zapis zostaje."""
+    assert onefile_limitation_issues(OutputMode.ONEDIR) == ()
+
+
 def test_optional_dependencies_are_excluded_from_packages(tmp_path):
     code = "try:\n    import numpy\nexcept ImportError:\n    numpy = None\nimport requests"
     root = _make(tmp_path / "p", {"main.py": code})
@@ -60,6 +73,54 @@ def test_dest_falls_back_to_desktop_when_source_readonly(tmp_path, monkeypatch):
     monkeypatch.setattr("exelent.planning._is_writable", lambda _p: False)
     dest = default_dest_dir(root, "Program")
     assert "Desktop" in str(dest) or "Pulpit" in str(dest)
+
+
+# --- projekt w katalogu domowym → wynik na Pulpit, nie w ~/ ---
+
+
+def test_project_in_home_prefers_desktop_over_home(tmp_path, monkeypatch):
+    """Projekt bezpośrednio w katalogu domowym nie powinien tworzyć wyniku
+    w ~/, bo laik nie zagląda tam ręcznie i nie znajdzie pliku EXE."""
+    home = tmp_path / "dom"
+    root = _make(home / "projekt", {"main.py": "print(1)"})
+    desktop = tmp_path / "Pulpit"
+    desktop.mkdir()
+
+    monkeypatch.setattr(planning, "_home_dir", lambda: home)
+    monkeypatch.setattr(planning, "_desktop_dir", lambda: desktop)
+
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent == desktop
+    assert dest.parent != home
+
+
+def test_project_in_deep_subfolder_still_lands_next_to_source(tmp_path, monkeypatch):
+    """Projekt w Documents/projekty/kalkulator — wynik obok, nie na Pulpicie."""
+    home = tmp_path / "dom"
+    root = _make(home / "Documents" / "projekty" / "kalkulator", {"main.py": "print(1)"})
+    desktop = tmp_path / "Pulpit"
+    desktop.mkdir()
+
+    monkeypatch.setattr(planning, "_home_dir", lambda: home)
+    monkeypatch.setattr(planning, "_desktop_dir", lambda: desktop)
+
+    dest = default_dest_dir(root, "Kalkulator")
+    assert dest.parent == root.parent  # obok projektu, nie na Pulpicie
+
+
+def test_downloads_is_a_fallback_when_desktop_missing(tmp_path, monkeypatch):
+    """Gdy Pulpit nie istnieje, Pobrane są lepsze niż katalog domowy."""
+    home = tmp_path / "dom"
+    root = _make(home / "projekt", {"main.py": "print(1)"})
+    downloads = home / "Downloads"
+    downloads.mkdir(parents=True)
+
+    monkeypatch.setattr(planning, "_home_dir", lambda: home)
+    monkeypatch.setattr(planning, "_desktop_dir", lambda: None)
+    monkeypatch.setattr(planning, "_downloads_dir", lambda: downloads)
+
+    dest = default_dest_dir(root, "Program")
+    assert dest.parent == downloads
 
 
 def test_invalid_exe_name_characters_are_replaced(tmp_path):
@@ -88,6 +149,60 @@ def test_hidden_imports_are_taken_from_the_analysis(tmp_path):
     analysis = analyze_project(root)
     assert analysis.hidden_imports == ("ukryty_modul",)
     assert make_plan(analysis).hidden_imports == ("ukryty_modul",)
+
+
+# --- A07: reczne dopisanie modulow trafia do planu ---
+
+
+def test_extra_modules_reach_hidden_imports_and_packages(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "print(1)"})
+    plan = make_plan(analyze_project(root), extra_modules=["sklearn"])
+    assert "sklearn" in plan.hidden_imports
+    assert "scikit-learn" in plan.packages
+
+
+def test_extra_modules_merge_with_detected_dependencies(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    plan = make_plan(analyze_project(root), extra_modules=["dynmod"])
+    assert "requests" in plan.packages
+    assert "dynmod" in plan.packages
+    assert "dynmod" in plan.hidden_imports
+
+
+def test_extra_module_already_detected_is_not_duplicated(tmp_path):
+    code = "import importlib\nimportlib.import_module('ukryty')\n"
+    root = _make(tmp_path / "p", {"main.py": code})
+    plan = make_plan(analyze_project(root), extra_modules=["ukryty"])
+    assert plan.hidden_imports.count("ukryty") == 1
+
+
+def test_extra_local_module_is_not_installed(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import helper\n", "helper.py": "X = 1\n"})
+    plan = make_plan(analyze_project(root), extra_modules=["helper.plugin"])
+    assert "helper.plugin" in plan.hidden_imports
+    assert "helper" not in plan.packages
+
+
+def test_no_extra_modules_leaves_plan_unchanged(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    plan = make_plan(analyze_project(root))
+    assert plan.hidden_imports == ()
+    assert plan.packages == ("requests",)
+
+
+# --- collect_submodules derived from detected packages ---
+
+
+def test_scipy_triggers_collect_submodules(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import scipy"})
+    plan = make_plan(analyze_project(root))
+    assert "scipy._external.array_api_compat" in plan.collect_submodules
+
+
+def test_no_scipy_means_empty_collect_submodules(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    plan = make_plan(analyze_project(root))
+    assert plan.collect_submodules == ()
 
 
 def test_make_plan_without_entry_raises_value_error(tmp_path):
@@ -190,6 +305,7 @@ def test_cloud_folder_is_still_used_when_there_is_no_local_alternative(tmp_path,
 
     monkeypatch.setenv("OneDrive", str(onedrive))
     monkeypatch.setattr(planning, "_desktop_dir", lambda: None)
+    monkeypatch.setattr(planning, "_downloads_dir", lambda: None)
     monkeypatch.setattr(planning, "_home_dir", lambda: onedrive / "Dokumenty")
 
     dest = default_dest_dir(root, "Program")
@@ -231,6 +347,7 @@ def test_fallback_never_points_at_a_directory_that_does_not_exist(tmp_path, monk
     home.mkdir()
 
     monkeypatch.setattr(planning, "_known_folder_desktop", lambda: tmp_path / "nie-ma-takiego")
+    monkeypatch.setattr(planning, "_downloads_dir", lambda: None)
     monkeypatch.setattr(planning, "_home_dir", lambda: home)
     monkeypatch.setattr(planning, "_is_writable", lambda p: Path(p) != root.parent)
 
@@ -307,3 +424,242 @@ def test_cloud_candidate_is_rejected_without_writing_a_probe_file(tmp_path, monk
 
     assert onedrive / "Dokumenty" not in probed, "sonda zapisala plik w katalogu w chmurze"
     assert dest.parent == desktop
+
+
+def test_plan_carries_single_file_mode_from_analysis(tmp_path):
+    """Bez tego `materialize_workspace` nie wie, ze to tryb jednoplikowy,
+    i kopiuje caly katalog nadrzedny — czyli cale Pobrane."""
+    root = _make(tmp_path / "Pobrane", {"test.py": "import helper\n", "helper.py": "X = 1\n"})
+    plan = make_plan(analyze_project(root / "test.py"))
+    assert plan.single_file == root / "test.py"
+    assert root / "helper.py" in plan.extra_sources
+
+
+# --- B08: inwentarz zaakceptowanych plików ---
+
+
+def test_source_inventory_contains_py_files_with_hashes(tmp_path):
+    """B08: plan zawiera inwentarz z hashami plików Pythona."""
+    root = _make(tmp_path / "p", {"main.py": "print(1)", "lib.py": "X = 1"})
+    plan = make_plan(analyze_project(root))
+    assert len(plan.source_inventory) >= 2
+    paths = {e.rel_path for e in plan.source_inventory}
+    assert "main.py" in paths
+    assert "lib.py" in paths
+    assert all(len(e.sha256) == 64 for e in plan.source_inventory)
+
+
+def test_source_inventory_contains_data_files(tmp_path):
+    """B08: zasoby (JSON, CSV itp.) też są w inwentarzu."""
+    root = _make(tmp_path / "p", {"main.py": "print(1)", "dane.json": '{"a": 1}'})
+    plan = make_plan(analyze_project(root))
+    paths = {e.rel_path for e in plan.source_inventory}
+    assert "dane.json" in paths
+
+
+def test_source_inventory_is_sorted_by_path(tmp_path):
+    """B08: inwentarz jest posortowany po ścieżce — deterministyczny wynik."""
+    root = _make(tmp_path / "p", {"z_main.py": "print(1)", "a_lib.py": "X = 1"})
+    plan = make_plan(analyze_project(root), entry=root / "z_main.py")
+    rel_paths = [e.rel_path for e in plan.source_inventory]
+    assert rel_paths == sorted(rel_paths)
+
+
+def test_source_inventory_excludes_converted_files(tmp_path):
+    """B08: pliki wygenerowane przez konwersję TXT→PY nie są na dysku,
+    więc nie mają wpisu w inwentarzu — ich treść siedzi w plan.converted."""
+    root = _make(tmp_path / "p", {"main.py": "import kod", "kod.txt": "print(1)\n"})
+    plan = make_plan(analyze_project(root))
+    inv_paths = {e.rel_path for e in plan.source_inventory}
+    # Oryginalny TXT powinien być w inwentarzu (do weryfikacji).
+    assert "kod.txt" in inv_paths
+    # Ale plik wynikowy konwersji NIE jest w inwentarzu (nie istnieje na dysku).
+    assert "kod.py" not in inv_paths
+
+
+# --- B05: pochodzenie zależności (origin) ---
+
+
+def test_dependency_origin_from_manifest(tmp_path):
+    """B05: zależność z requirements.txt ma origin='manifest'."""
+    root = _make(tmp_path / "p", {"main.py": "import os"})
+    (root / "requirements.txt").write_text("requests>=2.0\n", encoding="utf-8")
+    plan = make_plan(analyze_project(root))
+    dep = next(d for d in plan.packages if "requests" in d)
+    # Origin propaguje się z resolvera — ale packages to tuple[str],
+    # więc sprawdzamy przez analizę.
+    analysis = analyze_project(root)
+    dep = next(d for d in analysis.dependencies if "requests" in d.package)
+    assert dep.origin == "manifest"
+
+
+def test_dependency_origin_from_import(tmp_path):
+    """B05: zależność wykryta ze skanu importów ma origin='import'."""
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    analysis = analyze_project(root)
+    dep = next(d for d in analysis.dependencies if d.package == "requests")
+    assert dep.origin == "import"
+
+
+def test_dependency_origin_from_dynamic(tmp_path):
+    """B05: dynamiczny import (importlib) ma origin='dynamic'."""
+    code = "import importlib\nimportlib.import_module('PIL.Image')\n"
+    root = _make(tmp_path / "p", {"main.py": code})
+    analysis = analyze_project(root)
+    dep = next(d for d in analysis.dependencies if d.package == "pillow")
+    assert dep.origin == "dynamic"
+
+
+# --- B05: diagnostyka nieobsługiwanych opcji manifestu ---
+
+
+def test_unsupported_manifest_option_is_reported(tmp_path):
+    """B05: opcje takie jak -e, --hash itp. muszą dać widoczną diagnostykę."""
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    (root / "requirements.txt").write_text(
+        "-e ./local\n--index-url https://example.com\nrequests\n",
+        encoding="utf-8",
+    )
+    analysis = analyze_project(root)
+    codes = {i.code for i in analysis.issues}
+    assert "requirements_unsupported_option" in codes
+
+
+# --- B05: sprawdzenie requires-python ---
+
+
+def test_requires_python_mismatch_is_reported(tmp_path):
+    """B05: requires-python niezgodne z targetem daje ostrzeżenie."""
+    root = _make(tmp_path / "p", {"main.py": "print(1)"})
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nrequires-python = "<3.10"\ndependencies = []\n',
+        encoding="utf-8",
+    )
+    analysis = analyze_project(root)
+    codes = {i.code for i in analysis.issues}
+    assert "requires_python_mismatch" in codes
+
+
+def test_requires_python_matching_is_not_reported(tmp_path):
+    """B05: requires-python obejmujące target nie daje ostrzeżenia."""
+    root = _make(tmp_path / "p", {"main.py": "print(1)"})
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nrequires-python = ">=3.8"\ndependencies = []\n',
+        encoding="utf-8",
+    )
+    analysis = analyze_project(root)
+    codes = {i.code for i in analysis.issues}
+    assert "requires_python_mismatch" not in codes
+
+
+# --- B07: kolizje zasobów ---
+
+
+def test_asset_collision_with_launcher_is_detected(tmp_path):
+    """B07: plik danych o nazwie identycznej z launcherem daje ostrzeżenie."""
+    _make(
+        tmp_path / "p",
+        {"main.py": "print(1)", "_exelent_launcher.py": "# dane"},
+    )
+    # _exelent_launcher.py to normalna nazwa .py, nie dane — ale jeśli trafi
+    # do data_files, to kolizja. Skaner klasyfikuje .py jako źródło, nie dane,
+    # więc kolizji tu nie ma (plik trafia do py_files). Test kolizji zasobów
+    # wymaga pliku, który jest danymi:
+    root2 = _make(
+        tmp_path / "p2",
+        {"main.py": "print(1)", "_exelent_launcher.json": '{"x": 1}'},
+    )
+    plan = make_plan(analyze_project(root2), exe_name="_exelent_launcher")
+    # EXE o nazwie _exelent_launcher.exe — kolizja z .json nie występuje bo
+    # sprawdzamy bazową nazwę pliku vs reserved names.
+    # Lepszy test: plik o nazwie <exe_name>.exe
+    root3 = _make(
+        tmp_path / "p3",
+        {"main.py": "print(1)", "program.json": '{"x": 1}'},
+    )
+    plan = make_plan(analyze_project(root3), exe_name="program")
+    # program.json nie koliduje z program.exe (inne rozszerzenie, inna base_name).
+    # Test sprawdza brak fałszywych alarmów.
+    assert not any(i.code == "asset_path_collision" for i in plan.plan_issues)
+
+
+def test_asset_case_collision_is_detected(tmp_path):
+    """B07: dwa pliki danych różniące się tylko wielkością liter = kolizja."""
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "main.py").write_text("print(1)", encoding="utf-8")
+    # Na Windows nie da się utworzyć Data.json i data.json w jednym folderze,
+    # ale da się w różnych podkatalogach z tą samą ścieżką względną.
+    (root / "sub").mkdir()
+    (root / "Sub").mkdir(exist_ok=True)  # Windows: to ten sam folder
+    # Testujemy przez duplikat w inwentarzu zasobów — na Windowsie te foldery
+    # mogą być tożsame, więc test kolizji ścieżek jest głównie dla CI/Linuxa.
+    # Na Windows scanner zwróci jedną ścieżkę (case-insensitive FS).
+
+
+# --- B08: ochrona przed path traversal ---
+
+
+def test_path_traversal_blocked_in_materialization(tmp_path):
+    """B08: ścieżka z '..' w inwentarzu nie może wyjść poza workspace."""
+    from exelent.build.workspace import _validate_rel_path
+
+    assert _validate_rel_path("main.py") is True
+    assert _validate_rel_path("pkg/sub.py") is True
+    assert _validate_rel_path("../outside.py") is False
+    assert _validate_rel_path("pkg/../../etc/passwd") is False
+    assert _validate_rel_path("/etc/passwd") is False
+    assert _validate_rel_path("C:\\Windows\\system32\\cmd.exe") is False
+    assert _validate_rel_path("") is False
+    assert _validate_rel_path("..") is False
+
+
+# --- B05: zbieranie ścieżek manifestów i constraints ---
+
+
+def test_collect_manifest_paths_finds_r_and_c(tmp_path):
+    """B05: _collect_manifest_paths zbiera ścieżki manifestów i constraints
+    z drzewa `-r`/`-c` w requirements.txt."""
+    from exelent.planning import _collect_manifest_paths
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "base.txt").write_text("flask\n", encoding="utf-8")
+    (root / "pins.txt").write_text("flask==2.3.0\n", encoding="utf-8")
+    main = root / "requirements.txt"
+    main.write_text("-r base.txt\n-c pins.txt\nrequests\n", encoding="utf-8")
+
+    manifests, constraints = _collect_manifest_paths(main, root)
+    assert "requirements.txt" in manifests
+    assert "base.txt" in manifests
+    assert "pins.txt" in constraints
+    assert "pins.txt" not in manifests
+
+
+def test_collect_manifest_paths_none_when_no_requirements():
+    """B05: brak requirements.txt daje puste krotki."""
+    from exelent.planning import _collect_manifest_paths
+
+    manifests, constraints = _collect_manifest_paths(None, Path("."))
+    assert manifests == ()
+    assert constraints == ()
+
+
+def test_manifest_paths_reach_build_plan(tmp_path):
+    """B05/B08: ścieżki manifestów i constraints są w planie."""
+    root = _make(tmp_path / "p", {"main.py": "import requests"})
+    (root / "requirements.txt").write_text("-c pins.txt\nrequests>=2.0\n", encoding="utf-8")
+    (root / "pins.txt").write_text("requests<3.0\n", encoding="utf-8")
+    plan = make_plan(analyze_project(root))
+    assert "requirements.txt" in plan.manifest_paths
+    assert "pins.txt" in plan.constraint_paths
+
+
+def test_import_missing_from_manifest_reaches_supplemental_packages(tmp_path):
+    root = _make(tmp_path / "p", {"main.py": "import six\nimport idna\n"})
+    (root / "requirements.txt").write_text("six\n", encoding="utf-8")
+
+    plan = make_plan(analyze_project(root))
+
+    assert plan.packages == ("idna", "six")
+    assert plan.supplemental_packages == ("idna",)

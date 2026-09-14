@@ -1,7 +1,29 @@
+import io
+
 import pytest
 
 from exelent.models import Severity
-from exelent.runtime import bootstrap, noop_progress
+from exelent.runtime import Progress, bootstrap, noop_progress
+
+
+def _fake_urlopen(monkeypatch, payload: bytes):
+    """Atrapa `urlopen` oddajaca gotowe bajty. ZADNEJ sieci."""
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.headers = {"Content-Length": str(len(payload))}
+            self._stream = io.BytesIO(payload)
+
+        def read(self, size: int) -> bytes:
+            return self._stream.read(size)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(bootstrap.urllib.request, "urlopen", lambda url, timeout=60: FakeResponse())
 
 
 def test_low_disk_space_is_a_blocker(monkeypatch, tmp_path):
@@ -31,7 +53,8 @@ def test_ensure_uv_returns_cached_binary_without_download(monkeypatch, tmp_path)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     target = bootstrap.uv_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(b"udawany uv")
+    # Plik musi przejść walidację integralności: nagłówek PE + minimalny rozmiar.
+    target.write_bytes(b"MZ" + b"\x00" * bootstrap._UV_MIN_SIZE)
     monkeypatch.setattr(bootstrap, "_download", lambda *a, **k: pytest.fail("nie pobieraj"))
     assert bootstrap.ensure_uv(noop_progress) == target
 
@@ -40,7 +63,7 @@ def test_ensure_uv_downloads_when_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     calls = []
 
-    def fake_download(url, dest, progress):
+    def fake_download(url, dest, progress, cancel=None):
         calls.append(url)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"pobrany uv")
@@ -65,7 +88,7 @@ def test_interrupted_download_leaves_no_partial_artifact(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     target = bootstrap.uv_path()
     payload = _fake_uv_zip_bytes()
-    monkeypatch.setattr(bootstrap, "_download", lambda url, progress: payload)
+    monkeypatch.setattr(bootstrap, "_download", lambda url, progress, cancel=None: payload)
 
     def failing_replace(_src, _dst):
         raise OSError("symulowane zerwanie polaczenia w polowie zapisu")
@@ -85,7 +108,7 @@ def test_ensure_uv_raises_typed_error_with_issue_code(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bootstrap,
         "_download",
-        lambda url, progress: (_ for _ in ()).throw(OSError("brak sieci")),
+        lambda url, progress, cancel=None: (_ for _ in ()).throw(OSError("brak sieci")),
     )
 
     with pytest.raises(bootstrap.UvDownloadError) as exc_info:
@@ -100,7 +123,7 @@ def test_ensure_uv_retries_download_after_prior_interruption(monkeypatch, tmp_pa
     payload = _fake_uv_zip_bytes()
     calls = {"n": 0}
 
-    def fake_download(url, progress):
+    def fake_download(url, progress, cancel=None):
         calls["n"] += 1
         return payload
 
@@ -126,3 +149,17 @@ def test_ensure_uv_retries_download_after_prior_interruption(monkeypatch, tmp_pa
     assert result == target
     assert target.exists()
     assert calls["n"] == 2
+
+
+def test_uv_download_reports_real_bytes(monkeypatch, tmp_path):
+    """`_download` zna Content-Length i czyta porcjami — bajty sa dokladne,
+    nie zgadywane."""
+    payload = b"x" * (300 * 1024)
+    seen: list[Progress] = []
+    _fake_urlopen(monkeypatch, payload)
+
+    bootstrap._download(bootstrap.UV_URL, seen.append)
+
+    assert seen[-1].total_bytes == len(payload)
+    assert seen[-1].done_bytes == len(payload)
+    assert seen[-1].phase == "download_uv"

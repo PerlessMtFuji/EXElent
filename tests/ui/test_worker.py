@@ -11,6 +11,7 @@ import pytest
 
 from exelent.i18n import describe
 from exelent.models import AppKind, BuildPlan, BuildResult, OutputMode
+from exelent.runtime import Progress
 from exelent.ui import worker as worker_module
 from exelent.ui.worker import BuildWorker
 
@@ -37,17 +38,17 @@ def worker(qtbot):
 
 @pytest.fixture
 def blocking_build(monkeypatch):
-    """Fabryka udawanego `run_build`, ktory stoi, dopoki mu nie pozwolimy isc."""
+    """Fabryka udawanego `execute_build`, ktory stoi, dopoki mu nie pozwolimy isc."""
     zwolnij = threading.Event()
     wystartowal = threading.Event()
     widziane = {"wywolania": 0}
 
     def make(result=None, wait_for_cancel=False):
-        def fake(root, progress, cancel, **kwargs):
+        def fake(plan, progress, cancel, *, carried=()):
             widziane["wywolania"] += 1
             widziane["watek"] = threading.get_ident()
-            widziane["kwargs"] = kwargs
-            widziane["root"] = root
+            widziane["plan"] = plan
+            widziane["carried"] = tuple(carried)
             wystartowal.set()
             if wait_for_cancel:
                 for _ in range(1000):
@@ -59,7 +60,7 @@ def blocking_build(monkeypatch):
             widziane["anulowany"] = cancel.cancelled
             return result or BuildResult(ok=False)
 
-        monkeypatch.setattr(worker_module, "run_build", fake)
+        monkeypatch.setattr(worker_module, "execute_build", fake)
         return widziane
 
     make.zwolnij = zwolnij
@@ -93,13 +94,13 @@ def test_nothing_is_left_running_after_the_build(worker, qtbot, blocking_build, 
 
 
 def test_progress_signals_reach_the_gui(worker, qtbot, monkeypatch, tmp_path):
-    def fake_run(root, progress, cancel, **kwargs):
-        progress("analyze", 0.4)
+    def fake_run(plan, progress, cancel, **kwargs):
+        progress(Progress(phase="analyze", fraction=0.4))
         return BuildResult(ok=True, artifact=tmp_path / "Program.exe", size_bytes=1024)
 
-    monkeypatch.setattr(worker_module, "run_build", fake_run)
+    monkeypatch.setattr(worker_module, "execute_build", fake_run)
     received = []
-    worker.progress.connect(lambda phase, value: received.append((phase, value)))
+    worker.progress.connect(lambda update: received.append((update.phase, update.fraction)))
 
     with qtbot.waitSignal(worker.finished, timeout=5000):
         worker.start(_plan(tmp_path))
@@ -110,8 +111,8 @@ def test_progress_signals_reach_the_gui(worker, qtbot, monkeypatch, tmp_path):
 def test_finished_carries_build_result(worker, qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(
         worker_module,
-        "run_build",
-        lambda root, progress, cancel, **kw: BuildResult(ok=True, size_bytes=42),
+        "execute_build",
+        lambda plan, progress, cancel, **kw: BuildResult(ok=True, size_bytes=42),
     )
     with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
         worker.start(_plan(tmp_path))
@@ -121,33 +122,40 @@ def test_finished_carries_build_result(worker, qtbot, monkeypatch, tmp_path):
 # --- co worker przekazuje rdzeniowi ---
 
 
-def test_the_users_corrections_reach_the_build(worker, qtbot, blocking_build, tmp_path):
+def test_the_ready_plan_is_built_verbatim(worker, qtbot, blocking_build, tmp_path):
     """Ekran 2 istnieje po to, zeby uzytkownik poprawil zgadniecia analizy.
-    Worker, ktory ich nie przekaze, kasuje caly ten ekran po cichu."""
+    Worker buduje DOKLADNIE ten plan — nie analizuje folderu od nowa. Wersja
+    z `run_build(plan.root, ...)` analizowala katalog na nowo i gubila wybor
+    pojedynczego pliku: budowanie `Pobrane/x.py` pakowalo cale Pobrane."""
     widziane = blocking_build(BuildResult(ok=True))
     blocking_build.zwolnij.set()
     plan = _plan(tmp_path)
     with qtbot.waitSignal(worker.finished, timeout=5000):
         worker.start(plan)
-    assert widziane["root"] == plan.root
-    assert widziane["kwargs"] == {
-        "entry": plan.entry,
-        "exe_name": plan.exe_name,
-        "icon": plan.icon,
-        "dest_dir": plan.dest_dir,
-        "app_kind": plan.app_kind,
-        "output_mode": plan.output_mode,
-    }
+    assert widziane["plan"] is plan  # ten sam plan, nie odtworzony z analizy
+
+
+def test_analysis_warnings_are_carried_to_the_build(worker, qtbot, blocking_build, tmp_path):
+    """Ostrzezenia analizy z ekranu 2 (sekret w kodzie, ciezka paczka) maja
+    dotrzec na ekran wyniku — worker musi je przekazac do `execute_build`."""
+    from exelent.models import Issue, Severity
+
+    widziane = blocking_build(BuildResult(ok=True))
+    blocking_build.zwolnij.set()
+    carried = (Issue("secret_in_code", Severity.WARNING),)
+    with qtbot.waitSignal(worker.finished, timeout=5000):
+        worker.start(_plan(tmp_path), carried)
+    assert widziane["carried"] == carried
 
 
 # --- awaria ---
 
 
 def test_exception_becomes_failed_result_not_a_crash(worker, qtbot, monkeypatch, tmp_path):
-    def boom(root, progress, cancel, **kwargs):
+    def boom(plan, progress, cancel, **kwargs):
         raise RuntimeError("cos poszlo nie tak")
 
-    monkeypatch.setattr(worker_module, "run_build", boom)
+    monkeypatch.setattr(worker_module, "execute_build", boom)
     with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
         worker.start(_plan(tmp_path))
     result = blocker.args[0]
@@ -159,10 +167,10 @@ def test_the_failure_is_a_sentence_not_a_template(worker, qtbot, monkeypatch, tm
     Issue z innym kluczem danych nie wywala `t()` — pokazuje laikowi nawias
     klamrowy w zdaniu. Cichy blad, wiec pilnowany maszynowo."""
 
-    def boom(root, progress, cancel, **kwargs):
+    def boom(plan, progress, cancel, **kwargs):
         raise RuntimeError("cos poszlo nie tak")
 
-    monkeypatch.setattr(worker_module, "run_build", boom)
+    monkeypatch.setattr(worker_module, "execute_build", boom)
     with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
         worker.start(_plan(tmp_path))
     zdanie = describe(blocker.args[0].issues[0])
@@ -216,3 +224,20 @@ def test_a_second_build_is_refused_while_one_runs(worker, qtbot, blocking_build,
     with qtbot.waitSignal(worker.finished, timeout=5000):
         blocking_build.zwolnij.set()
     assert widziane["wywolania"] == 1
+
+
+def test_shutdown_reports_failure_when_the_build_ignores_cancel(
+    qtbot, worker, blocking_build, tmp_path
+):
+    """`closeEvent` opiera na tej odpowiedzi decyzje o twardym zakonczeniu
+    programu, wiec porazka musi byc widoczna, a watek — nieporzucony."""
+    blocking_build()
+    worker.start(_plan(tmp_path))
+    assert blocking_build.wystartowal.wait(timeout=5)
+
+    try:
+        assert worker.shutdown(timeout_ms=300) is False
+        assert worker.is_running() is True
+    finally:
+        blocking_build.zwolnij.set()
+        qtbot.waitUntil(lambda: not worker.is_running(), timeout=15000)

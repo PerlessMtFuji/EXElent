@@ -1,0 +1,4 @@
+Downloading cpython-3.11.13-windows-x86_64-none (download) (24.3MiB)
+ Downloading cpython-3.11.13-windows-x86_64-none (download)
+Installed Python 3.11.13 in 9.86s
+ + cpython-3.11.13-windows-x86_64-none (python3.11.exe)

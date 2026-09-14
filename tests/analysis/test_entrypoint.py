@@ -3,6 +3,7 @@ from pathlib import Path
 from exelent.analysis.entrypoint import (
     TEST_FILE_PENALTY,
     entry_is_certain,
+    import_roots,
     local_module_names,
     rank_entry_candidates,
 )
@@ -183,3 +184,55 @@ def test_local_module_names_includes_packages(tmp_path):
     (tmp_path / "pkg").mkdir()
     sources = _srcs(tmp_path, {"main.py": "", "pkg/__init__.py": "", "util.py": ""})
     assert local_module_names(tmp_path, sources) == {"main", "pkg", "util"}
+
+
+# --- B04: src/ layout ---------------------------------------------------------
+
+
+def test_import_roots_detects_src_layout(tmp_path):
+    """src/ bez __init__.py to kontener, nie pakiet — jego dzieci to korzenie."""
+    (tmp_path / "src" / "demo").mkdir(parents=True)
+    (tmp_path / "src" / "demo" / "__init__.py").write_text("", encoding="utf-8")
+    sources = _srcs(tmp_path, {"src/demo/__init__.py": "", "src/demo/main.py": ""})
+    roots = import_roots(tmp_path, sources)
+    assert tmp_path / "src" in roots
+    assert tmp_path in roots
+
+
+def test_import_roots_ignores_src_package(tmp_path):
+    """src/ Z __init__.py to normalny pakiet — NIE kontener."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "__init__.py").write_text("", encoding="utf-8")
+    sources = _srcs(tmp_path, {"src/__init__.py": "", "src/main.py": ""})
+    roots = import_roots(tmp_path, sources)
+    assert tmp_path / "src" not in roots
+
+
+def test_local_module_names_src_layout(tmp_path):
+    """W układzie src/ pakiet `demo` musi być w modułach lokalnych."""
+    (tmp_path / "src" / "demo").mkdir(parents=True)
+    (tmp_path / "src" / "demo" / "__init__.py").write_text("", encoding="utf-8")
+    sources = _srcs(
+        tmp_path,
+        {"src/demo/__init__.py": "", "src/demo/main.py": "", "src/demo/helper.py": ""},
+    )
+    names = local_module_names(tmp_path, sources)
+    assert "demo" in names
+    assert "src" not in names
+
+
+def test_entry_ranking_src_layout_graph(tmp_path):
+    """Graf importów w układzie src/ musi rozpoznawać lokalne pakiety."""
+    (tmp_path / "src" / "demo").mkdir(parents=True)
+    (tmp_path / "src" / "demo" / "__init__.py").write_text("", encoding="utf-8")
+    sources = _srcs(
+        tmp_path,
+        {
+            "src/demo/__init__.py": "",
+            "src/demo/main.py": "from demo import helper\nhelper.run()",
+            "src/demo/helper.py": "def run():\n    pass",
+        },
+    )
+    result = rank_entry_candidates(tmp_path, sources)
+    # main.py importuje helper — jest korzeniem grafu.
+    assert result[0].path.name == "main.py"

@@ -1,8 +1,11 @@
 """Generator launchera — punktu wejścia każdego zbudowanego EXE.
 
-Robi dwie rzeczy, których PyInstaller sam nie robi:
-1. ustawia katalog roboczy tak, żeby względne ścieżki w kodzie działały,
-2. łapie każdy wyjątek i pokazuje go użytkownikowi zamiast cicho zniknąć.
+Robi trzy rzeczy, których PyInstaller sam nie robi:
+1. udostępnia wszystkie wektorowane katalogi `*.libs` przy ładowaniu DLL,
+2. ustawia katalog roboczy tak, żeby względne ścieżki w kodzie działały,
+3. łapie każdy wyjątek i pokazuje go użytkownikowi zamiast cicho zniknąć,
+4. zatrzymuje okno konsoli, które sam sobie otworzył, żeby wynik dało się
+   przeczytać po dwukliku z Eksploratora.
 """
 
 from __future__ import annotations
@@ -24,6 +27,49 @@ ENTRY_MODULE = {entry}
 
 def _set_working_directory():
 {chdir_body}
+
+
+# Katalogi `*.libs` obok pakietow to konwencja delvewheel — tam laduja
+# wektorowane biblioteki natywne (numpy.libs, pandas.libs, scipy.libs...).
+_DLL_DIRECTORIES = []
+
+
+def _register_vendored_dll_dirs():
+    """Doklada wszystkie katalogi `*.libs` z paczki do wyszukiwania DLL.
+
+    Bez tego numpy i pandas w jednym programie daja EXE, ktore umiera na
+    `DLL load failed while importing _multiarray_umath`. delvewheel wektoruje
+    `msvcp140-<hash>.dll` do OBU katalogow, pod ta sama nazwa pliku;
+    PyInstaller rozwiazuje zaleznosci binarne po samej nazwie i bierze
+    PIERWSZE trafienie, wiec do paczki wchodzi wylacznie kopia z
+    `pandas.libs`, a kopii numpy nie ma tam wcale. W czasie dzialania lata
+    delvewheel w `numpy/__init__.py` rejestruje tylko `numpy.libs` — pandas
+    jest importowany dopiero POZNIEJ, wiec jego katalogu nie rejestruje nikt
+    i biblioteka lezaca o jeden katalog obok jest nieosiagalna.
+
+    Rejestracja WSZYSTKICH takich katalogow z gory zdejmuje cala te klase
+    bledow, nie tylko pare numpy/pandas: tak samo zderzaja sie scipy,
+    matplotlib czy opencv, a kolejnosc importow w cudzym kodzie nie jest
+    czyms, co EXElent moze przewidziec.
+
+    Uchwyty zostaja w liscie modulu — ich zamkniecie cofa wpis, wiec musza
+    zyc tak dlugo jak program.
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    if not base or not hasattr(os, "add_dll_directory"):
+        return
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(base, name)
+        if not name.endswith(".libs") or not os.path.isdir(path):
+            continue
+        try:
+            _DLL_DIRECTORIES.append(os.add_dll_directory(path))
+        except OSError:
+            pass
 
 
 def _error_path():
@@ -70,6 +116,42 @@ def _show_error_dialog(text, saved_to):
         ctypes.windll.user32.MessageBoxW(None, text, "Blad programu", 0x10)
 
 
+def _owns_console():
+    """Czy okno konsoli powstalo dla nas i zniknie razem z nami?
+
+    Program konsolowy odpalony dwuklikiem z Eksploratora dostaje wlasne okno,
+    ktore Windows zamyka w chwili zakonczenia procesu — uzytkownik widzi samo
+    mrugniecie, nawet jesli program wypisal cos wartosciowego. Ten sam plik
+    uruchomiony z CMD, PowerShella albo z potoku pisze do CUDZEGO okna, ktore
+    zostaje otwarte; zatrzymywanie sie tam na Enter tylko zawieszaloby czyjas
+    automatyzacje.
+
+    `GetConsoleProcessList` oddaje liczbe procesow podpietych do konsoli i
+    rozdziela te dwa przypadki: 1 = jestesmy sami, wiec okno jest nasze, 2 lub
+    wiecej = jest przy nim powloka, ktora nas uruchomila. Gdy odpowiedzi nie ma
+    (program okienkowy bez konsoli, inny system), wybieramy wyjscie
+    bezpieczniejsze: nie zatrzymywac, bo zawieszony program jest gorszy od
+    zamknietego okna.
+    """
+    try:
+        import ctypes
+
+        buffer = (ctypes.c_uint * 8)()
+        count = ctypes.windll.kernel32.GetConsoleProcessList(buffer, 8)
+    except Exception:  # noqa: BLE001 - kazda porazka znaczy "nie zatrzymuj"
+        return False
+    return count == 1
+
+
+def _wait_for_keypress():
+    if not _owns_console():
+        return
+    try:
+        input("Nacisnij Enter, aby zamknac...")
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
 def _report(exc):
     text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     saved_to = _save_report(text)
@@ -77,6 +159,7 @@ def _report(exc):
 
 
 def main():
+    _register_vendored_dll_dirs()
     _set_working_directory()
     try:
         runpy.run_module(ENTRY_MODULE, run_name="__main__", alter_sys=True)
@@ -85,18 +168,26 @@ def main():
     except BaseException as exc:  # noqa: BLE001 - launcher musi zlapac wszystko
         _report(exc)
         sys.exit(1)
+    finally:
+{finish_body}
 
 
 if __name__ == "__main__":
     main()
 '''
 
-_CHDIR_BUNDLE = """\
-    base = getattr(sys, "_MEIPASS", None)
-    if base:
-        os.chdir(base)
-"""
-
+# cwd wskazuje TRWALY katalog EXE w OBU trybach (B01). Wczesniej ONEFILE
+# chdir'owal do `sys._MEIPASS` — tymczasowego katalogu rozpakowania, ktory
+# PyInstaller kasuje przy zakonczeniu procesu. Kazdy wzgledny zapis
+# (`open('wynik.txt','w')`, `Image.save('out.png')`) ladowal tam i przepadal
+# razem z katalogiem. Katalog EXE jest trwaly, wiec zapisy zostaja — takze gdy
+# heurystyka nie rozpoznala, ze program w ogole cos zapisuje.
+#
+# Cena dotyczy WYLACZNIE trybu ONEFILE: zasoby dolaczone do programu leza w
+# `_MEIPASS`, wiec odczyt przez wzgledna sciezke (`open('config.json')`) moze
+# nie znalezc pliku. Dlatego zalecanym i domyslnym trybem jest ONEDIR (zasoby
+# leza obok EXE), a reczny wybor ONEFILE niesie widoczne ostrzezenie
+# (`planning.onefile_limitation_issues` -> `onefile_no_resource_guarantee`).
 _CHDIR_EXECUTABLE = """\
     os.chdir(os.path.dirname(os.path.abspath(sys.executable)))
 """
@@ -109,9 +200,16 @@ _REPORT_CONSOLE = """\
     print(text, file=sys.stderr)
     if saved_to:
         print("Szczegoly zapisano w: " + saved_to, file=sys.stderr)
-    try:
-        input("Nacisnij Enter, aby zamknac...")
-    except EOFError:
+"""
+
+# Pauza konczaca `main()` obejmuje tak samo przebieg udany, jak i awarie —
+# gdyby raport o bledzie czekal na Enter po swojemu, po awarii trzeba by go
+# nacisnac dwa razy.
+_FINISH_CONSOLE = """\
+        _wait_for_keypress()
+"""
+
+_FINISH_WINDOWED = """\
         pass
 """
 
@@ -138,10 +236,18 @@ def _quote_module_name(value: str) -> str:
 
 
 def render_launcher(entry_module: str, app_kind: AppKind, output_mode: OutputMode) -> str:
-    chdir_body = _CHDIR_BUNDLE if output_mode is OutputMode.ONEFILE else _CHDIR_EXECUTABLE
-    report_body = _REPORT_WINDOWED if app_kind is AppKind.WINDOWED else _REPORT_CONSOLE
+    # `output_mode` nie rozgalezia juz katalogu roboczego — oba tryby kotwicza
+    # cwd w trwalym katalogu EXE (patrz komentarz przy `_CHDIR_EXECUTABLE`).
+    # Parametr zostaje w kontrakcie: build go przekazuje, a rozdzial sposobow
+    # uruchomienia skryptu i pakietu wraca w B03.
+    _ = output_mode
+    chdir_body = _CHDIR_EXECUTABLE
+    windowed = app_kind is AppKind.WINDOWED
+    report_body = _REPORT_WINDOWED if windowed else _REPORT_CONSOLE
+    finish_body = _FINISH_WINDOWED if windowed else _FINISH_CONSOLE
     return _TEMPLATE.format(
         entry=_quote_module_name(entry_module),
         chdir_body=chdir_body,
         report_body=report_body,
+        finish_body=finish_body,
     )

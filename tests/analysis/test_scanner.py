@@ -1,6 +1,21 @@
 from pathlib import Path
 
-from exelent.analysis.scanner import scan_directory
+from exelent.analysis.scanner import (
+    _read_head,
+    local_import_closure,
+    scan_directory,
+    scan_single_file,
+)
+
+
+def test_read_head_reads_only_the_prefix_not_the_whole_file(tmp_path):
+    """A10: rozpoznanie pliku nie moze wciagac do pamieci calego pliku.
+    Czytamy tylko `limit` bajtow, nawet gdy plik jest znacznie wiekszy."""
+    big = tmp_path / "duzy.txt"
+    big.write_bytes(b"A" * 500_000)
+    head, truncated = _read_head(big, limit=1000)
+    assert head == "A" * 1000
+    assert truncated is True
 
 
 def _make(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -30,6 +45,13 @@ def test_requirements_is_not_a_text_candidate(tmp_path):
     assert result.text_candidates == ()
 
 
+def test_pyproject_is_discovered(tmp_path):
+    root = _make(tmp_path, {"main.py": "", "pyproject.toml": '[project]\nname = "x"\n'})
+    result = scan_directory(root)
+    assert result.pyproject is not None
+    assert result.pyproject.name == "pyproject.toml"
+
+
 def test_prose_txt_is_not_a_candidate(tmp_path):
     root = _make(tmp_path, {"README.txt": "To jest opis programu dla uzytkownika."})
     result = scan_directory(root)
@@ -42,10 +64,46 @@ def test_code_in_txt_is_a_candidate(tmp_path):
     assert [p.name for p in result.text_candidates] == ["kod.txt"]
 
 
+# --- B02: skaner i konwerter dekoduja tak samo ---
+
+
+def test_utf16_code_txt_is_a_candidate(tmp_path):
+    """TXT zapisany w UTF-16 (Notatnik "Unicode") z poprawnym Pythonem byl
+    dekodowany na sztywno jako utf-8, zamienial sie w smiec i ladowal jako
+    DANE (no_python_found). Dekodowanie ujednolicone z konwerterem (decode_bytes)
+    znajduje program (B02)."""
+    p = tmp_path / "kod.txt"
+    p.write_bytes("import sys\n\ndef main():\n    print('hi')\n".encode("utf-16"))
+    result = scan_directory(tmp_path)
+    assert [q.name for q in result.text_candidates] == ["kod.txt"]
+    assert result.data_files == ()
+
+
+def test_scan_single_utf16_txt_finds_the_program(tmp_path):
+    p = tmp_path / "kod.txt"
+    p.write_bytes("print('hi')\n".encode("utf-16"))
+    result = scan_single_file(p)
+    assert result.text_candidates == (p,)
+
+
+def test_binary_txt_with_null_bytes_is_data_not_a_crash(tmp_path):
+    """Plik .txt z bajtami NUL (np. przemianowany binarny) nie moze wywrocic
+    klasyfikacji: `ast.parse` na NUL rzuca ValueError, nie SyntaxError. Ma
+    wyladowac jako dane, bez wyjatku (B02: kontrolowane dekodowanie)."""
+    p = tmp_path / "obraz.txt"
+    p.write_bytes(b"\x89PNG\x00\x00\x00\rIHDR\x00\x00some text")
+    result = scan_directory(tmp_path)
+    assert [q.name for q in result.data_files] == ["obraz.txt"]
+    assert result.text_candidates == ()
+
+
 def test_classifies_data_and_icons(tmp_path):
     root = _make(tmp_path, {"main.py": "", "dane.json": "{}", "logo.png": "x"})
     result = scan_directory(root)
-    assert [p.name for p in result.data_files] == ["dane.json"]
+    # B07: ikona jest RÓWNOCZEŚNIE zasobem runtime — `logo.png` ląduje w obu.
+    data_names = [p.name for p in result.data_files]
+    assert "dane.json" in data_names
+    assert "logo.png" in data_names
     assert [p.name for p in result.icon_files] == ["logo.png"]
 
 
@@ -54,3 +112,207 @@ def test_stops_at_file_limit(tmp_path):
     result = scan_directory(root, max_files=5)
     assert result.truncated is True
     assert result.file_count <= 6
+
+
+def test_single_file_scan_ignores_everything_around_it(tmp_path):
+    """Uzytkownik wskazal PLIK. Katalog nadrzedny to Pobrane, nie projekt."""
+    (tmp_path / "test.py").write_text("print('x')\n", encoding="utf-8")
+    (tmp_path / "cudzy.py").write_text("print('obcy')\n", encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text("requests\n", encoding="utf-8")
+    (tmp_path / "icon.ico").write_bytes(b"\x00")
+    (tmp_path / "dane.csv").write_text("a,b\n", encoding="utf-8")
+
+    result = scan_single_file(tmp_path / "test.py")
+
+    assert result.single_file == tmp_path / "test.py"
+    assert result.root == tmp_path
+    assert result.py_files == (tmp_path / "test.py",)
+    assert result.requirements is None
+    assert result.icon_files == ()
+    assert result.data_files == ()
+
+
+def test_single_file_scan_routes_txt_through_the_same_check(tmp_path):
+    """Plik .txt z kodem to sciezka flagowa produktu — musi trafic do
+    kandydatow do konwersji, a nie do danych."""
+    (tmp_path / "test.txt").write_text("import sys\nprint('x')\n", encoding="utf-8")
+
+    result = scan_single_file(tmp_path / "test.txt")
+
+    assert result.text_candidates == (tmp_path / "test.txt",)
+    assert result.py_files == ()
+
+
+def test_single_file_scan_of_plain_text_finds_no_code(tmp_path):
+    (tmp_path / "notatka.txt").write_text("kup mleko\n", encoding="utf-8")
+
+    result = scan_single_file(tmp_path / "notatka.txt")
+
+    assert result.py_files == ()
+    assert result.text_candidates == ()
+
+
+def test_local_import_closure_follows_neighbours_transitively(tmp_path):
+    (tmp_path / "main.py").write_text("import helper\n", encoding="utf-8")
+    (tmp_path / "helper.py").write_text("import util\n", encoding="utf-8")
+    (tmp_path / "util.py").write_text("X = 1\n", encoding="utf-8")
+    (tmp_path / "obcy.py").write_text("Y = 2\n", encoding="utf-8")
+
+    found, truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "helper.py", tmp_path / "util.py"}
+    assert truncated is False
+
+
+def test_local_import_closure_resolves_packages(tmp_path):
+    (tmp_path / "main.py").write_text("from pakiet import rzecz\n", encoding="utf-8")
+    (tmp_path / "pakiet").mkdir()
+    (tmp_path / "pakiet" / "__init__.py").write_text("rzecz = 1\n", encoding="utf-8")
+
+    found, _truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert found == (tmp_path / "pakiet" / "__init__.py",)
+
+
+def test_local_import_closure_ignores_installed_packages(tmp_path):
+    """`requests` nie lezy obok pliku, wiec nie jest modulem lokalnym —
+    to zaleznosc do zainstalowania, a tym zajmuje sie `resolve_dependencies`."""
+    (tmp_path / "main.py").write_text("import requests\nimport os\n", encoding="utf-8")
+
+    found, _truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert found == ()
+
+
+def test_local_import_closure_survives_a_cycle(tmp_path):
+    (tmp_path / "main.py").write_text("import a\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text("import b\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("import a\n", encoding="utf-8")
+
+    found, _truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "a.py", tmp_path / "b.py"}
+
+
+def test_local_import_closure_stops_at_the_limit(tmp_path):
+    """Limit chroni przed wciagnieciem polowy katalogu Pobrane przez lancuch
+    importow. Po jego przekroczeniu zostaje sam plik wskazany."""
+    (tmp_path / "main.py").write_text("import m0\n", encoding="utf-8")
+    for i in range(10):
+        nxt = f"import m{i + 1}\n" if i < 9 else "X = 1\n"
+        (tmp_path / f"m{i}.py").write_text(nxt, encoding="utf-8")
+
+    found, truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=3)
+
+    assert truncated is True
+    assert found == ()
+
+
+def test_local_import_closure_follows_dotted_submodule(tmp_path):
+    # `from pkg.child import x` musi wciagnac pkg/child.py, nie tylko
+    # pkg/__init__.py — inaczej EXE umiera u odbiorcy na brakujacym podmodule.
+    (tmp_path / "main.py").write_text("from pkg.child import x\n", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / "child.py").write_text("x = 1\n", encoding="utf-8")
+
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "pkg" / "__init__.py", tmp_path / "pkg" / "child.py"}
+
+
+def test_local_import_closure_follows_dotted_import(tmp_path):
+    (tmp_path / "main.py").write_text("import pkg.child\n", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / "child.py").write_text("x = 1\n", encoding="utf-8")
+
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "pkg" / "__init__.py", tmp_path / "pkg" / "child.py"}
+
+
+def test_local_import_closure_follows_from_package_submodule(tmp_path):
+    # `from pkg import child`, gdzie child to podmodul (pkg/child.py), nie atrybut.
+    (tmp_path / "main.py").write_text("from pkg import child\n", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "pkg" / "child.py").write_text("y = 1\n", encoding="utf-8")
+
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "pkg" / "__init__.py", tmp_path / "pkg" / "child.py"}
+
+
+def test_local_import_closure_follows_relative_bare_import(tmp_path):
+    (tmp_path / "main.py").write_text("from . import helper\n", encoding="utf-8")
+    (tmp_path / "helper.py").write_text("X = 1\n", encoding="utf-8")
+
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "helper.py"}
+
+
+def test_local_import_closure_follows_relative_module(tmp_path):
+    (tmp_path / "main.py").write_text("from .sub import y\n", encoding="utf-8")
+    (tmp_path / "sub.py").write_text("y = 1\n", encoding="utf-8")
+
+    found, _, _trunc = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert set(found) == {tmp_path / "sub.py"}
+
+
+def test_local_import_closure_relative_does_not_escape_the_root(tmp_path):
+    # `from .. import x` z pliku w korzeniu wskazuje POZA projekt — poza zakres
+    # pojedynczego pliku, wiec nie wciagamy niczego z katalogu nadrzednego.
+    (tmp_path / "outside.py").write_text("Z = 1\n", encoding="utf-8")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "main.py").write_text("from .. import outside\n", encoding="utf-8")
+
+    found, _, _trunc = local_import_closure(proj / "main.py", proj, limit=50)
+
+    assert found == ()
+
+
+def test_local_import_closure_ignores_unparsable_files(tmp_path):
+    (tmp_path / "main.py").write_text("import zepsuty\n", encoding="utf-8")
+    (tmp_path / "zepsuty.py").write_text("def (\n", encoding="utf-8")
+
+    found, truncated, _trunc_files = local_import_closure(tmp_path / "main.py", tmp_path, limit=50)
+
+    assert found == (tmp_path / "zepsuty.py",)
+    assert truncated is False
+
+
+# --- B07: zasoby i ich układ --------------------------------------------------
+
+
+def test_icon_is_also_a_data_file(tmp_path):
+    """B07: ikona aplikacji może być równocześnie zasobem runtime — wybór
+    `logo.png` jako ikony nie może usuwać go z danych. Program użytkownika
+    odczytuje `Image.open('logo.png')` i musi go znaleźć w paczce."""
+    root = _make(tmp_path, {"main.py": "print(1)", "logo.png": "x", "config.json": "{}"})
+    result = scan_directory(root)
+    data_names = {p.name for p in result.data_files}
+    icon_names = {p.name for p in result.icon_files}
+    assert "logo.png" in icon_names, "logo.png powinno być kandydatem na ikonę"
+    assert "logo.png" in data_names, "logo.png musi też być zasobem runtime"
+    assert "config.json" in data_names
+
+
+def test_all_image_types_are_data_files(tmp_path):
+    """B07: wszystkie obrazki trafiają do danych, nawet te z nazwami ikon."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print(1)",
+            "icon.ico": "x",
+            "logo.png": "x",
+            "tlo.jpg": "x",
+            "banner.gif": "x",
+        },
+    )
+    result = scan_directory(root)
+    data_names = {p.name for p in result.data_files}
+    assert data_names == {"icon.ico", "logo.png", "tlo.jpg", "banner.gif"}

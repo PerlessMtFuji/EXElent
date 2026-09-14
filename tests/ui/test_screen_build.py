@@ -10,7 +10,16 @@ import pytest
 from PySide6.QtWidgets import QFileDialog, QWidget
 
 from exelent.i18n import CATALOGS, current_language, set_language, t
-from exelent.models import AppKind, BuildPlan, BuildResult, Issue, OutputMode, Severity
+from exelent.models import (
+    AppKind,
+    BuildPlan,
+    BuildResult,
+    Issue,
+    OutputMode,
+    Severity,
+    VerificationStatus,
+)
+from exelent.runtime import Progress
 from exelent.ui import screen_build as screen_build_module
 from exelent.ui.screen_build import BuildScreen
 
@@ -69,7 +78,7 @@ def test_no_widget_shows_a_raw_key(screen, tmp_path):
 
 
 def test_the_phase_is_a_sentence_not_a_key(screen):
-    screen.on_progress("analyze", 0.4)
+    screen.on_progress(Progress(phase="analyze", fraction=0.4))
     assert screen.phase_label.text() == t("analyze")
 
 
@@ -77,7 +86,7 @@ def test_the_phase_is_a_sentence_not_a_key(screen):
 
 
 def test_progress_updates_bar_and_phase_text(screen):
-    screen.on_progress("analyze", 0.4)
+    screen.on_progress(Progress(phase="analyze", fraction=0.4))
     assert screen.bar.value() == 40
     assert screen.phase_label.text() != ""
 
@@ -107,7 +116,7 @@ def test_success_shows_antivirus_note(screen, tmp_path):
 
 
 def test_success_fills_the_bar(screen, tmp_path):
-    screen.on_progress("analyze", 0.4)
+    screen.on_progress(Progress(phase="analyze", fraction=0.4))
     screen.on_finished(BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048))
     assert screen.bar.value() == 100
 
@@ -331,20 +340,41 @@ def test_run_button_launches_the_built_program(screen, monkeypatch, tmp_path):
         screen_build_module.subprocess, "Popen", lambda *a, **k: uruchomione.append(a)
     )
     artefakt = _artifact(tmp_path)
-    screen.on_finished(BuildResult(ok=True, artifact=artefakt, size_bytes=2048))
+    screen.on_finished(
+        BuildResult(ok=True, artifact=artefakt, executable_path=artefakt, size_bytes=2048)
+    )
     screen.run_button.click()
     assert uruchomione == [([str(artefakt)],)]
 
 
-def test_a_onedir_result_opens_the_folder_itself(screen, monkeypatch, tmp_path):
-    """Przy `OutputMode.ONEDIR` artefaktem jest KATALOG, nie plik."""
+def test_run_button_launches_the_exe_inside_a_onedir(screen, monkeypatch, tmp_path):
+    """A12: w ONEDIR artefaktem jest KATALOG — przycisk „Uruchom" ma odpalic
+    EXE lezacy w srodku, a nie milczec, bo katalog nie jest plikiem."""
+    uruchomione = []
+    monkeypatch.setattr(
+        screen_build_module.subprocess, "Popen", lambda *a, **k: uruchomione.append(a)
+    )
+    folder = tmp_path / "Program"
+    folder.mkdir()
+    exe = folder / "Program.exe"
+    exe.write_bytes(b"exe")
+    screen.on_finished(BuildResult(ok=True, artifact=folder, executable_path=exe, size_bytes=2048))
+    screen.run_button.click()
+    assert uruchomione == [([str(exe)],)]
+
+
+def test_a_onedir_result_opens_the_folder_and_selects_the_exe(screen, monkeypatch, tmp_path):
+    """Przy `OutputMode.ONEDIR` artefaktem jest KATALOG; „Pokaz w folderze"
+    zaznacza w nim plik EXE."""
     wywolania = []
     monkeypatch.setattr(screen_build_module.subprocess, "run", lambda *a, **k: wywolania.append(a))
     folder = tmp_path / "Program"
     folder.mkdir()
-    screen.on_finished(BuildResult(ok=True, artifact=folder, size_bytes=2048))
+    exe = folder / "Program.exe"
+    exe.write_bytes(b"exe")
+    screen.on_finished(BuildResult(ok=True, artifact=folder, executable_path=exe, size_bytes=2048))
     screen.open_folder_button.click()
-    assert str(folder) in " ".join(wywolania[0][0])
+    assert str(exe) in " ".join(wywolania[0][0])
 
 
 # --- powrot na start ---
@@ -426,7 +456,7 @@ def test_a_failure_after_a_success_drops_the_run_button(screen, tmp_path):
 def test_the_bar_disappears_when_it_has_nothing_left_to_measure(screen, tmp_path):
     """Pasek zatrzymany na 92% pod naglowkiem "Nie udalo sie" mowi dwie
     sprzeczne rzeczy naraz. Po sukcesie zostaje — pelny pasek to potwierdzenie."""
-    screen.on_progress("package", 0.92)
+    screen.on_progress(Progress(phase="package", fraction=0.92))
     screen.on_finished(BuildResult(ok=False))
     assert _visible(screen.bar, screen) is False
 
@@ -445,3 +475,152 @@ def test_the_log_opens_at_its_end(screen, tmp_path):
     screen.on_finished(BuildResult(ok=False, log_path=log))
     tekst = screen.log_view.toPlainText()
     assert screen.log_view.textCursor().position() == len(tekst)
+
+
+# --- powrot do przegladu ---
+
+
+def test_back_to_review_offered_after_failure(qtbot, screen):
+    screen.on_finished(BuildResult(ok=False, issues=(Issue("disk_full", Severity.BLOCKER),)))
+    assert screen.back_button.isHidden() is False
+
+
+def test_back_to_review_offered_after_cancel(qtbot, screen):
+    screen.on_finished(BuildResult(ok=False, issues=(Issue("build_cancelled", Severity.INFO),)))
+    assert screen.back_button.isHidden() is False
+
+
+def test_back_to_review_not_offered_after_success(qtbot, screen, tmp_path):
+    artifact = tmp_path / "Program.exe"
+    artifact.write_bytes(b"x" * 2048)
+    screen.on_finished(BuildResult(ok=True, artifact=artifact, size_bytes=2048))
+    assert screen.back_button.isHidden() is True
+
+
+def test_back_button_is_hidden_while_running(qtbot, screen, tmp_path):
+    """Kazdy stan ma OKRESLAC caly ekran, a nie dokladac sie do poprzedniego.
+
+    Ten sam blad zjadl juz "Zglos na GitHubie", ktorym zostawal po porazce na
+    ekranie przerwania — patrz `_hide_all_actions`.
+    """
+    screen.on_finished(BuildResult(ok=False, issues=(Issue("disk_full", Severity.BLOCKER),)))
+    screen.start(_plan(tmp_path))
+    assert screen.back_button.isHidden() is True
+
+
+def test_byte_line_appears_only_while_something_is_downloading(qtbot, screen):
+    """Pusty licznik megabajtow pod paskiem przy pakowaniu bylby gorszy niz
+    jego brak, wiec ekran pozna to po `total_bytes == 0`."""
+    screen.on_progress(Progress(phase="package", fraction=0.4))
+    assert screen.bytes_label.isHidden() is True
+
+    screen.on_progress(
+        Progress(
+            phase="install_packages",
+            fraction=0.6,
+            done_bytes=128 * 1024**2,
+            total_bytes=210 * 1024**2,
+            speed_bps=4.2 * 1024**2,
+            eta_s=20,
+        )
+    )
+    assert screen.bytes_label.isHidden() is False
+    text = screen.bytes_label.text()
+    assert "128.0 MB" in text and "210.0 MB" in text and "4.2 MB/s" in text and "20 s" in text
+
+
+def test_byte_line_omits_eta_when_speed_is_unknown(qtbot, screen):
+    screen.on_progress(
+        Progress(phase="install_packages", fraction=0.1, done_bytes=0, total_bytes=1024**2)
+    )
+    assert screen.bytes_label.isHidden() is False
+    assert "None" not in screen.bytes_label.text()
+
+
+# --- B13: issues widoczne po sukcesie ------------------------------------------
+
+
+def test_success_with_issues_shows_them(screen, tmp_path):
+    """B13 P1: ostrzeżenia analizy i backendu muszą być widoczne RÓWNIEŻ po
+    sukcesie pakowania — sam przycisk „Uruchom" nie jest dowodem poprawności."""
+    issues = (
+        Issue("dependency_not_declared", Severity.WARNING, {"package": "requests"}),
+        Issue(
+            "size_estimate_large",
+            Severity.WARNING,
+            {"packages": "torch", "low": "200", "high": "600"},
+        ),
+    )
+    screen.on_finished(
+        BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048, issues=issues)
+    )
+    assert _visible(screen.issues_label, screen) is True
+    text = screen.issues_label.text()
+    assert text != ""
+    # Sprawdzamy, że oba issues się pojawiły.
+    assert "requests" in text or t("dependency_not_declared", package="requests") in text
+
+
+def test_success_without_issues_hides_the_label(screen, tmp_path):
+    """Pusty blok nie powinien się pojawiać, gdy nie ma ostrzeżeń."""
+    screen.on_finished(BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048))
+    assert _visible(screen.issues_label, screen) is False
+
+
+def test_success_headline_distinguishes_warnings_and_verified_launch(screen, tmp_path):
+    artifact = _artifact(tmp_path)
+    screen.on_finished(BuildResult(ok=True, artifact=artifact, size_bytes=2048))
+    assert "nie zostało potwierdzone" in screen.summary_label.text()
+
+    warning = Issue("dependency_not_declared", Severity.WARNING, {"package": "requests"})
+    screen.on_finished(BuildResult(ok=True, artifact=artifact, size_bytes=2048, issues=(warning,)))
+    assert "z ostrzeżeniami" in screen.summary_label.text()
+
+    screen.on_finished(
+        BuildResult(
+            ok=True,
+            artifact=artifact,
+            size_bytes=2048,
+            verification=VerificationStatus.PASSED,
+        )
+    )
+    assert "sprawdzono uruchomienie" in screen.summary_label.text()
+
+
+def test_launch_failure_is_visible_instead_of_raising(screen, monkeypatch, tmp_path):
+    artifact = _artifact(tmp_path)
+    screen.on_finished(
+        BuildResult(ok=True, artifact=artifact, executable_path=artifact, size_bytes=2048)
+    )
+    monkeypatch.setattr(
+        screen_build_module.subprocess,
+        "Popen",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("odmowa")),
+    )
+    screen.run_button.click()
+    assert "odmowa" in screen.issues_label.text()
+    assert _visible(screen.issues_label, screen) is True
+
+
+def test_open_folder_failure_is_visible_instead_of_raising(screen, monkeypatch, tmp_path):
+    artifact = _artifact(tmp_path)
+    screen.on_finished(BuildResult(ok=True, artifact=artifact, size_bytes=2048))
+    monkeypatch.setattr(
+        screen_build_module.subprocess,
+        "run",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("explorer niedostępny")),
+    )
+    screen.open_folder_button.click()
+    assert "explorer niedostępny" in screen.issues_label.text()
+
+
+def test_issues_cleared_on_new_build(screen, tmp_path):
+    """Ostrzeżenia poprzedniego builda nie mogą zostać na ekranie nowego."""
+    issues = (Issue("dependency_not_declared", Severity.WARNING, {"package": "requests"}),)
+    screen.on_finished(
+        BuildResult(ok=True, artifact=_artifact(tmp_path), size_bytes=2048, issues=issues)
+    )
+    assert _visible(screen.issues_label, screen) is True
+
+    screen.start(_plan(tmp_path))
+    assert _visible(screen.issues_label, screen) is False

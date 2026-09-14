@@ -60,6 +60,14 @@ def test_every_progress_phase_is_translated():
     assert missing == [], f"faza bez tlumaczenia: {missing}"
 
 
+def test_the_inventory_still_sees_progress_phases():
+    """Sonda nad skanem faz: pusty zbior przechodzilby kazdy test
+    kompletnosci, wiec brak fazy przestalby cokolwiek znaczyc."""
+    phases = phase_keys()
+    assert "install_packages" in phases, "faza z env.py wypadla z inwentarza"
+    assert len(phases) > 8, f"inwentarz faz nagle schudl do {len(phases)}"
+
+
 def test_templates_only_ask_for_data_the_core_supplies():
     """Szablon z `{dir}`, gdy rdzen nie podaje `dir`, nie wywala sie — pokazuje
     uzytkownikowi nawias klamrowy w zdaniu. Cichy blad, wiec pilnowany."""

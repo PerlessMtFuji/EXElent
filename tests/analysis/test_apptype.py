@@ -4,9 +4,9 @@ from exelent.analysis.apptype import (
     collect_code_issues,
     collect_hidden_imports,
     detect_app_kind,
-    detect_output_mode,
+    package_submodule_collections,
 )
-from exelent.models import AppKind, OutputMode
+from exelent.models import AppKind
 
 
 def _s(code: str) -> dict[Path, str]:
@@ -38,22 +38,27 @@ def test_plain_script_defaults_to_console():
     assert kind is AppKind.CONSOLE
 
 
-def test_read_only_program_gets_onefile():
-    assert detect_output_mode(_s("open('dane.json').read()")) is OutputMode.ONEFILE
+# Tryb wyjscia (ONEFILE vs ONEDIR) NIE jest juz zgadywany z tresci zrodel (B01):
+# zalecany jest zawsze ONEDIR, a wybor ONEFILE nalezy do uzytkownika. Regresje
+# tej decyzji sa w tests/analysis/test_project.py (zalecany tryb) oraz
+# tests/test_planning.py (ograniczenie recznego ONEFILE).
 
 
-def test_writing_program_gets_onedir():
-    assert detect_output_mode(_s("open('wynik.txt', 'w').write('x')")) is OutputMode.ONEDIR
+def test_type_checking_import_does_not_trigger_windowed():
+    code = (
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    import tkinter\n"
+        "print('hello')\n"
+    )
+    kind, _ = detect_app_kind(_s(code))
+    assert kind is AppKind.CONSOLE
 
 
-def test_json_dump_counts_as_writing():
-    code = "import json\njson.dump({}, open('a.json','w'))"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_savefig_counts_as_writing():
-    code = "import matplotlib.pyplot as plt\nplt.savefig('wykres.png')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+def test_if_false_import_does_not_trigger_windowed():
+    code = "if False:\n    import PyQt5\nprint('hello')\n"
+    kind, _ = detect_app_kind(_s(code))
+    assert kind is AppKind.CONSOLE
 
 
 def test_flask_raises_server_issue():
@@ -85,135 +90,58 @@ def test_variable_dynamic_import_raises_issue():
     assert "dynamic_import_unresolved" in codes
 
 
-# --- Fix Round 1/5: detect_output_mode broadened to err toward ONEDIR ---
+# B01: heurystyka __file__ / _MEIPASS — ostrzezenia bez przepisywania kodu
 
 
-def test_sqlite_connect_counts_as_writing():
-    code = "import sqlite3\nsqlite3.connect('db.sqlite')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+def test_dunder_file_raises_frozen_path_issue():
+    code = "import os\nbase = os.path.dirname(__file__)\ndata = open(os.path.join(base, 'x'))"
+    issues = collect_code_issues(_s(code))
+    matching = [i for i in issues if i.code == "frozen_path_pattern"]
+    assert len(matching) == 1
+    assert matching[0].data["pattern"] == "__file__"
 
 
-def test_logging_filehandler_counts_as_writing():
-    code = "import logging\nlogging.FileHandler('app.log')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+def test_sys_meipass_raises_frozen_path_issue():
+    code = "import sys\nbase = sys._MEIPASS\nprint(base)"
+    issues = collect_code_issues(_s(code))
+    matching = [i for i in issues if i.code == "frozen_path_pattern"]
+    assert len(matching) == 1
+    assert matching[0].data["pattern"] == "_MEIPASS"
 
 
-def test_logging_rotating_filehandler_counts_as_writing():
-    code = "import logging.handlers\nlogging.handlers.RotatingFileHandler('app.log')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+def test_getattr_meipass_raises_frozen_path_issue():
+    code = "import sys\nbase = getattr(sys, '_MEIPASS', '.')\nprint(base)"
+    issues = collect_code_issues(_s(code))
+    matching = [i for i in issues if i.code == "frozen_path_pattern"]
+    assert len(matching) == 1
+    assert matching[0].data["pattern"] == "_MEIPASS"
 
 
-def test_logging_timed_rotating_filehandler_counts_as_writing():
-    code = "import logging.handlers\nlogging.handlers.TimedRotatingFileHandler('app.log')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+def test_both_file_and_meipass_raise_separate_issues():
+    code = "import sys, os\nif getattr(sys, '_MEIPASS', None):\n  p = sys._MEIPASS\nelse:\n  p = os.path.dirname(__file__)"
+    issues = collect_code_issues(_s(code))
+    patterns = sorted(i.data["pattern"] for i in issues if i.code == "frozen_path_pattern")
+    assert set(patterns) == {"__file__", "_MEIPASS"}
 
 
-def test_logging_basicconfig_with_filename_counts_as_writing():
-    code = "import logging\nlogging.basicConfig(filename='app.log')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+def test_plain_code_has_no_frozen_path_issue():
+    code = "x = 1\nprint(x)"
+    issues = collect_code_issues(_s(code))
+    assert not any(i.code == "frozen_path_pattern" for i in issues)
 
 
-def test_shutil_copy_counts_as_writing():
-    code = "import shutil\nshutil.copy('a', 'b')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+# --- package_submodule_collections ---
 
 
-def test_shutil_copy2_counts_as_writing():
-    code = "import shutil\nshutil.copy2('a', 'b')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+def test_scipy_triggers_array_api_compat_collection():
+    result = package_submodule_collections({"scipy", "numpy"})
+    assert "scipy._external.array_api_compat" in result
 
 
-def test_shutil_copyfile_counts_as_writing():
-    code = "import shutil\nshutil.copyfile('a', 'b')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
+def test_unrelated_packages_trigger_no_collections():
+    result = package_submodule_collections({"requests", "numpy", "pandas"})
+    assert result == ()
 
 
-def test_shutil_copytree_counts_as_writing():
-    code = "import shutil\nshutil.copytree('a', 'b')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_shutil_move_counts_as_writing():
-    code = "import shutil\nshutil.move('a', 'b')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_shutil_make_archive_counts_as_writing():
-    code = "import shutil\nshutil.make_archive('out', 'zip', 'src')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_to_json_counts_as_writing():
-    code = "df.to_json('a.json')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_to_parquet_counts_as_writing():
-    code = "df.to_parquet('a.parquet')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_to_pickle_counts_as_writing():
-    code = "df.to_pickle('a.pkl')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_to_html_counts_as_writing():
-    code = "df.to_html('a.html')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_to_sql_counts_as_writing():
-    code = "df.to_sql('table', conn)"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_to_feather_counts_as_writing():
-    code = "df.to_feather('a.feather')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_zipfile_write_mode_counts_as_writing():
-    code = "import zipfile\nzipfile.ZipFile('out.zip', 'w')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_tarfile_write_mode_counts_as_writing():
-    code = "import tarfile\ntarfile.open('out.tar', 'w')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_os_makedirs_counts_as_writing():
-    code = "import os\nos.makedirs('out')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_os_mkdir_counts_as_writing():
-    code = "import os\nos.mkdir('out')"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_path_mkdir_counts_as_writing():
-    code = "from pathlib import Path\nPath('out').mkdir()"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_open_with_variable_mode_counts_as_writing():
-    code = "m = 'r'\nopen('f', m)"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_open_with_variable_mode_kwarg_counts_as_writing():
-    code = "m = 'r'\nopen('f', mode=m)"
-    assert detect_output_mode(_s(code)) is OutputMode.ONEDIR
-
-
-def test_read_only_program_still_gets_onefile():
-    code = (
-        "import json\n"
-        "from pathlib import Path\n"
-        "open('dane.json').read()\n"
-        "json.load(open('dane.json'))\n"
-        "Path('dane.json').read_text()\n"
-    )
-    assert detect_output_mode(_s(code)) is OutputMode.ONEFILE
+def test_empty_imports_trigger_no_collections():
+    assert package_submodule_collections(set()) == ()

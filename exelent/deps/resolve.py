@@ -1,19 +1,49 @@
-"""Od importów w kodzie do listy paczek do zainstalowania."""
+"""Od importów w kodzie (i z manifestu) do listy paczek do zainstalowania."""
 
 from __future__ import annotations
 
 import ast
-import re
 import sys
-from collections.abc import Mapping
+import tomllib
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from exelent.deps.aliases import ALIASES, HEAVY_PACKAGES
-from exelent.models import Dependency
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.utils import canonicalize_name
 
-_REQ_LINE = re.compile(r"^\s*([A-Za-z0-9_.\-]+(?:\[[^\]]+\])?(?:[<>=!~]=?[^\s#]+)?)")
+from exelent.analysis.parsed import ParsedSources
+from exelent.constants import TARGET_PYTHON
+from exelent.deps.aliases import ALIASES
+from exelent.deps.sizes import is_heavy
+from exelent.models import Dependency, Issue, Severity
+
 _DIRECT_REF_PREFIXES = ("git+", "hg+", "svn+", "bzr+")
 _DIRECT_REF_SUFFIXES = (".whl", ".tar.gz", ".zip")
+
+# Środowisko markerów DOCELOWEGO builda: zawsze Windows + Python 3.12, bo taki
+# EXE powstaje — a nie interpreter, na którym akurat działa EXElent.
+# `pkg; sys_platform == "darwin"` ma więc NIE instalować się na Windowsie.
+_TARGET_MARKER_ENV = {
+    "os_name": "nt",
+    "sys_platform": "win32",
+    "platform_system": "Windows",
+    "platform_machine": "AMD64",
+    "python_version": TARGET_PYTHON,
+    # B05: nie zakładamy patcha `.0` — uv instaluje najnowszy dostępny
+    # (np. 3.12.11), więc marker `python_full_version >= '3.12.5'` musi
+    # się zgodzić. Używamy wysokiego patcha, który jest powyżej każdego
+    # realnego wydania 3.12.x — w razie wątpliwości WŁĄCZAMY zależność
+    # (uv odrzuci ją sam, gdy marker nie pasuje do zainstalowanego).
+    "python_full_version": f"{TARGET_PYTHON}.99",
+    "implementation_name": "cpython",
+    "implementation_version": f"{TARGET_PYTHON}.99",
+    "platform_python_implementation": "CPython",
+}
+
+# Ile poziomów zagnieżdżenia `-r`/`-c` czytamy. Zabezpieczenie na wypadek
+# cyklu, którego zbiór odwiedzonych plików mógłby nie złapać (dowiązania).
+_MAX_MANIFEST_DEPTH = 20
 
 
 def _is_direct_reference(spec: str) -> bool:
@@ -26,72 +56,539 @@ def _is_direct_reference(spec: str) -> bool:
     )
 
 
-def _optional_import_lines(tree: ast.AST) -> set[int]:
-    """Numery linii importów siedzących w try/except ImportError."""
-    lines: set[int] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Try):
+def _strip_inline_comment(line: str) -> str:
+    """Zdejmuje komentarz ` # ...`, nie ruszając `#egg=` w URL-u (bez spacji)."""
+    if line.lstrip().startswith("#"):
+        return ""
+    for i in range(1, len(line)):
+        if line[i] == "#" and line[i - 1] in " \t":
+            return line[:i].rstrip()
+    return line.strip()
+
+
+def _manifest_lines(
+    path: Path,
+    seen: set[Path],
+    stack: list[Path],
+    depth: int,
+    issues: list[Issue],
+    *,
+    constraints: list[str] | None = None,
+) -> list[str]:
+    """Linie wymagań z pliku, z rozwinięciem `-r`/`-c` względem jego katalogu.
+
+    Cykl i brakujący plik nie wywalają analizy (best-effort), ale zostawiają
+    ślad w `issues`: milcząco pominięty `-r` znaczy niekompletną listę
+    zależności, o czym użytkownik musi wiedzieć. `stack` to bieżąca ścieżka
+    zejścia — cykl to powrót do pliku, który JEST na tej ścieżce; ten sam plik
+    dołączony dwiema różnymi gałęziami (diament) to nie cykl, tylko dedup.
+
+    `-c` / `--constraint` daje OGRANICZENIA wersji, nie wymagania instalacji:
+    sam wpis `numpy==1.24` w pliku constraints NIE instaluje numpy — ogranicza
+    jego wersję TYLKO jeśli numpy jest już wymagany skądinąd (B05).
+    `constraints` zbiera te linie osobno; wołający stosuje je w resolverze.
+    """
+    resolved = path.resolve()
+    if resolved in stack:
+        issues.append(Issue("requirements_cycle", Severity.WARNING, {"file": path.name}))
+        return []
+    if depth > _MAX_MANIFEST_DEPTH or resolved in seen:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        issues.append(Issue("requirements_missing", Severity.WARNING, {"file": path.name}))
+        return []
+    seen.add(resolved)
+    stack.append(resolved)
+
+    lines: list[str] = []
+    for raw in text.splitlines():
+        line = _strip_inline_comment(raw)
+        if not line:
             continue
-        handles_import = any(
-            isinstance(h.type, ast.Name)
-            and h.type.id in {"ImportError", "ModuleNotFoundError"}
-            or (
-                isinstance(h.type, ast.Tuple)
-                and any(isinstance(e, ast.Name) and e.id.endswith("Error") for e in h.type.elts)
+        lowered = line.lower()
+        if lowered.startswith(("-r ", "--requirement ")):
+            ref = line.split(None, 1)[1].strip()
+            lines.extend(
+                _manifest_lines(
+                    path.parent / ref, seen, stack, depth + 1, issues, constraints=constraints
+                )
             )
-            for h in node.handlers
-        )
-        if not handles_import:
+        elif lowered.startswith(("-c ", "--constraint ")):
+            ref = line.split(None, 1)[1].strip()
+            # Constraint file: linie trafiają do osobnej listy, nie do
+            # wymagań instalacji (B05). Brak pliku/cykl zgłaszamy tak samo.
+            constraint_lines = _manifest_lines(
+                path.parent / ref, seen, stack, depth + 1, issues, constraints=constraints
+            )
+            if constraints is not None:
+                constraints.extend(constraint_lines)
+        elif line.startswith("-"):
+            # Inne opcje pip (-e, --index-url, --hash) nie są nazwą paczki.
+            # Diagnostyka: użytkownik musi wiedzieć, że je pominęliśmy (B05).
+            option = line.split()[0] if line.split() else line
+            issues.append(
+                Issue(
+                    "requirements_unsupported_option",
+                    Severity.WARNING,
+                    {"option": option, "file": path.name},
+                )
+            )
             continue
-        for child in ast.walk(node):
+        else:
+            lines.append(line)
+    stack.pop()
+    return lines
+
+
+def _check_requires_python(data: dict, issues: list[Issue], file_name: str) -> None:
+    """Sprawdza `requires-python` z `[project]` względem docelowego targetu (B05).
+
+    Niezgodność nie blokuje builda — to ostrzeżenie: autor mógł nieprecyzyjnie
+    zadeklarować zakres, a kod może i tak działać. Blokadą jest dopiero
+    nieudana walidacja składni docelowym interpreterem (B09).
+    """
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return
+    requires = project.get("requires-python")
+    if not isinstance(requires, str) or not requires.strip():
+        return
+    try:
+        spec = SpecifierSet(requires)
+    except InvalidSpecifier:
+        return
+    if not spec.contains(TARGET_PYTHON, prereleases=True):
+        issues.append(
+            Issue(
+                "requires_python_mismatch",
+                Severity.WARNING,
+                {"declared": requires, "target": TARGET_PYTHON},
+            )
+        )
+
+
+def _deps_from_pyproject(path: Path, issues: list[Issue]) -> tuple[Dependency, ...] | None:
+    """Zależności z `[project].dependencies` (PEP 621) albo `None`, gdy plik nie
+    jest autorytatywny i trzeba spaść do skanu importów.
+
+    `None` znaczy „nie wiem stąd": deklaracja `dynamic = ["dependencies"]` (deps
+    są gdzie indziej), nieczytelny TOML albo brak jakiejkolwiek deklaracji — ani
+    PEP 621, ani Poetry. Jawne `dependencies = []` to co innego — autor mówi
+    „brak zależności", więc zwracamy pustą krotkę i NIE zgadujemy z importów.
+    Tabeli `[build-system]` nie ruszamy: `requires` to zależności backendu
+    budowania, nie aplikacji.
+
+    Pierwszeństwo: PEP 621 `[project]` przed Poetry `[tool.poetry]`. Gdy tabela
+    `[project]` istnieje, ona rządzi (nawet gdy to znaczy `None` -> skan);
+    `[tool.poetry.dependencies]` czytamy TYLKO, gdy `[project]` nie ma wcale —
+    to fallback dla starszych projektów Poetry (przed jego wsparciem PEP 621)."""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        issues.append(Issue("pyproject_unreadable", Severity.WARNING, {"file": path.name}))
+        return None
+
+    # B05: sprawdzenie `requires-python` względem docelowego targetu.
+    _check_requires_python(data, issues, path.name)
+
+    project = data.get("project")
+    if isinstance(project, dict):
+        if "dependencies" in project.get("dynamic", []):
+            issues.append(Issue("pyproject_dynamic_deps", Severity.WARNING, {"file": path.name}))
+            return None
+        declared = project.get("dependencies")
+        if declared is None:
+            return None
+        return _deps_from_manifest(
+            [spec for spec in declared if isinstance(spec, str)], issues=issues
+        )
+    tool = data.get("tool")
+    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+    if isinstance(poetry, dict):
+        poetry_deps = poetry.get("dependencies")
+        if isinstance(poetry_deps, dict):
+            return _deps_from_poetry(poetry_deps, issues)
+    return None
+
+
+def _text_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw in text.splitlines():
+        line = _strip_inline_comment(raw)
+        # Bez pliku bazowego nie ma jak rozwinąć `-r`, więc opcje pomijamy.
+        if line and not line.startswith("-"):
+            lines.append(line)
+    return lines
+
+
+def _dep_from_requirement_line(line: str, issues: list[Issue] | None = None) -> Dependency | None:
+    """Jedna linia manifestu -> Dependency, albo None gdy marker ją wyklucza
+    dla docelowej platformy lub gdy linia jest niepoprawna.
+
+    B05: niepoprawna linia daje diagnostykę zamiast cichego pominięcia.
+    """
+    if _is_direct_reference(line):
+        return Dependency(import_name=line, package=line, heavy=False, origin="manifest")
+    try:
+        req = Requirement(line)
+    except InvalidRequirement:
+        if issues is not None:
+            issues.append(
+                Issue(
+                    "requirements_invalid_spec",
+                    Severity.WARNING,
+                    {"spec": line[:120]},
+                )
+            )
+        return None
+    if req.marker is not None and not req.marker.evaluate(_TARGET_MARKER_ENV):
+        return None
+    extras = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
+    # Marker już oceniliśmy — do uv przekazujemy nazwę, extras i wersję, bez
+    # markera (i tak instaluje w środowisku Windows/3.12).
+    if req.url:
+        spec = f"{req.name}{extras} @ {req.url}"
+    else:
+        spec = f"{req.name}{extras}{req.specifier}"
+    return Dependency(
+        import_name=req.name, package=spec, heavy=is_heavy(req.name), origin="manifest"
+    )
+
+
+def _apply_constraints(deps: dict[str, Dependency], constraint_lines: list[str]) -> None:
+    """Nakłada ograniczenia wersji na istniejące wymagania (B05).
+
+    Constraint ogranicza wersję paczki, która JUŻ jest wymagana — sam nie
+    dodaje nowego wymagania. To kluczowa różnica wobec `-r`: sam `-c numpy==1.24`
+    nie instaluje numpy; ogranicza go, tylko jeśli inny wymaganie go już żąda.
+    Constraint na paczkę spoza listy wymagań jest ignorowany zgodnie z
+    semantyką pip: https://pip.pypa.io/en/stable/user_guide/#constraints-files
+    """
+    if not constraint_lines:
+        return
+    # Mapa: znormalizowana nazwa -> specyfikator z pliku constraints.
+    constraint_map: dict[str, str] = {}
+    for line in constraint_lines:
+        if _is_direct_reference(line):
+            continue
+        try:
+            req = Requirement(line)
+        except InvalidRequirement:
+            continue
+        if req.marker is not None and not req.marker.evaluate(_TARGET_MARKER_ENV):
+            continue
+        constraint_map[canonicalize_name(req.name)] = str(req.specifier)
+
+    # Zastosuj constraints do pasujących wymagań.
+    for key, dep in list(deps.items()):
+        if _is_direct_reference(dep.package):
+            continue
+        try:
+            req = Requirement(dep.package)
+        except InvalidRequirement:
+            continue
+        canon = canonicalize_name(req.name)
+        if canon not in constraint_map:
+            continue
+        constraint_spec = constraint_map[canon]
+        if not constraint_spec:
+            continue
+        # Scal: oryginalne ograniczenie + constraint. Np. `requests>=2.0` +
+        # constraint `requests<3.0` daje `requests>=2.0,<3.0`.
+        merged = f"{req.specifier},{constraint_spec}" if str(req.specifier) else constraint_spec
+        extras = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
+        new_spec = f"{req.name}{extras}{merged}"
+        deps[key] = Dependency(
+            import_name=dep.import_name,
+            package=new_spec,
+            optional=dep.optional,
+            heavy=dep.heavy,
+            origin=dep.origin,
+        )
+
+
+def _deps_from_manifest(
+    lines: list[str],
+    constraint_lines: list[str] | None = None,
+    issues: list[Issue] | None = None,
+) -> tuple[Dependency, ...]:
+    by_package: dict[str, Dependency] = {}
+    for line in lines:
+        dep = _dep_from_requirement_line(line, issues)
+        if dep is not None:
+            by_package.setdefault(dep.package, dep)
+    if constraint_lines:
+        _apply_constraints(by_package, constraint_lines)
+    return tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
+
+
+# --- Poetry [tool.poetry.dependencies] -> PEP 508 --------------------
+#
+# Poetry trzyma zależności jako TABELĘ (nazwa -> ograniczenie), z własną
+# składnią wersji (`^`, `~`) i specjalnym kluczem `python`. Zamiast dublować
+# parser wymagań, tłumaczymy każdy wpis na linię PEP 508 i przepuszczamy przez
+# istniejące `_deps_from_manifest` — dzięki temu markery, extras, referencje
+# bezpośrednie, ciężkość i deduplikacja działają dokładnie tak samo jak dla
+# requirements.txt i [project].
+
+_PEP440_OPERATORS = (">=", "<=", "==", "!=", "~=", "===", ">", "<")
+
+
+def _poetry_caret_upper(version: str) -> str:
+    """Górna granica ograniczenia karetowego `^` Poetry.
+
+    Reguła: podnieś NAJBARDZIEJ znaczący niezerowy człon i wyzeruj resztę
+    (`^1.2.3` -> `<2.0.0`, `^0.2.3` -> `<0.3.0`, `^0.0.3` -> `<0.0.4`). Same
+    zera podnoszą najmniej znaczący zadeklarowany człon (`^0` -> `<1.0.0`,
+    `^0.0` -> `<0.1.0`)."""
+    parts = [int(p) for p in version.split(".")]
+    for i, value in enumerate(parts):
+        if value > 0:
+            bumped = [*parts[:i], value + 1, *([0] * (len(parts) - i - 1))]
+            while len(bumped) < 3:
+                bumped.append(0)
+            return ".".join(str(x) for x in bumped)
+    upper = [0, 0, 0]
+    upper[len(parts) - 1] = 1
+    return ".".join(str(x) for x in upper)
+
+
+def _poetry_tilde_range(version: str) -> str:
+    """Ograniczenie tyldowe `~`: dopuszcza zmiany na najniższym zadeklarowanym
+    poziomie (`~1.2.3` i `~1.2` -> `<1.3.0`, `~1` -> `<2.0.0`)."""
+    parts = [int(p) for p in version.split(".")]
+    upper = f"{parts[0]}.{parts[1] + 1}.0" if len(parts) >= 2 else f"{parts[0] + 1}.0.0"
+    return f">={version},<{upper}"
+
+
+def _poetry_version_spec(constraint: str, issues: list[Issue] | None = None) -> str:
+    """Wersja w składni Poetry -> specyfikator PEP 440 (pusty = dowolna).
+
+    Goła wersja bez operatora znaczy w Poetry DOKŁADNIE tę wersję (`==`), a nie
+    zakres — inaczej niż w npm.
+
+    B05: nieobsługiwany warunek nie jest po cichu poszerzany — daje diagnostykę.
+    """
+    c = constraint.strip()
+    if c in ("", "*"):
+        return ""
+    if c.startswith("^"):
+        base = c[1:]
+        try:
+            return f">={base},<{_poetry_caret_upper(base)}"
+        except ValueError:
+            # Wersja z przedrostkiem nienumerycznym (prerelease) — nie da się
+            # obliczyć górnej granicy. Zamiast po cichu poszerzać do `>=base`,
+            # zwracamy dolną granicę i zgłaszamy ograniczenie (B05).
+            if issues is not None:
+                issues.append(
+                    Issue(
+                        "poetry_version_fallback",
+                        Severity.WARNING,
+                        {"constraint": c},
+                    )
+                )
+            return f">={base}"
+    if c.startswith("~"):
+        base = c[1:]
+        try:
+            return _poetry_tilde_range(base)
+        except ValueError:
+            if issues is not None:
+                issues.append(
+                    Issue(
+                        "poetry_version_fallback",
+                        Severity.WARNING,
+                        {"constraint": c},
+                    )
+                )
+            return f">={base}"
+    if c.startswith(_PEP440_OPERATORS) or "," in c:
+        return c
+    if c.endswith(".*"):
+        return f"=={c}"
+    return f"=={c}"
+
+
+def _poetry_python_matches(constraint: str) -> bool:
+    """Czy ograniczenie `python = "..."` obejmuje docelowego 3.12.
+
+    Porównujemy przez `SpecifierSet`, nie przez marker tekstowy: `python_version
+    < "3.8"` porównywane jako napisy dałoby błędny wynik ("3.12" < "3.8")."""
+    spec = _poetry_version_spec(constraint)
+    if not spec:
+        return True
+    try:
+        return SpecifierSet(spec).contains(TARGET_PYTHON, prereleases=True)
+    except InvalidSpecifier:
+        return True
+
+
+def _poetry_entry_to_requirement(
+    name: str, spec: object, issues: list[Issue] | None = None
+) -> str | None:
+    """Jeden wpis `[tool.poetry.dependencies]` -> linia PEP 508 albo `None`
+    (wpis, którego świadomie nie instalujemy)."""
+    if isinstance(spec, str):
+        return f"{name}{_poetry_version_spec(spec, issues)}"
+    if isinstance(spec, list):
+        # Wiele ograniczeń (różna wersja dla różnych Pythonów) — bierzemy
+        # pierwsze pasujące do docelowego 3.12.
+        for entry in spec:
+            line = _poetry_entry_to_requirement(name, entry, issues)
+            if line is not None:
+                return line
+        return None
+    if not isinstance(spec, Mapping):
+        return None
+    if spec.get("optional") is True:
+        # Zależność opcjonalna Poetry żyje za `extras` i nie wchodzi do
+        # domyślnej instalacji. Jeśli kod ją importuje, złapie ją skan importów.
+        return None
+    python = spec.get("python")
+    if isinstance(python, str) and not _poetry_python_matches(python):
+        return None
+    git = spec.get("git")
+    if isinstance(git, str):
+        ref = git if git.startswith(_DIRECT_REF_PREFIXES) else f"git+{git}"
+        for key in ("rev", "branch", "tag"):
+            pin = spec.get(key)
+            if isinstance(pin, str):
+                ref = f"{ref}@{pin}"
+                break
+        return f"{name} @ {ref}"
+    url = spec.get("url")
+    if isinstance(url, str):
+        return f"{name} @ {url}"
+    if "path" in spec:
+        # Lokalnej ścieżki nie zainstalujemy w izolowanym środowisku builda.
+        return None
+    extras_list = spec.get("extras")
+    extras = ""
+    if isinstance(extras_list, list):
+        names = sorted(e for e in extras_list if isinstance(e, str))
+        if names:
+            extras = f"[{','.join(names)}]"
+    version_spec = spec.get("version")
+    version = _poetry_version_spec(version_spec, issues) if isinstance(version_spec, str) else ""
+    line = f"{name}{extras}{version}"
+    markers = spec.get("markers")
+    if isinstance(markers, str) and markers:
+        line = f"{line}; {markers}"
+    return line
+
+
+def _deps_from_poetry(table: Mapping, issues: list[Issue] | None = None) -> tuple[Dependency, ...]:
+    """Zależności z `[tool.poetry.dependencies]`. Klucz `python` to wersja
+    interpretera, nie pakiet — pomijamy go. Markery, extras i referencje
+    bezpośrednie rozstrzyga już `_deps_from_manifest` na gotowych liniach."""
+    lines: list[str] = []
+    for name, spec in table.items():
+        if name.lower() == "python":
+            continue
+        line = _poetry_entry_to_requirement(name, spec, issues)
+        if line is not None:
+            lines.append(line)
+    return _deps_from_manifest(lines, issues=issues)
+
+
+def _handles_import_error(handler: ast.ExceptHandler) -> bool:
+    """Czy ten `except` łapie WŁAŚNIE brak importu.
+
+    Tylko `ImportError`/`ModuleNotFoundError` — nie dowolny wyjątek kończący się
+    na `Error`. `try: import x except ValueError` nie czyni `x` opcjonalnym.
+    """
+    node = handler.type
+    if isinstance(node, ast.Name):
+        names = [node.id]
+    elif isinstance(node, ast.Tuple):
+        names = [e.id for e in node.elts if isinstance(e, ast.Name)]
+    else:
+        return False
+    return any(n in {"ImportError", "ModuleNotFoundError"} for n in names)
+
+
+def _import_lines_in(nodes: list[ast.stmt]) -> set[int]:
+    lines: set[int] = set()
+    for parent in nodes:
+        for child in ast.walk(parent):
             if isinstance(child, ast.Import | ast.ImportFrom):
                 lines.add(child.lineno)
     return lines
 
 
-def resolve_dependencies(
-    sources: Mapping[Path, str],
-    local_modules: set[str],
-    requirements_text: str | None = None,
-) -> tuple[Dependency, ...]:
-    if requirements_text is not None:
-        specs: list[str] = []
-        for line in requirements_text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith(("#", "-")):
-                continue
-            if _is_direct_reference(stripped):
-                specs.append(stripped)
-                continue
-            match = _REQ_LINE.match(stripped)
-            if match:
-                specs.append(match.group(1))
-        deps_from_req = []
-        for spec in sorted(set(specs)):
-            base = spec if _is_direct_reference(spec) else re.split(r"[<>=!~\[]", spec)[0]
-            deps_from_req.append(
-                Dependency(
-                    import_name=base,
-                    package=spec,
-                    heavy=base in HEAVY_PACKAGES,
-                )
-            )
-        return tuple(deps_from_req)
+def _dead_import_lines(tree: ast.AST) -> set[int]:
+    """Linie importów w blokach, które NIGDY nie wykonują się w runtime.
 
+    ``if TYPE_CHECKING:`` (z ``typing``) istnieje wyłącznie dla narzędzi
+    statycznej analizy typów — w runtime ``TYPE_CHECKING`` jest ``False``.
+    ``if False:`` to martwa gałąź, której CPython nawet nie kompiluje do
+    bytecodu. Importy w tych blokach nie są zależnościami runtime i nie
+    powinny zasilać listy pakietów do instalacji.
+    """
+    dead: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        is_dead = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+            isinstance(test, ast.Constant) and test.value is False
+        )
+        if is_dead:
+            dead |= _import_lines_in(node.body)
+    return dead
+
+
+def _optional_import_lines(tree: ast.AST) -> set[int]:
+    """Linie importów, które są OPCJONALNE (nie muszą być zainstalowane).
+
+    Rozbicie gałęzi try/except osobno: przy `try: import orjson / except
+    ImportError: import simplejson` gałąź `try` jest PODSTAWOWA (instalujemy ją,
+    żeby przynajmniej jedna działała), a gałąź `except` to fallback (opcjonalny).
+    Gdy `except` nie ma własnego importu (`numpy = None`), sam import z `try`
+    jest opcjonalny — kod radzi sobie z jego brakiem.
+    """
+    optional: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        if not any(_handles_import_error(h) for h in node.handlers):
+            continue
+        try_lines = _import_lines_in(node.body)
+        except_lines: set[int] = set()
+        for handler in node.handlers:
+            except_lines |= _import_lines_in(handler.body)
+        if except_lines:
+            # Łańcuch fallbacku: podstawowy import zostaje wymagany, żeby co
+            # najmniej jedna gałąź na pewno się zainstalowała.
+            optional |= except_lines
+        else:
+            optional |= try_lines
+    return optional
+
+
+def _deps_from_imports(
+    sources: Mapping[Path, str], local_modules: set[str]
+) -> tuple[Dependency, ...]:
+    """Zależności wykryte ze skanu `import ...` w źródłach.
+
+    Klucz to nazwa PAKIETU po aliasowaniu, nie nazwa importu — alias table
+    jest celowo many-to-one (np. win32com/win32api/win32gui/pythoncom ->
+    pywin32, matplotlib/mpl_toolkits -> matplotlib), więc deduplikacja i
+    `optional` muszą liczyć się po stronie rozwiązanego pakietu."""
     stdlib = sys.stdlib_module_names
-    # Klucz to nazwa PAKIETU po aliasowaniu, nie nazwa importu — alias table
-    # jest celowo many-to-one (np. win32com/win32api/win32gui/pythoncom ->
-    # pywin32, matplotlib/mpl_toolkits -> matplotlib), więc deduplikacja i
-    # `optional` muszą liczyć się po stronie rozwiązanego pakietu, inaczej
-    # ten sam pakiet trafia na listę dwa razy ze sprzecznymi flagami.
     package_optional: dict[str, bool] = {}
     package_import_names: dict[str, set[str]] = {}
 
-    for code in sources.values():
-        try:
-            tree = ast.parse(code)
-        except SyntaxError:
+    # B11: korzystamy z cache AST jesli sources to ParsedSources
+    parsed = sources if isinstance(sources, ParsedSources) else ParsedSources(sources)
+    for path in sources:
+        tree = parsed.tree(path)
+        if tree is None:
             continue
+        dead_lines = _dead_import_lines(tree)
         optional_lines = _optional_import_lines(tree)
         for node in ast.walk(tree):
             names: list[str] = []
@@ -101,6 +598,8 @@ def resolve_dependencies(
                 if node.level or not node.module:
                     continue
                 names = [node.module.split(".")[0]]
+            if not names or node.lineno in dead_lines:
+                continue
             for name in names:
                 if name in stdlib or name in local_modules or name.startswith("_"):
                     continue
@@ -116,9 +615,149 @@ def resolve_dependencies(
             import_name=min(package_import_names[package]),
             package=package,
             optional=optional,
-            heavy=package in HEAVY_PACKAGES,
+            heavy=is_heavy(package),
+            origin="import",
         )
         for package, optional in package_optional.items()
     ]
     deps.sort(key=lambda d: d.package.lower())
     return tuple(deps)
+
+
+def _supplement_with_detected(
+    manifest_deps: tuple[Dependency, ...],
+    scanned: tuple[Dependency, ...],
+    issues: list[Issue],
+) -> tuple[Dependency, ...]:
+    """Manifest jest autorytatywny co do WERSJI, ale wykryte importy spoza
+    niego dopisujemy z widocznym śladem.
+
+    Kod dla laika generuje AI, które potrafi pominąć pakiet w `requirements`
+    albo zostawić puste `dependencies = []` z samego scaffoldingu — cichy brak
+    kończy się EXE witającym „No module named …". Porównujemy po znormalizowanej
+    nazwie dystrybucji (PEP 503), więc `import PIL` przy zadeklarowanym `Pillow`
+    to ten sam pakiet, a nie rozbieżność. Kierunku odwrotnego (zadeklarowane,
+    lecz nieimportowane) NIE zgłaszamy: import dynamiczny, pakiet-dane czy
+    wtyczka dałyby fałszywy alarm. `import_name` deklaracji z manifestu niesie
+    `Requirement.name` (referencje bezpośrednie: cały URL — nie dopasuje się do
+    gołej nazwy importu, co jest tu w porządku)."""
+    declared = {canonicalize_name(d.import_name) for d in manifest_deps}
+    result = list(manifest_deps)
+    for dep in scanned:
+        if canonicalize_name(dep.package) in declared:
+            continue
+        result.append(dep)
+        # Brak wymaganego importu łamie EXE → ostrzeżenie. Import opcjonalny
+        # (try/except) kod obsługuje sam, więc dopisanie go tylko włącza funkcję
+        # → informacja, nie alarm.
+        severity = Severity.INFO if dep.optional else Severity.WARNING
+        issues.append(Issue("dependency_not_declared", severity, {"package": dep.package}))
+    result.sort(key=lambda d: d.package.lower())
+    return tuple(result)
+
+
+def resolve_extra_modules(
+    entries: Iterable[str],
+    local_modules: set[str],
+) -> tuple[tuple[str, ...], tuple[Dependency, ...]]:
+    """Moduły dopisane RĘCZNIE przez użytkownika, których statyczny skan nie mógł
+    zobaczyć (import dynamiczny, wtyczka, `importlib`) -> (ukryte importy,
+    zależności do instalacji).
+
+    Każdy wpis pakujemy DOSŁOWNIE jako ukryty import PyInstallera — nazwa z
+    kropką (`pkg.plugins.foo`) zostaje w całości, bo to właśnie submoduł, którego
+    PyInstaller sam nie znalazł. Nazwa NAJWYŻSZEGO poziomu staje się dodatkowo
+    pakietem do instalacji (po aliasie: `sklearn` -> `scikit-learn`), chyba że to
+    moduł biblioteki standardowej albo lokalny — żeby `--hidden-import` miał co
+    zaimportować. Deduplikacja: ukryte importy po dosłownym wpisie, pakiety po
+    nazwie po aliasie."""
+    stdlib = sys.stdlib_module_names
+    hidden: list[str] = []
+    seen: set[str] = set()
+    by_package: dict[str, Dependency] = {}
+    for raw in entries:
+        name = raw.strip()
+        if not name:
+            continue
+        if name not in seen:
+            seen.add(name)
+            hidden.append(name)
+        top = name.split(".")[0]
+        if not top or top in stdlib or top in local_modules or top.startswith("_"):
+            continue
+        package = ALIASES.get(top, top)
+        by_package.setdefault(
+            package,
+            Dependency(import_name=top, package=package, heavy=is_heavy(package), origin="user"),
+        )
+    deps = tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
+    return tuple(hidden), deps
+
+
+def _deps_from_hidden_imports(
+    hidden: tuple[str, ...], local_modules: set[str]
+) -> tuple[Dependency, ...]:
+    """Zależności z dynamicznych importów (`importlib.import_module('PIL.Image')`).
+
+    Ukryte importy trafiają do `--hidden-import` PyInstallera, ale sam PyInstaller
+    ich NIE zainstaluje — musi to zrobić środowisko builda. Dotąd `PIL.Image` jako
+    hidden import nie zasilał listy paczek do instalacji, więc `Pillow` nie był
+    instalowany, chyba że pojawiał się osobno w manifestie lub zwykłym `import PIL`.
+    (B04: dynamiczne importy zasilają zarówno hidden imports, jak i zależności.)
+    """
+    stdlib = sys.stdlib_module_names
+    by_package: dict[str, Dependency] = {}
+    for name in hidden:
+        top = name.split(".")[0]
+        if not top or top in stdlib or top in local_modules or top.startswith("_"):
+            continue
+        package = ALIASES.get(top, top)
+        by_package.setdefault(
+            package,
+            Dependency(import_name=top, package=package, heavy=is_heavy(package), origin="dynamic"),
+        )
+    return tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
+
+
+def resolve_dependencies(
+    sources: Mapping[Path, str],
+    local_modules: set[str],
+    requirements_text: str | None = None,
+    *,
+    requirements_path: Path | None = None,
+    pyproject_path: Path | None = None,
+    hidden_imports: tuple[str, ...] = (),
+    issues: list[Issue] | None = None,
+) -> tuple[Dependency, ...]:
+    # `issues` to opcjonalny kanał diagnostyki (cykl/brak pliku manifestu,
+    # nieczytelny pyproject, import spoza manifestu). Domyślnie throwaway, żeby
+    # dawni wołający działali bez zmian.
+    sink = issues if issues is not None else []
+    # Manifest bije zgadywanie WERSJI z importów. Pierwszeństwo jest
+    # deterministyczne, nie zależy od kolejności skanowania:
+    # requirements.txt (konkretna lista instalacyjna) przed pyproject.toml
+    # (deklaracja abstrakcyjna). `None` = brak autorytatywnego manifestu.
+    manifest_deps: tuple[Dependency, ...] | None = None
+    if requirements_path is not None:
+        constraints: list[str] = []
+        req_lines = _manifest_lines(requirements_path, set(), [], 0, sink, constraints=constraints)
+        manifest_deps = _deps_from_manifest(req_lines, constraints or None, issues=sink)
+    elif requirements_text is not None:
+        manifest_deps = _deps_from_manifest(_text_lines(requirements_text), issues=sink)
+    elif pyproject_path is not None:
+        # `None` stąd = pyproject nieautorytatywny (dynamic/Poetry/nieczytelny).
+        manifest_deps = _deps_from_pyproject(pyproject_path, sink)
+
+    # Import statyczny + dynamiczny: oba zasilają listę zależności (B04).
+    scanned = _deps_from_imports(sources, local_modules)
+    dynamic = _deps_from_hidden_imports(hidden_imports, local_modules)
+    # Scalenie: dynamiczne dopisują do statycznych, deduplikacja po pakiecie.
+    if dynamic:
+        by_package = {d.package.lower(): d for d in scanned}
+        for dep in dynamic:
+            by_package.setdefault(dep.package.lower(), dep)
+        scanned = tuple(sorted(by_package.values(), key=lambda d: d.package.lower()))
+
+    if manifest_deps is None:
+        return scanned
+    return _supplement_with_detected(manifest_deps, scanned, sink)

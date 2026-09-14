@@ -1,0 +1,7 @@
+Using Python 3.12.11 environment at: probe-venv
+Resolved 1 package in 477ms
+Downloading pillow (6.9MiB)
+ Downloading pillow
+Prepared 1 package in 1.25s
+Installed 1 package in 54ms
+ + pillow==12.3.0

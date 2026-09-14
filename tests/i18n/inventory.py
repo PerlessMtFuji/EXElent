@@ -28,6 +28,8 @@ CORE = Path(__file__).resolve().parents[2] / "exelent"
 # `test_codes_with_non_literal_data_are_declared` pilnuje tej listy.
 DECLARED_DATA: dict[str, frozenset[str]] = {
     "txt_syntax_error": frozenset({"file", "line", "detail"}),
+    "size_estimate": frozenset({"low", "high", "packages"}),
+    "size_estimate_large": frozenset({"low", "high", "packages"}),
 }
 
 # Miejsca, w ktorych sam KOD Issue nie jest literalem. Jedyne takie miejsce to
@@ -107,18 +109,32 @@ def dynamic_issue_sites() -> set[str]:
     }
 
 
+def _phase_of(node: ast.Call) -> str | None:
+    """Faza z wywolania `progress(...)` — w obu ksztaltach.
+
+    Do zadania 10 faza byla pierwszym argumentem: `progress("analyze", 0.3)`.
+    Teraz siedzi w obiekcie: `progress(Progress(phase="analyze", ...))`.
+    Bez tego skan przestaje widziec fazy, `test_every_progress_phase_is_translated`
+    slepnie na pustym zbiorze, a jedynym sygnalem zostaje
+    `test_dynamic_progress_sites_are_declared`.
+    """
+    if not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Call) and getattr(first.func, "id", None) == "Progress":
+        for keyword in first.keywords:
+            if keyword.arg == "phase":
+                return _literal_str(keyword.value)
+        return _literal_str(first.args[0]) if first.args else None
+    return _literal_str(first)
+
+
 def phase_keys() -> set[str]:
     literal = {
-        _literal_str(node.args[0])
-        for _where, node in _calls("progress")
-        if node.args and _literal_str(node.args[0]) is not None
+        phase for _where, node in _calls("progress") if (phase := _phase_of(node)) is not None
     }
     return literal | set(PHASES.values())
 
 
 def dynamic_phase_sites() -> set[str]:
-    return {
-        where
-        for where, node in _calls("progress")
-        if node.args and _literal_str(node.args[0]) is None
-    }
+    return {where for where, node in _calls("progress") if _phase_of(node) is None}

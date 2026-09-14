@@ -7,11 +7,15 @@ w systemie osieroconego procesu.
 """
 
 import threading
+from dataclasses import replace
 
 import pytest
 
+from exelent.deps.sizes import DownloadPlan
 from exelent.i18n import CATALOGS, set_language
 from exelent.models import AppKind, BuildPlan, BuildResult, OutputMode
+from exelent.runtime import Progress
+from exelent.settings import Settings, save_settings
 from exelent.ui import worker as worker_module
 from exelent.ui.app import SCREEN_BUILD, SCREEN_DROP, SCREEN_REVIEW, MainWindow
 from exelent.ui.screen_build import BuildScreen
@@ -82,10 +86,16 @@ def test_the_first_screen_is_the_drop_screen(window):
     assert isinstance(window.stack.widget(0), DropScreen)
 
 
-def test_choosing_a_folder_moves_to_the_second_screen(window, tmp_path):
+def _choose_folder_and_wait(window, qtbot, folder):
+    """B11: analiza jest teraz asynchroniczna — czekamy na sygnał workera."""
+    with qtbot.waitSignal(window._analysis_worker.finished, timeout=10_000):
+        window.screen_drop.folder_chosen.emit(folder)
+
+
+def test_choosing_a_folder_moves_to_the_second_screen(window, tmp_path, qtbot):
     """Sygnal ekranu ma byc PODPIETY: bez tego upuszczenie folderu wyglada
     jak brak reakcji programu."""
-    window.screen_drop.folder_chosen.emit(tmp_path)
+    _choose_folder_and_wait(window, qtbot, tmp_path)
     assert window.stack.currentIndex() == SCREEN_REVIEW
 
 
@@ -93,18 +103,18 @@ def test_the_second_screen_is_the_review_screen(window):
     assert isinstance(window.stack.widget(SCREEN_REVIEW), ReviewScreen)
 
 
-def test_choosing_a_folder_shows_its_analysis(window, tmp_path):
+def test_choosing_a_folder_shows_its_analysis(window, tmp_path, qtbot):
     """Sama zmiana ekranu to za malo: bez wywolania analizy uzytkownik dostaje
     ekran 2 z poprzednim projektem albo z pustka."""
     (tmp_path / "main.py").write_text("print(1)", encoding="utf-8")
-    window.screen_drop.folder_chosen.emit(tmp_path)
+    _choose_folder_and_wait(window, qtbot, tmp_path)
     assert "main.py" in window.screen_review.row_entry.value_text()
 
 
-def test_an_unreadable_folder_does_not_crash_the_window(window, tmp_path):
+def test_an_unreadable_folder_does_not_crash_the_window(window, tmp_path, qtbot):
     """Katalog moze zniknac miedzy upuszczeniem a analiza. Rdzen wraca wtedy
     z blokada, wiec okno ma pokazac zdanie, a nie traceback."""
-    window.screen_drop.folder_chosen.emit(tmp_path / "nie-ma-takiego")
+    _choose_folder_and_wait(window, qtbot, tmp_path / "nie-ma-takiego")
     assert window.stack.currentIndex() == SCREEN_REVIEW
     assert window.screen_review.build_button.isEnabled() is False
     assert window.screen_review.warnings_label.text() != ""
@@ -138,14 +148,18 @@ def _plan(tmp_path):
 
 @pytest.fixture
 def fake_build(monkeypatch):
-    """Udawany `run_build`, ktory stoi az do zwolnienia."""
+    """Udawany `execute_build`, ktory stoi az do zwolnienia."""
+    # Testuje drogę przez ekrany, nie modalny dialog pobierania. B12 sprawdza
+    # teraz narzędzia także dla projektu bez zależności, więc wyłączamy zgodę
+    # jawnie tak samo, jak może to zrobić użytkownik w ustawieniach.
+    save_settings(Settings(ask_before_download=False))
     zwolnij = threading.Event()
     wystartowal = threading.Event()
     stan = {"anulowany": False}
 
-    def fake(root, progress, cancel, **kwargs):
+    def fake(plan, progress, cancel, **kwargs):
         wystartowal.set()
-        progress("analyze", 0.35)
+        progress(Progress(phase="analyze", fraction=0.35))
         for _ in range(1000):
             if zwolnij.is_set() or cancel.cancelled:
                 break
@@ -153,7 +167,7 @@ def fake_build(monkeypatch):
         stan["anulowany"] = cancel.cancelled
         return BuildResult(ok=False)
 
-    monkeypatch.setattr(worker_module, "run_build", fake)
+    monkeypatch.setattr(worker_module, "execute_build", fake)
     stan["zwolnij"] = zwolnij
     stan["wystartowal"] = wystartowal
     return stan
@@ -189,6 +203,26 @@ def test_progress_from_the_worker_reaches_the_screen(window, qtbot, fake_build, 
         fake_build["zwolnij"].set()
     assert window.screen_build.bar.value() > 0
     assert window.screen_build.summary_label.text() != ""
+
+
+def test_changed_final_plan_restarts_preflight_for_its_packages(
+    window, qtbot, fake_build, monkeypatch, tmp_path
+):
+    starts = []
+    monkeypatch.setattr(window.preflight, "matches", lambda *_a: False)
+    monkeypatch.setattr(window.preflight, "start", lambda packages: starts.append(tuple(packages)))
+    monkeypatch.setattr(
+        window.preflight,
+        "plan",
+        lambda **_kwargs: DownloadPlan(specs=("requests==2.0",), status="complete"),
+    )
+    plan = replace(_plan(tmp_path), packages=("requests",))
+
+    window.screen_review.build_requested.emit(plan)
+    assert starts == [("requests",)]
+    assert fake_build["wystartowal"].wait(timeout=5)
+    with qtbot.waitSignal(window.worker.finished, timeout=5000):
+        fake_build["zwolnij"].set()
 
 
 def test_the_stop_button_stops_the_running_build(window, qtbot, fake_build, tmp_path):
@@ -242,3 +276,90 @@ def test_closing_the_window_stops_a_running_build(window, fake_build, tmp_path):
 
     assert window.worker.is_running() is False
     assert fake_build["anulowany"] is True
+
+
+def test_back_from_review_returns_to_the_drop_screen(qtbot, tmp_path):
+    project = tmp_path / "projekt"
+    project.mkdir()
+    (project / "main.py").write_text("print('x')\n", encoding="utf-8")
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _choose_folder_and_wait(window, qtbot, project)
+    assert window.stack.currentIndex() == SCREEN_REVIEW
+
+    window.screen_review.back_button.click()
+    assert window.stack.currentIndex() == SCREEN_DROP
+
+
+def test_going_back_is_blocked_while_a_build_runs(qtbot, tmp_path, monkeypatch):
+    """Drugi build w trakcie pierwszego jest odrzucany przez `BuildWorker`
+    po cichu — uzytkownik zobaczylby ekran postepu, ktory nigdy nie ruszy."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window.worker, "is_running", lambda: True)
+    window.go_to(SCREEN_BUILD)
+
+    window.screen_build.back_to_review.emit()
+    assert window.stack.currentIndex() == SCREEN_BUILD
+
+
+def test_language_switch_repaints_the_open_screens(qtbot):
+    """`language_changed` istnial, ale nikt go nie sluchal — przelacznik
+    dzialalby dopiero po restarcie programu."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_language("pl")
+    polish = window.screen_drop.headline.text()
+
+    window.set_language("en")
+    assert window.screen_drop.headline.text() != polish
+    assert window.screen_drop.headline.text() == CATALOGS["en"]["drop_headline"]
+
+
+def test_saved_language_wins_over_the_system_at_startup(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    save_settings(Settings(language="en"))
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.screen_drop.headline.text() == CATALOGS["en"]["drop_headline"]
+
+
+def test_closing_forces_shutdown_when_the_build_thread_will_not_stop(window, monkeypatch):
+    """Watek, ktory nie wyszedl w limicie, zostaje zniszczony przez Qt przy
+    wychodzeniu — `abort()`, a w buildzie okienkowym proces zostaje w systemie
+    (WER) razem z bootloaderem czekajacym na dziecko. Zamkniecie okna ma wtedy
+    zakonczyc program TWARDO, zamiast oddac sterowanie Qt z zywym watkiem."""
+    forced = []
+    monkeypatch.setattr(window, "hard_exit", lambda: forced.append(1))
+    monkeypatch.setattr(window.preflight, "stop", lambda: True)
+    monkeypatch.setattr(window.worker, "shutdown", lambda: False)
+
+    window.close()
+
+    assert forced == [1]
+
+
+def test_closing_forces_shutdown_when_preflight_will_not_stop(window, monkeypatch):
+    forced = []
+    monkeypatch.setattr(window, "hard_exit", lambda: forced.append(1))
+    monkeypatch.setattr(window.preflight, "stop", lambda: False)
+    monkeypatch.setattr(window.worker, "shutdown", lambda: True)
+
+    window.close()
+
+    assert forced == [1]
+
+
+def test_closing_a_quiet_window_ends_the_program_normally(window, monkeypatch):
+    """Twarde wyjscie omija sprzatanie Qt, wiec siegamy po nie WYLACZNIE
+    wtedy, gdy zwykla droga zawiodla."""
+    forced = []
+    monkeypatch.setattr(window, "hard_exit", lambda: forced.append(1))
+    monkeypatch.setattr(window.preflight, "stop", lambda: True)
+    monkeypatch.setattr(window.worker, "shutdown", lambda: True)
+
+    window.close()
+
+    assert forced == []

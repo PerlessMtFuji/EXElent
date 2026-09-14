@@ -6,6 +6,9 @@ a to, co uzytkownik poprawi, ma naprawde trafic do planu — testy pilnuja
 obu polowek tej obietnicy osobno.
 """
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,8 +16,10 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFileDialog, QWidget
 
 from exelent.analysis.project import analyze_project
+from exelent.deps.sizes import DownloadPlan
 from exelent.i18n import CATALOGS, current_language, set_language, t
 from exelent.models import AppKind, OutputMode
+from exelent.ui import screen_review as screen_review_module
 from exelent.ui import theme
 from exelent.ui.screen_review import ReviewScreen
 
@@ -139,12 +144,16 @@ def test_entry_choices_distinguish_files_with_the_same_name(screen, tmp_path):
     podkatalogu dawalby dwie identyczne pozycje, a uzytkownik nie mialby jak
     wybrac wlasciwej — ani powiedziec, ktora jest zaznaczona."""
     _load(screen, tmp_path, {"main.py": "import pkg.main", "pkg/main.py": "print(2)"})
-    assert sorted(_entry_choices(screen)) == ["main.py", "pkg/main.py"]
+    suffix = f" {t('review_recommended_suffix')}"
+    stripped = sorted(choice.removesuffix(suffix) for choice in _entry_choices(screen))
+    assert stripped == ["main.py", "pkg/main.py"]
 
 
 def test_kind_follows_the_analysis(screen, tmp_path):
     _load(screen, tmp_path, {"main.py": "import tkinter\ntkinter.Tk()"})
-    assert screen.kind_combo.currentText() == t("kind_windowed")
+    assert (
+        screen.kind_combo.currentText() == f"{t('kind_windowed')} {t('review_recommended_suffix')}"
+    )
 
 
 def test_uncertain_kind_shows_question_mark(screen, tmp_path):
@@ -188,6 +197,39 @@ def test_dependency_section_comes_back_for_the_next_project(screen, tmp_path):
     _load(screen, tmp_path, {"main.py": "import os"})
     _load(screen, tmp_path / "drugi", {"main.py": "import requests"})
     assert screen.deps_box.isVisibleTo(screen) is True
+
+
+def test_preflight_separates_transfer_environment_and_artifact(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "import pandas\n"})
+    screen.show_download_plan(
+        DownloadPlan(
+            specs=("pandas==3.0.5", "numpy==2.5.2"),
+            missing_specs=("numpy==2.5.2",),
+            would_download=1,
+            total_bytes=12 * 1024**2,
+            environment_min_bytes=32 * 1024**2,
+            uv_cached=True,
+            python_cached=False,
+            includes_build_tools=True,
+            status="complete",
+        )
+    )
+    text = screen.deps_size_label.text()
+    assert "Transfer:" in text
+    assert "Środowisko:" in text
+    assert "Gotowy program:" in text
+    assert "12.0 MB" in text
+    assert "32.0 MB" in text
+    assert "Python 3.12" in text
+
+
+def test_partial_preflight_never_reports_a_false_zero(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "import pandas\n"})
+    screen.show_download_plan(
+        DownloadPlan(specs=("pandas==3.0.5",), would_download=1, status="partial")
+    )
+    assert "Transfer: nie udało" in screen.deps_size_label.text()
+    assert "0 B" not in screen.deps_size_label.text()
 
 
 # --- ostrzezenia ---
@@ -313,6 +355,21 @@ def test_output_mode_override_reaches_plan(screen, qtbot, tmp_path):
     assert blocker.args[0].output_mode is OutputMode.ONEDIR
 
 
+def test_choosing_onefile_shows_a_visible_limitation(screen, tmp_path):
+    """B01: „jeden plik EXE" to swiadomy wybor obarczony ograniczeniem odczytu
+    zasobow. Domyslny ONEDIR nie ostrzega; przelaczenie na ONEFILE natychmiast
+    pokazuje ograniczenie, a powrot na ONEDIR je chowa."""
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    assert screen.warnings_label.isHidden()
+
+    screen.mode_combo.setCurrentIndex(screen.mode_combo.findData(OutputMode.ONEFILE))
+    assert not screen.warnings_label.isHidden()
+    assert t("onefile_no_resource_guarantee") in screen.warnings_label.text()
+
+    screen.mode_combo.setCurrentIndex(screen.mode_combo.findData(OutputMode.ONEDIR))
+    assert screen.warnings_label.isHidden()
+
+
 def test_chosen_icon_reaches_the_plan(screen, qtbot, monkeypatch, tmp_path):
     _load(screen, tmp_path, {"main.py": "print(1)"})
     wybrana = tmp_path / "moja.png"
@@ -369,7 +426,7 @@ def test_loading_another_project_replaces_the_choices(screen, tmp_path):
     a wybrany z nich nie istnieje juz w nowym katalogu."""
     _load(screen, tmp_path, {"main.py": "print(1)"})
     _load(screen, tmp_path / "drugi", {"inny.py": "print(2)"})
-    assert _entry_choices(screen) == ["inny.py"]
+    assert _entry_choices(screen) == [f"inny.py {t('review_recommended_suffix')}"]
 
 
 def test_loading_another_project_replaces_the_name(screen, tmp_path):
@@ -379,29 +436,220 @@ def test_loading_another_project_replaces_the_name(screen, tmp_path):
     assert screen.name_edit.text() == "projekt"
 
 
-# --- zaawansowane ---
+# --- postac wyniku, rekomendacje, koniec "zaawansowanych" ---
 
 
-def test_advanced_panel_starts_collapsed(screen, tmp_path):
+def test_output_mode_is_visible_without_clicking_anything(screen, tmp_path):
+    """Postac wyniku to informacja o tym, co uzytkownik dostanie na koncu.
+
+    Schowana pod przelacznikiem "Zaawansowane" byla widoczna tylko dla tych,
+    ktorzy i tak wiedza, czego szukac.
+    """
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    assert screen.row_mode.caption_text() == t("review_mode")
+    assert screen.row_mode.isHidden() is False
+
+
+def test_the_advanced_panel_is_gone_entirely(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    assert not hasattr(screen, "advanced_toggle")
+    assert "review_advanced" not in CATALOGS[current_language()]
+
+
+def test_recommended_item_is_labelled_but_data_stays_typed(screen, tmp_path):
+    """Dopisek jest ETYKIETA. `currentData()` ma nadal oddawac enum.
+
+    Regresja tego rodzaju nie widac na ekranie: plan po cichu dostaje napis
+    zamiast `AppKind` i uzytkownik, ktory wybral okno, dostaje czarna konsole.
+    """
+    _load(screen, tmp_path, {"main.py": "import tkinter\ntkinter.Tk()\n"})
+    assert "(" in screen.kind_combo.currentText()
+    assert screen.kind_combo.currentData() in (AppKind.WINDOWED, AppKind.CONSOLE)
+    assert screen.mode_combo.currentData() in (OutputMode.ONEFILE, OutputMode.ONEDIR)
+
+
+def test_restore_link_returns_the_recommended_value(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    recommended = screen.kind_combo.currentText()
+    other = 1 - screen.kind_combo.currentIndex()
+    screen.kind_combo.setCurrentIndex(other)
+    assert screen.row_kind.restore_visible() is True
+
+    screen.row_kind.restore_button().click()
+    assert screen.kind_combo.currentText() == recommended
+    assert screen.row_kind.restore_visible() is False
+
+
+# --- reczne dopisanie modulow (A07) ---
+
+
+def test_extra_modules_field_reaches_the_plan(screen, qtbot, tmp_path):
+    """Import dynamiczny, ktorego skan nie widzi: uzytkownik dopisuje modul
+    recznie, a ten ma trafic do planu jako ukryty import (A07)."""
     _load(screen, tmp_path, {"main.py": "print(1)"})
-    assert screen.advanced.isVisibleTo(screen) is False
+    screen.extra_edit.setText("moja_wtyczka, pakiet.podmodul")
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    plan = blocker.args[0]
+    assert "moja_wtyczka" in plan.hidden_imports
+    assert "pakiet.podmodul" in plan.hidden_imports
 
 
-def test_advanced_toggle_opens_and_closes_the_panel(screen, tmp_path):
+def test_empty_extra_field_adds_nothing(screen, qtbot, tmp_path):
     _load(screen, tmp_path, {"main.py": "print(1)"})
-    screen.advanced_toggle.click()
-    assert screen.advanced.isVisibleTo(screen) is True
-    screen.advanced_toggle.click()
-    assert screen.advanced.isVisibleTo(screen) is False
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    assert blocker.args[0].hidden_imports == ()
 
 
-def test_the_toggle_arrow_shows_the_state(screen):
-    """Strzalka, ktora nigdy nie zmienia kierunku, klamie o stanie panelu."""
-    zwiniety = screen.advanced_toggle.text()
-    screen.advanced_toggle.click()
-    rozwiniety = screen.advanced_toggle.text()
-    assert zwiniety != rozwiniety
-    assert t("review_advanced") in zwiniety and t("review_advanced") in rozwiniety
+def test_extra_modules_do_not_survive_the_next_project(screen, qtbot, tmp_path):
+    """Modul dopisany dla jednego projektu nie moze przeciec do nastepnego —
+    to byloby ukryte dopisanie do cudzego builda."""
+    _load(screen, tmp_path, {"main.py": "print(1)"})
+    screen.extra_edit.setText("moja_wtyczka")
+    _load(screen, tmp_path / "drugi", {"main.py": "print(1)"})
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    assert blocker.args[0].hidden_imports == ()
+
+
+# --- pełny przegląd B13 ---
+
+
+def test_review_shows_input_target_destination_and_scope(screen, tmp_path):
+    root = _load(
+        screen,
+        tmp_path,
+        {"main.py": "import requests\n", "config.toml": "[app]\nname='x'\n"},
+    )
+    assert str(root) in screen.scope_source_label.text()
+    assert "3.12" in screen.target_label.text()
+    assert str(root.parent) in screen.destination_label.text()
+    summary = screen.scope_summary_label.text()
+    assert "Zasoby: 1" in summary or "zasoby: 1" in summary
+    assert "zależności projektu: 1" in summary
+
+
+def test_user_can_change_the_full_publication_destination(screen, qtbot, monkeypatch, tmp_path):
+    _load(screen, tmp_path, {"main.py": "print(1)\n"})
+    destination = tmp_path / "gotowy wynik"
+    destination.mkdir()
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", staticmethod(lambda *_a, **_k: str(destination))
+    )
+    screen.destination_button.click()
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    assert blocker.args[0].dest_dir == destination
+
+
+def test_txt_preview_contains_original_result_and_diff(screen, monkeypatch, tmp_path):
+    _load(screen, tmp_path, {"kod.txt": "```python\nprint('wynik')\n```\n"})
+    seen = {}
+
+    def fake_exec(dialog):
+        seen["original"] = dialog.original_view.toPlainText()
+        seen["result"] = dialog.result_view.toPlainText()
+        seen["diff"] = dialog.diff_view.toPlainText()
+        return 0
+
+    monkeypatch.setattr(screen_review_module.TextPreviewDialog, "exec", fake_exec)
+    assert screen.preview_box.isVisibleTo(screen) is True
+    screen.preview_button.click()
+    assert "```python" in seen["original"]
+    assert seen["result"] == "print('wynik')"
+    assert "--- kod.txt" in seen["diff"]
+    assert "+++ kod.py" in seen["diff"]
+
+
+def test_long_review_scrolls_while_actions_stay_available(screen, tmp_path):
+    _load(screen, tmp_path, {"main.py": "import pandas\n"})
+    screen.resize(520, 300)
+    screen.layout().activate()
+    screen.scroll_area.widget().layout().activate()
+    assert screen.scroll_area.widget().sizeHint().height() > screen.scroll_area.viewport().height()
+    assert screen.build_button.isHidden() is False
+
+
+@pytest.mark.parametrize("scale", ["1", "1.5", "2"])
+def test_review_actions_remain_available_at_supported_scale_factors(tmp_path, scale):
+    root = _project(tmp_path, {"main.py": "import pandas\n"})
+    script = """
+import sys
+from pathlib import Path
+from PySide6.QtWidgets import QApplication
+from exelent.analysis.project import analyze_project
+from exelent.ui.screen_review import ReviewScreen
+
+app = QApplication([])
+screen = ReviewScreen()
+screen.resize(520, 300)
+screen.load(analyze_project(Path(sys.argv[1])))
+screen.show()
+app.processEvents()
+assert screen.devicePixelRatioF() >= float(sys.argv[2])
+assert screen.build_button.isVisible()
+assert screen.scroll_area.verticalScrollBar().maximum() > 0
+"""
+    env = os.environ.copy()
+    env.update(
+        LOCALAPPDATA=str(tmp_path / "state"),
+        QT_QPA_PLATFORM="offscreen",
+        QT_SCALE_FACTOR=scale,
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(root), scale],
+        cwd=Path(__file__).parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_long_destination_wraps_and_controls_have_accessible_names(screen, tmp_path):
+    root = tmp_path / ("bardzo-dlugi-katalog-" * 8)
+    _load(screen, root, {"main.py": "print(1)\n"})
+
+    assert screen.destination_label.wordWrap() is True
+    assert str(root.parent) in screen.destination_label.text()
+    for control in (
+        screen.entry_combo,
+        screen.kind_combo,
+        screen.name_edit,
+        screen.icon_button,
+        screen.mode_combo,
+        screen.destination_button,
+        screen.extra_edit,
+        screen.back_button,
+        screen.build_button,
+    ):
+        assert control.accessibleName()
+
+
+def test_language_refresh_preserves_user_choices(screen, qtbot, tmp_path):
+    _load(screen, tmp_path, {"main.py": "print(1)\n", "other.py": "print(2)\n"})
+    screen.entry_combo.setCurrentIndex(1)
+    screen.kind_combo.setCurrentIndex(screen.kind_combo.findData(AppKind.WINDOWED))
+    screen.mode_combo.setCurrentIndex(screen.mode_combo.findData(OutputMode.ONEFILE))
+    screen.name_edit.setText("Wybrana nazwa")
+    screen.extra_edit.setText("moja_wtyczka")
+    chosen_dest = tmp_path / "cel"
+    screen._dest_dir = chosen_dest
+    screen._custom_dest = True
+
+    set_language("en")
+    screen.retranslate()
+    with qtbot.waitSignal(screen.build_requested, timeout=1000) as blocker:
+        screen.build_button.click()
+    plan = blocker.args[0]
+    assert plan.entry.name == "other.py"
+    assert plan.exe_name == "Wybrana nazwa"
+    assert plan.output_mode is OutputMode.ONEFILE
+    assert plan.dest_dir == chosen_dest
+    assert "moja_wtyczka" in plan.hidden_imports
 
 
 # --- wiersz faktu ---
@@ -413,3 +661,14 @@ def test_a_fact_row_starts_certain(screen):
 
 def test_a_fact_row_shows_its_caption(screen):
     assert screen.row_entry.caption_text() == t("review_entry")
+
+
+def test_back_button_emits_instead_of_navigating(qtbot, screen, tmp_path):
+    """Ekran nie wie o istnieniu innych ekranow — zglasza zamiar sygnalem.
+
+    To ta sama zasada, ktora trzyma `build_requested`: kolejnosc ekranow zna
+    wylacznie okno.
+    """
+    _load(screen, tmp_path, {"main.py": "print('x')\n"})
+    with qtbot.waitSignal(screen.back_requested, timeout=1000):
+        screen.back_button.click()

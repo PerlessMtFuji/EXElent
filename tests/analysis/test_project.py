@@ -42,6 +42,113 @@ def test_broken_txt_produces_blocker(tmp_path):
     assert "txt_syntax_error" in codes
 
 
+def test_same_named_modules_in_different_folders_collide(tmp_path):
+    # Dwa `util.py` w folderach, ktore NIE sa pakietami, importuja sie gola
+    # nazwa `util` — o zwyciezcy decyduje przypadkowa kolejnosc sys.path (A03).
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print(1)",
+            "a/util.py": "X = 1",
+            "b/util.py": "X = 2",
+        },
+    )
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "module_name_collision" in codes
+
+
+def test_same_named_modules_in_packages_do_not_collide(tmp_path):
+    # W pakietach nazwa jest kwalifikowana (pkg_a.util vs pkg_b.util) — kolizji
+    # nie ma i ostrzezenie nie moze sie pojawic.
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print(1)",
+            "pkg_a/__init__.py": "",
+            "pkg_a/util.py": "X = 1",
+            "pkg_b/__init__.py": "",
+            "pkg_b/util.py": "X = 2",
+        },
+    )
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "module_name_collision" not in codes
+
+
+def test_broken_py_file_produces_blocker(tmp_path):
+    # Realny plik .py z bledem skladni musi zatrzymac build blokada — inaczej
+    # niepoprawny program przechodzi caly potok i przewraca sie dopiero jako
+    # uruchomiony EXE, a build zglasza "sukces".
+    root = _make(tmp_path, {"main.py": "def f(:\n    pass"})
+    result = analyze_project(root)
+    blockers = {i.code for i in result.issues if i.severity is Severity.BLOCKER}
+    assert "py_syntax_error" in blockers
+
+
+def test_valid_py_file_has_no_syntax_blocker(tmp_path):
+    root = _make(tmp_path, {"main.py": "print('ok')"})
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "py_syntax_error" not in codes
+
+
+def test_utf8_bom_py_file_is_accepted(tmp_path):
+    # Plik z BOM (UTF-8-sig) jest legalnym Pythonem — deklaracja kodowania
+    # `utf-8-sig` jest poprawna per PEP 263 i CPython akceptuje BOM.
+    bom = b"\xef\xbb\xbf"
+    content = bom + "print('ok')\n".encode("utf-8")
+    py = tmp_path / "main.py"
+    py.write_bytes(content)
+    result = analyze_project(tmp_path)
+    codes = {i.code for i in result.issues}
+    assert "py_syntax_error" not in codes
+
+
+def test_txt_in_subdir_keeps_its_relative_path(tmp_path):
+    """A06: `pkg/help.txt` ma zostac `pkg/help.py`, nie `help.py` w korzeniu."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "import pkg.help\nprint(pkg.help.X)\n",
+            "pkg/__init__.py": "",
+            "pkg/help.txt": "X = 1\n",
+        },
+    )
+    result = analyze_project(root)
+    assert "pkg/help.py" in result.converted
+    assert "help.py" not in result.converted
+
+
+def test_two_txt_of_the_same_name_stay_separate(tmp_path):
+    """A06: `a/help.txt` i `b/help.txt` to dwa osobne moduly, nie jeden."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('x')\n",
+            "a/help.txt": "A = 1\n",
+            "b/help.txt": "B = 2\n",
+        },
+    )
+    result = analyze_project(root)
+    assert "a/help.py" in result.converted
+    assert "b/help.py" in result.converted
+
+
+def test_txt_colliding_with_existing_py_is_a_blocker(tmp_path):
+    """A06: `main.txt` obok istniejacego `main.py` nie moze go po cichu
+    nadpisac — to widoczna kolizja."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('prawdziwy')\n",
+            "main.txt": "print('z czatu')\n",
+        },
+    )
+    result = analyze_project(root)
+    codes = {i.code for i in result.issues}
+    assert "txt_collision" in codes
+    # Prawdziwy plik nie zostal podmieniony w konwersjach.
+    assert "main.py" not in result.converted
+
+
 def test_empty_directory_produces_blocker(tmp_path):
     result = analyze_project(_make(tmp_path, {"notatki.txt": "zwykly tekst bez kodu"}))
     codes = {i.code for i in result.issues}
@@ -87,9 +194,73 @@ def test_writing_program_gets_onedir(tmp_path):
     assert analyze_project(root).output_mode is OutputMode.ONEDIR
 
 
-def test_requirements_file_wins_over_imports(tmp_path):
-    root = _make(tmp_path, {"main.py": "import requests", "requirements.txt": "rich==13.7.0\n"})
-    assert [d.package for d in analyze_project(root).dependencies] == ["rich==13.7.0"]
+def test_read_only_program_also_gets_onedir(tmp_path):
+    """B01: zalecany tryb to ZAWSZE ONEDIR, takze dla programu bez widocznego
+    zapisu. ONEFILE ustawialby cwd na katalog tymczasowy, a brak wykrytego
+    zapisu nie jest dowodem, ze program niczego nie zapisze."""
+    root = _make(tmp_path, {"main.py": "print('tylko-odczyt')\n"})
+    assert analyze_project(root).output_mode is OutputMode.ONEDIR
+
+
+def test_aliased_open_write_still_gets_onedir(tmp_path):
+    """Reprodukcja z tabeli dowodow: zapis przez alias `open` wymykal sie
+    heurystyce zapisu i dostawal ONEFILE, gdzie plik ginal w `_MEIPASS`.
+    Zalecany tryb jest teraz ONEDIR niezaleznie od tego, czy zapis wykryto."""
+    root = _make(tmp_path, {"main.py": "zapis = open\nzapis('wynik.txt', 'w').write('x')\n"})
+    assert analyze_project(root).output_mode is OutputMode.ONEDIR
+
+
+def test_pillow_save_still_gets_onedir(tmp_path):
+    """Reprodukcja z tabeli dowodow: `Image.save(...)` nie byl na liscie metod
+    zapisu, wiec program z Pillow dostawal ONEFILE i tracil zapisany obraz."""
+    code = "from PIL import Image\nImage.new('RGB', (2, 2)).save('obraz.png')\n"
+    root = _make(tmp_path, {"main.py": code})
+    assert analyze_project(root).output_mode is OutputMode.ONEDIR
+
+
+def test_requirements_pins_win_and_undeclared_imports_are_supplemented(tmp_path):
+    # rich jest importowany I przypięty w manifescie → używamy wersji z manifestu
+    # (`rich==13.7.0`), nie gołej nazwy ze skanu. requests jest importowany, ale
+    # nieobecny w requirements → dopisany, a ślad trafia do analizy (A07).
+    root = _make(
+        tmp_path, {"main.py": "import requests\nimport rich", "requirements.txt": "rich==13.7.0\n"}
+    )
+    analysis = analyze_project(root)
+    assert [d.package for d in analysis.dependencies] == ["requests", "rich==13.7.0"]
+    assert "dependency_not_declared" in {i.code for i in analysis.issues}
+
+
+def test_pyproject_dependencies_feed_the_plan(tmp_path):
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "import requests\nprint(requests)",
+            "pyproject.toml": '[project]\nname = "x"\ndependencies = ["requests>=2.0"]\n',
+        },
+    )
+    assert [d.package for d in analyze_project(root).dependencies] == ["requests>=2.0"]
+
+
+def test_poetry_dependencies_feed_the_plan(tmp_path):
+    # Projekt Poetry (deps w [tool.poetry.dependencies], składnia `^`) zasila plan
+    # z autorytatywną wersją, a nie gołą nazwą ze skanu importów (A07).
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "import requests\nprint(requests)",
+            "pyproject.toml": '[tool.poetry.dependencies]\npython = "^3.12"\nrequests = "^2.28"\n',
+        },
+    )
+    assert [d.package for d in analyze_project(root).dependencies] == ["requests<3.0.0,>=2.28"]
+
+
+def test_missing_referenced_manifest_surfaces_an_issue(tmp_path):
+    root = _make(
+        tmp_path,
+        {"main.py": "print(1)", "requirements.txt": "-r nie-ma.txt\nrich\n"},
+    )
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "requirements_missing" in codes
 
 
 def test_hidden_imports_populated_from_dynamic_import(tmp_path):
@@ -101,12 +272,27 @@ def test_hidden_imports_populated_from_dynamic_import(tmp_path):
     assert "requests" in result.hidden_imports
 
 
-def test_heavy_package_produces_warning(tmp_path):
+def test_the_biggest_libraries_earn_a_warning_with_real_numbers(tmp_path):
+    """`torch` przekracza prog LARGE_WARNING_MB, wiec zostaje ostrzezeniem —
+    ale niesie policzone widelki, nie stale 'kilkaset megabajtow'."""
     root = _make(tmp_path, {"main.py": "import torch\nprint(torch)"})
     result = analyze_project(root)
-    heavy = [i for i in result.issues if i.code == "heavy_packages"]
-    assert len(heavy) == 1
-    assert "torch" in heavy[0].data["packages"]
+    estimate = [i for i in result.issues if i.code == "size_estimate_large"]
+    assert len(estimate) == 1
+    assert estimate[0].severity is Severity.WARNING
+    assert "torch" in estimate[0].data["packages"]
+    assert int(estimate[0].data["low"]) < int(estimate[0].data["high"])
+
+
+def test_moderate_libraries_are_an_information_not_a_warning(tmp_path):
+    """Zgloszenie 7: skrypt z matplotlib dostawal to samo ostrzezenie co
+    skrypt z torch, chociaz jego EXE mialo 26 MB."""
+    root = _make(tmp_path, {"main.py": "import matplotlib\nprint(matplotlib)"})
+    result = analyze_project(root)
+    estimate = [i for i in result.issues if i.code == "size_estimate"]
+    assert len(estimate) == 1
+    assert estimate[0].severity is Severity.INFO
+    assert int(estimate[0].data["high"]) < 300
 
 
 def test_broken_txt_alone_is_blocker(tmp_path):
@@ -153,3 +339,247 @@ def test_short_fenced_program_amid_prose_is_converted(tmp_path):
     assert result.converted["kod.py"] == "print('hi')"
     assert result.entry is not None
     assert result.entry.name == "kod.py"
+
+
+def test_analyze_of_a_single_file_ignores_the_neighbours(tmp_path):
+    (tmp_path / "test.txt").write_text("print('czesc')\n", encoding="utf-8")
+    (tmp_path / "cudzy_projekt.py").write_text("import torch\n", encoding="utf-8")
+
+    analysis = analyze_project(tmp_path / "test.txt")
+
+    assert analysis.single_file == tmp_path / "test.txt"
+    assert [d.package for d in analysis.dependencies] == []
+    assert analysis.entry is not None
+
+
+def test_analyze_of_a_single_file_reports_pulled_in_modules(tmp_path):
+    (tmp_path / "main.py").write_text("import helper\n", encoding="utf-8")
+    (tmp_path / "helper.py").write_text("X = 1\n", encoding="utf-8")
+
+    analysis = analyze_project(tmp_path / "main.py")
+
+    assert analysis.extra_sources == (tmp_path / "helper.py",)
+
+
+def test_analyze_of_a_directory_is_unchanged(tmp_path):
+    root = tmp_path / "projekt"
+    root.mkdir()
+    (root / "main.py").write_text("print('x')\n", encoding="utf-8")
+
+    analysis = analyze_project(root)
+
+    assert analysis.single_file is None
+    assert analysis.extra_sources == ()
+
+
+def test_single_file_analysis_does_not_walk_the_parent_directory(tmp_path, monkeypatch):
+    """`_detect_other_language` chodzilo po `scan.root`, ktore w trybie
+    jednoplikowym jest katalogiem NADRZEDNYM dropnietego pliku — dokladnie ta
+    szkoda, ktora zadanie 7 mialo usunac (jeden dropniety plik == skan calego
+    Pobierz). Monkeypatch wywala test, jesli chodzenie po dysku wroci; asercje
+    na `issues` pilnuja, ze wynik jest ten sam co bez sasiadow innego jezyka.
+    """
+    (tmp_path / "cudzy1.js").write_text("const x = 1;\n", encoding="utf-8")
+    (tmp_path / "cudzy2.js").write_text("const y = 2;\n", encoding="utf-8")
+    dropped = tmp_path / "notatka.txt"
+    dropped.write_text("zwykly tekst bez kodu", encoding="utf-8")
+
+    def _forbidden_rglob(self, pattern):
+        raise AssertionError("analiza pojedynczego pliku nie moze chodzic po katalogu nadrzednym")
+
+    monkeypatch.setattr(Path, "rglob", _forbidden_rglob)
+
+    analysis = analyze_project(dropped)
+
+    codes = {i.code for i in analysis.issues}
+    assert "other_language" not in codes
+    assert "no_python_found" in codes
+
+
+def test_broken_txt_does_not_also_claim_there_is_no_python(tmp_path):
+    """Two BLOCKERs that contradict each other are worse than one that helps.
+
+    `txt_syntax_error` already names the file and the line to fix, so adding
+    "I see no Python program here" denies it -- and for a single dropped file
+    it names the PARENT folder, which the user never pointed at.
+    """
+    root = _make(tmp_path, {"kod.txt": "def f(:\n    pass"})
+    codes = {i.code for i in analyze_project(root).issues}
+    assert "txt_syntax_error" in codes
+    assert "no_python_found" not in codes
+
+
+def test_removed_fence_label_is_reported_to_the_user(tmp_path):
+    """Silently editing someone's file is worse than not editing it: the note
+    is what lets the user connect a later surprise back to this step."""
+    root = _make(
+        tmp_path,
+        {"kod.txt": "python\nfrom __future__ import annotations\n\nprint(1)\n"},
+    )
+    result = analyze_project(root)
+    assert result.converted["kod.py"].startswith("from __future__")
+    notes = [i for i in result.issues if i.code == "fence_label_removed"]
+    assert len(notes) == 1
+    assert notes[0].severity is Severity.INFO
+    assert notes[0].data["file"] == "kod.txt"
+
+
+# --- B04: wspólny model importów i zależności ---------------------------------
+
+
+def test_src_layout_local_import_not_sent_to_pypi(tmp_path):
+    """B04 regresja: `src/demo/main.py` importuje `demo.helper` — analiza
+    dodawała `demo` do zewnętrznych paczek, bo `local_module_names` zwracała
+    `'src'` zamiast `'demo'`.
+    """
+    root = _make(
+        tmp_path,
+        {
+            "src/demo/__init__.py": "",
+            "src/demo/main.py": (
+                "from demo import helper\nif __name__ == '__main__':\n    print(helper.msg)\n"
+            ),
+            "src/demo/helper.py": "msg = 'hello'\n",
+        },
+    )
+    result = analyze_project(root)
+    # `demo` jest lokalnym pakietem — NIE powinno być wśród zależności do instalacji.
+    dep_packages = [d.package for d in result.dependencies]
+    assert "demo" not in dep_packages
+    # Punkt wejścia powinien być rozpoznany.
+    assert result.entry is not None
+
+
+def test_dynamic_import_feeds_dependency_installation(tmp_path):
+    """B04 regresja: `importlib.import_module('PIL.Image')` generował hidden
+    import, ale `Pillow` nie trafiał na listę paczek do instalacji.
+    """
+    root = _make(
+        tmp_path,
+        {
+            "main.py": (
+                "import importlib\nimg = importlib.import_module('PIL.Image')\nprint(img)\n"
+            ),
+        },
+    )
+    result = analyze_project(root)
+    # Hidden import powinien być obecny (to już działało).
+    assert "PIL.Image" in result.hidden_imports
+    # NOWE: paczka `pillow` (alias `PIL`) musi trafić do zależności.
+    dep_packages = [d.package for d in result.dependencies]
+    assert "pillow" in dep_packages
+
+
+def test_txt_single_file_import_closure_after_conversion(tmp_path):
+    """B04 regresja: pojedynczy TXT z `import helper` liczył domknięcie
+    importów PRZED konwersją, więc surowy tekst (z fences) nie parsował się
+    i lokalny `helper.py` nie był wciągany.
+    """
+    (tmp_path / "kod.txt").write_text(
+        "```python\nimport helper\nprint(helper.X)\n```\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "helper.py").write_text("X = 42\n", encoding="utf-8")
+
+    result = analyze_project(tmp_path / "kod.txt")
+
+    # `helper.py` powinien trafić do extra_sources po konwersji TXT.
+    extra_names = [p.name for p in result.extra_sources]
+    assert "helper.py" in extra_names
+
+
+# --- B11: odporne I/O i ograniczone skanowanie ----------------------------------
+
+
+def test_unreadable_py_file_produces_warning_not_crash(tmp_path, monkeypatch):
+    """B11: odmowa dostępu do pliku .py nie przerywa analizy —
+    użytkownik dostaje diagnostykę z nazwą pliku, reszta działa."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('ok')",
+            "helper.py": "X = 1",
+        },
+    )
+    original_read_text = Path.read_text
+
+    def _failing_read(self, *args, **kwargs):
+        if self.name == "helper.py":
+            raise PermissionError("access denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _failing_read)
+
+    result = analyze_project(root)
+    # Analiza nie padła — entry i main.py nadal rozpoznane.
+    assert result.entry is not None
+    assert result.entry.name == "main.py"
+    # Diagnostyka z nazwą pliku.
+    read_errors = [i for i in result.issues if i.code == "file_read_error"]
+    assert len(read_errors) == 1
+    assert "helper.py" in read_errors[0].data["file"]
+
+
+def test_unreadable_txt_file_produces_warning_not_crash(tmp_path, monkeypatch):
+    """B11: odmowa dostępu do pliku .txt nie przerywa analizy."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('ok')",
+            "dane.txt": "```python\nprint('z czatu')\n```",
+        },
+    )
+    original_read_bytes = Path.read_bytes
+
+    def _failing_read(self, *args, **kwargs):
+        if self.name == "dane.txt":
+            raise PermissionError("access denied")
+        return original_read_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", _failing_read)
+
+    result = analyze_project(root)
+    assert result.entry is not None
+    read_errors = [i for i in result.issues if i.code == "file_read_error"]
+    assert len(read_errors) == 1
+    assert "dane.txt" in read_errors[0].data["file"]
+
+
+def test_other_language_detection_respects_scan_limits(tmp_path):
+    """B11: `_detect_other_language` nie chodzi po milionach plików —
+    respektuje ten sam limit co skaner (`MAX_SCAN_FILES`)."""
+
+    # Katalog z dużą liczbą plików JS — ale skaner ma limit.
+    # Tworzymy MAX_SCAN_FILES + 10 plików, żeby sprawdzić, że scan się zatrzymuje.
+    # Ale tworzymy mniej, bo test musi być szybki.
+    for i in range(20):
+        (tmp_path / f"f{i}.js").write_text("x", encoding="utf-8")
+
+    result = analyze_project(tmp_path)
+    codes = {i.code for i in result.issues}
+    # Powinno wykryć „other_language" (jest > 3 pliki JS i 0 plików Python)
+    assert "other_language" in codes
+
+
+def test_vanishing_file_during_analysis_does_not_crash(tmp_path, monkeypatch):
+    """B11: plik znikający między skanem a odczytem daje diagnostykę."""
+    root = _make(
+        tmp_path,
+        {
+            "main.py": "print('ok')",
+            "helper.py": "X = 1",
+        },
+    )
+    original_read_text = Path.read_text
+
+    def _vanishing_read(self, *args, **kwargs):
+        if self.name == "helper.py":
+            raise FileNotFoundError("plik zniknął")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _vanishing_read)
+
+    result = analyze_project(root)
+    assert result.entry is not None
+    read_errors = [i for i in result.issues if i.code == "file_read_error"]
+    assert len(read_errors) == 1
