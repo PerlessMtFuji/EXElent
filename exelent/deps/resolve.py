@@ -519,6 +519,28 @@ def _import_lines_in(nodes: list[ast.stmt]) -> set[int]:
     return lines
 
 
+def _dead_import_lines(tree: ast.AST) -> set[int]:
+    """Linie importów w blokach, które NIGDY nie wykonują się w runtime.
+
+    ``if TYPE_CHECKING:`` (z ``typing``) istnieje wyłącznie dla narzędzi
+    statycznej analizy typów — w runtime ``TYPE_CHECKING`` jest ``False``.
+    ``if False:`` to martwa gałąź, której CPython nawet nie kompiluje do
+    bytecodu. Importy w tych blokach nie są zależnościami runtime i nie
+    powinny zasilać listy pakietów do instalacji.
+    """
+    dead: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        is_dead = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+            isinstance(test, ast.Constant) and test.value is False
+        )
+        if is_dead:
+            dead |= _import_lines_in(node.body)
+    return dead
+
+
 def _optional_import_lines(tree: ast.AST) -> set[int]:
     """Linie importów, które są OPCJONALNE (nie muszą być zainstalowane).
 
@@ -566,6 +588,7 @@ def _deps_from_imports(
         tree = parsed.tree(path)
         if tree is None:
             continue
+        dead_lines = _dead_import_lines(tree)
         optional_lines = _optional_import_lines(tree)
         for node in ast.walk(tree):
             names: list[str] = []
@@ -575,6 +598,8 @@ def _deps_from_imports(
                 if node.level or not node.module:
                     continue
                 names = [node.module.split(".")[0]]
+            if not names or node.lineno in dead_lines:
+                continue
             for name in names:
                 if name in stdlib or name in local_modules or name.startswith("_"):
                     continue

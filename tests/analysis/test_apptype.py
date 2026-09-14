@@ -4,6 +4,7 @@ from exelent.analysis.apptype import (
     collect_code_issues,
     collect_hidden_imports,
     detect_app_kind,
+    package_submodule_collections,
 )
 from exelent.models import AppKind
 
@@ -41,6 +42,23 @@ def test_plain_script_defaults_to_console():
 # zalecany jest zawsze ONEDIR, a wybor ONEFILE nalezy do uzytkownika. Regresje
 # tej decyzji sa w tests/analysis/test_project.py (zalecany tryb) oraz
 # tests/test_planning.py (ograniczenie recznego ONEFILE).
+
+
+def test_type_checking_import_does_not_trigger_windowed():
+    code = (
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    import tkinter\n"
+        "print('hello')\n"
+    )
+    kind, _ = detect_app_kind(_s(code))
+    assert kind is AppKind.CONSOLE
+
+
+def test_if_false_import_does_not_trigger_windowed():
+    code = "if False:\n    import PyQt5\nprint('hello')\n"
+    kind, _ = detect_app_kind(_s(code))
+    assert kind is AppKind.CONSOLE
 
 
 def test_flask_raises_server_issue():
@@ -110,3 +128,20 @@ def test_plain_code_has_no_frozen_path_issue():
     code = "x = 1\nprint(x)"
     issues = collect_code_issues(_s(code))
     assert not any(i.code == "frozen_path_pattern" for i in issues)
+
+
+# --- package_submodule_collections ---
+
+
+def test_scipy_triggers_array_api_compat_collection():
+    result = package_submodule_collections({"scipy", "numpy"})
+    assert "scipy._external.array_api_compat" in result
+
+
+def test_unrelated_packages_trigger_no_collections():
+    result = package_submodule_collections({"requests", "numpy", "pandas"})
+    assert result == ()
+
+
+def test_empty_imports_trigger_no_collections():
+    assert package_submodule_collections(set()) == ()

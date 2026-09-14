@@ -90,6 +90,18 @@ def test_valid_py_file_has_no_syntax_blocker(tmp_path):
     assert "py_syntax_error" not in codes
 
 
+def test_utf8_bom_py_file_is_accepted(tmp_path):
+    # Plik z BOM (UTF-8-sig) jest legalnym Pythonem — deklaracja kodowania
+    # `utf-8-sig` jest poprawna per PEP 263 i CPython akceptuje BOM.
+    bom = b"\xef\xbb\xbf"
+    content = bom + "print('ok')\n".encode("utf-8")
+    py = tmp_path / "main.py"
+    py.write_bytes(content)
+    result = analyze_project(tmp_path)
+    codes = {i.code for i in result.issues}
+    assert "py_syntax_error" not in codes
+
+
 def test_txt_in_subdir_keeps_its_relative_path(tmp_path):
     """A06: `pkg/help.txt` ma zostac `pkg/help.py`, nie `help.py` w korzeniu."""
     root = _make(
