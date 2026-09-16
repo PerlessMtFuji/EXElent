@@ -177,7 +177,7 @@ def _stream_uv(
             for line in stderr:  # type: ignore[attr-defined]
                 output_queue.put(line)
         finally:
-            output_queue.put(None)  # sentinel: stderr closed
+            output_queue.put(None)  # znacznik: stderr został zamknięty
 
     reader = threading.Thread(target=_pump, args=(process.stderr,), daemon=True)
     reader.start()
