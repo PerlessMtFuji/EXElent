@@ -1,7 +1,7 @@
-"""Ścieżki robocze, identyfikatory sesji i sprzątanie (B14).
+"""Working paths, session identifiers and cleanup (B14).
 
-Ścieżki są krótkie i czysto ASCII — chroni to przed limitem 260 znaków
-w Windows i przed narzędziami, które gubią się na znakach spoza ASCII.
+Paths are short and pure ASCII — this protects against the 260-character
+limit on Windows and against tools that choke on non-ASCII characters.
 """
 
 from __future__ import annotations
@@ -16,12 +16,12 @@ from pathlib import Path
 
 from exelent.constants import APP_NAME
 
-# Identyfikator instancji — raz na proces. Izoluje workspace i logi między
-# równoległymi instancjami tego samego projektu.
+# Per-process instance identifier. Isolates workspaces and logs between
+# parallel instances of the same project.
 _SESSION_ID = uuid.uuid4().hex[:8]
 
-# Numer próby builda w tej sesji. Każde wołanie execute_build dostaje
-# osobny numer, dzięki czemu logi ponowionych prób nie nadpisują się.
+# Build attempt number within this session. Each call to execute_build gets
+# its own number so that retry logs do not overwrite each other.
 _build_counter = itertools.count(1)
 _current_build_seq: int = 0
 
@@ -31,14 +31,14 @@ def session_id() -> str:
 
 
 def next_build_seq() -> int:
-    """Nowy numer próby builda. Wołać na początku ``execute_build``."""
+    """New build attempt number. Call at the start of ``execute_build``."""
     global _current_build_seq
     _current_build_seq = next(_build_counter)
     return _current_build_seq
 
 
 def build_seq() -> int:
-    """Bieżący numer próby builda w tej sesji."""
+    """Current build attempt number in this session."""
     return _current_build_seq
 
 
@@ -54,23 +54,23 @@ def path_hash(source: Path) -> str:
 
 
 def work_dir_for(source: Path, single_file: Path | None = None) -> Path:
-    """Katalog roboczy dla tego przebiegu.
+    """Working directory for this run.
 
-    W trybie jednoplikowym hashujemy PLIK, nie katalog — inaczej dwa pliki
-    w tym samym folderze dzieliłyby katalog roboczy. Identyfikator sesji
-    izoluje równoległe instancje.
+    In single-file mode we hash the FILE, not the directory — otherwise two
+    files in the same folder would share a working directory. The session
+    identifier isolates parallel instances.
     """
     return state_dir() / "b" / f"{path_hash(single_file or source)}-{_SESSION_ID}"
 
 
 def _pid_file() -> Path:
-    """Plik PID tej sesji — pozwala innym instancjom odróżnić żywą sesję
-    od osieroconej."""
+    """PID file for this session — lets other instances tell a live session
+    from an orphaned one."""
     return state_dir() / "b" / f".pid-{_SESSION_ID}"
 
 
 def register_session() -> None:
-    """Zapisuje PID bieżącej sesji. Woła się przy starcie GUI/CLI."""
+    """Write the current session's PID. Called at GUI/CLI startup."""
     pid_path = _pid_file()
     with suppress(OSError):
         pid_path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,9 +83,9 @@ def _unregister_session() -> None:
 
 
 def _is_pid_alive(pid: int) -> bool:
-    """Czy proces o podanym PID żyje (Windows + POSIX)."""
+    """Whether the process with the given PID is alive (Windows + POSIX)."""
     if pid <= 0 or pid > 0xFFFFFFFF:
-        return True  # Uszkodzony zapis nie dowodzi, że sesję można usunąć.
+        return True  # Corrupted record does not prove the session can be removed.
     if os.name == "nt":
         import ctypes
         from ctypes import wintypes
@@ -97,12 +97,12 @@ def _is_pid_alive(pid: int) -> bool:
         kernel.WaitForSingleObject.restype = wintypes.DWORD
         kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
         kernel.CloseHandle.restype = wintypes.BOOL
-        # SYNCHRONIZE: odczyt stanu bez prawa kończenia procesu.
+        # SYNCHRONIZE: read state without the right to terminate the process.
         handle = kernel.OpenProcess(0x00100000, False, pid)
         if not handle:
-            return ctypes.get_last_error() != 87  # ERROR_INVALID_PARAMETER: PID nie istnieje.
+            return ctypes.get_last_error() != 87  # ERROR_INVALID_PARAMETER: PID does not exist.
         try:
-            # WAIT_OBJECT_0 oznacza zakończenie. Timeout lub awaria -> zachowaj sesję.
+            # WAIT_OBJECT_0 means terminated. Timeout or failure -> keep the session.
             return kernel.WaitForSingleObject(handle, 0) != 0
         finally:
             kernel.CloseHandle(handle)
@@ -111,7 +111,7 @@ def _is_pid_alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        # Proces istnieje, ale nie mamy uprawnień — żyje.
+        # Process exists but we lack permissions — it's alive.
         return True
     except OSError:
         return False
@@ -119,9 +119,9 @@ def _is_pid_alive(pid: int) -> bool:
 
 
 def clean_current_session() -> None:
-    """Usuwa katalogi robocze i logi TEJ sesji oraz jej plik PID.
+    """Remove working directories and logs of THIS session plus its PID file.
 
-    Best-effort: sprzątanie przy zamykaniu okna nie może być powodem błędu.
+    Best-effort: cleanup on window close must not cause an error.
     """
     base = state_dir() / "b"
     if not base.exists():
@@ -133,24 +133,24 @@ def clean_current_session() -> None:
 
 
 def _clean_session_logs(sid: str) -> None:
-    """Usuwa logi budowań sesji ``sid``."""
+    """Remove build logs of session ``sid``."""
     log_base = logs_dir()
     if not log_base.exists():
         return
     for log_file in log_base.glob(f"*-{sid}.*.log"):
         with suppress(OSError):
             log_file.unlink(missing_ok=True)
-    # Compat: logi bez numeru próby (stary format).
+    # Compat: logs without an attempt number (old format).
     for log_file in log_base.glob(f"*-{sid}.log"):
         with suppress(OSError):
             log_file.unlink(missing_ok=True)
 
 
 def clean_stale_sessions() -> None:
-    """Sprząta katalogi robocze i logi sesji, których proces już nie żyje.
+    """Clean up working directories and logs of sessions whose process is dead.
 
-    Sprawdza pliki `.pid-*` w katalogu buildów. Jeśli PID jest martwy,
-    usuwa katalogi, logi i plik PID. Żywe sesje — nietknięte.
+    Checks `.pid-*` files in the build directory. If the PID is dead,
+    removes directories, logs and the PID file. Live sessions are untouched.
     """
     base = state_dir() / "b"
     if not base.exists():

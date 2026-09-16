@@ -1,9 +1,9 @@
-"""Tłumaczenia. Rdzeń zwraca kody Issue, tutaj stają się zdaniami.
+"""Translations. The core returns Issue codes, here they become sentences.
 
-Ta warstwa jest jedynym miejscem, w którym powstaje tekst pokazywany
-użytkownikowi. Rdzeń nie zna języka: gdyby składał zdania sam, każda zmiana
-tekstu wymagałaby ruszania logiki, a GUI nie mogłoby pokazać tego samego
-zdarzenia inaczej niż CLI.
+This layer is the only place where user-facing text is produced. The core
+does not know the language: if it assembled sentences itself, every text
+change would require touching logic, and the GUI could not present the
+same event differently from the CLI.
 """
 
 from __future__ import annotations
@@ -18,16 +18,17 @@ CATALOGS: dict[str, dict[str, str]] = {"pl": pl.CATALOG, "en": en.CATALOG}
 _current = "pl"
 
 
-# Windows nie podaje kodu języka, tylko jego ANGIELSKĄ NAZWĘ: `locale.getlocale()`
-# oddaje tam `('Polish_Poland', '1250')`, nie `('pl_PL', ...)`. „Polish" zaczyna się
-# od „po", więc samo `startswith("pl")` odsyłało polskiego użytkownika do wersji
-# angielskiej — na jedynym systemie, który ten program obsługuje. Test z zadania 16
-# tego nie widział, bo podawał formę POSIX-ową, której Windows nigdy nie produkuje.
+# Windows does not provide a language code, only its ENGLISH NAME:
+# `locale.getlocale()` returns `('Polish_Poland', '1250')` there, not
+# `('pl_PL', ...)`. "Polish" starts with "po", so a bare `startswith("pl")`
+# sent the Polish user to the English version — on the only system this program
+# supports. The test from task 16 did not catch this because it used the POSIX
+# form, which Windows never produces.
 _POLISH_LOCALES = ("pl", "polish")
 
 
 def system_language() -> str:
-    """Język systemu, o ile umiemy go obsłużyć — inaczej angielski."""
+    """System language, if we can handle it — English otherwise."""
     try:
         code, _encoding = locale.getlocale()
     except ValueError:
@@ -47,10 +48,10 @@ def current_language() -> str:
 
 
 def t(key: str, **params: str) -> str:
-    """Zdanie dla klucza. Nieznany klucz wraca jako on sam — nigdy nie rzuca.
+    """Sentence for a key. An unknown key returns itself — never raises.
 
-    Brakujący parametr też nie jest powodem do wyjątku: lepszy jest szablon
-    z nawiasem klamrowym niż ściana tracebacku zamiast komunikatu o błędzie.
+    A missing parameter is not a reason to raise either: a template with a
+    brace is better than a wall of traceback instead of an error message.
     """
     template = CATALOGS[_current].get(key)
     if template is None:
@@ -62,5 +63,5 @@ def t(key: str, **params: str) -> str:
 
 
 def describe(issue: Issue) -> str:
-    """Issue -> zdanie, razem z danymi, które rdzeń pod nie podłożył."""
+    """Issue -> sentence, together with data the core attached to it."""
     return t(issue.code, **dict(issue.data))

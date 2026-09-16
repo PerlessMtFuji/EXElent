@@ -1,8 +1,8 @@
-"""Bezpieczne opublikowanie gotowego artefaktu w katalogu docelowym.
+"""Safe publication of the finished artifact to the destination directory.
 
-Kolejny build NIGDY nie nadpisuje istniejącego pliku ani katalogu — przy
-kolizji nazw wybierana jest wolna. Staging na wolumenie docelowym
-i atomowa zmiana nazwy gwarantują, że awaria nie zostawia połówki plików.
+A subsequent build NEVER overwrites an existing file or directory — when names
+collide a free one is chosen. Staging on the target volume and an atomic rename
+guarantee that a crash does not leave half-copied files.
 """
 
 from __future__ import annotations
@@ -14,18 +14,18 @@ from pathlib import Path
 from exelent.diagnostics.patterns import map_os_error
 from exelent.models import Issue, Severity
 
-# Prefiks katalogu/pliku roboczego publikacji. Kropka na początku, żeby nie
-# rzucał się w oczy w Eksploratorze, i rozpoznawalny człon, żeby dało się
-# jednoznacznie odróżnić śmieci tej sesji od plików użytkownika.
+# Prefix for the staging directory/file. A leading dot so it does not stand
+# out in Explorer, and a recognizable slug so this session's leftovers can be
+# unambiguously distinguished from user files.
 _STAGING_PREFIX = ".exelent-publish-"
 
 
 def _tree_signature(path: Path) -> tuple[int, int]:
-    """(liczba plików, suma bajtów) — tanie sprawdzenie kompletności kopii.
+    """(file count, total bytes) — a cheap completeness check for the copy.
 
-    Nie porównujemy bajt po bajcie: dla artefaktu ONEDIR to setki plików i
-    kilkaset MB. Zgodność liczby plików i sumy rozmiarów wystarcza, żeby
-    wychwycić kopię przerwaną w połowie (brak plików, obcięty plik)."""
+    We do not compare byte-for-byte: for a ONEDIR artifact that is hundreds of
+    files and several hundred MB. Matching file count and total size is enough
+    to catch a copy interrupted halfway (missing files, truncated file)."""
     if path.is_file():
         return 1, path.stat().st_size
     count = 0
@@ -38,10 +38,10 @@ def _tree_signature(path: Path) -> tuple[int, int]:
 
 
 def _unique_target(dest_dir: Path, stem: str, suffix: str, start_at: int = 1) -> Path | None:
-    """Pierwsza wolna nazwa: `stem+suffix`, potem `stem (2)+suffix`, …
+    """First free name: `stem+suffix`, then `stem (2)+suffix`, etc.
 
-    `start_at` pozwala wznowić numerację po przegranym wyścigu o nazwę, żeby nie
-    zaczynać sprawdzania od początku po każdej kolizji."""
+    `start_at` allows resuming numbering after losing a race for a name, so we
+    do not restart checking from the beginning after every collision."""
     n = start_at
     while n < start_at + 10_000:
         name = f"{stem}{suffix}" if n == 1 else f"{stem} ({n}){suffix}"
@@ -55,14 +55,14 @@ def _unique_target(dest_dir: Path, stem: str, suffix: str, start_at: int = 1) ->
 def publish_artifact(
     source: Path, dest_dir: Path, exe_name: str, *, is_onedir: bool, cancel=None
 ) -> tuple[Path | None, tuple[Issue, ...]]:
-    """Kopiuje `source` do `dest_dir` pod wolną nazwą i zwraca ścieżkę wyniku.
+    """Copies `source` to `dest_dir` under a free name and returns the result path.
 
-    Zwraca `(ścieżka, ())` przy sukcesie albo `(None, issues)` przy awarii.
-    Nigdy nie modyfikuje ani nie usuwa niczego, co już było w `dest_dir`.
+    Returns `(path, ())` on success or `(None, issues)` on failure.
+    Never modifies or deletes anything already present in `dest_dir`.
     """
     suffix = "" if is_onedir else ".exe"
 
-    # B10: anulowanie PRZED kopiowaniem nie tworzy stagingu.
+    # B10: cancellation BEFORE copying does not create staging.
     if cancel is not None and cancel.cancelled:
         return None, (Issue("build_cancelled", Severity.INFO),)
 
@@ -81,9 +81,9 @@ def publish_artifact(
         _remove_quietly(staging)
         return None, _os_error_issues(exc, source)
 
-    # B10: anulowanie PO skopiowaniu, ale PRZED finalizacją — staging jest
-    # kompletny, ale nie opublikowany. Sprzątamy go; poprzedni artefakt
-    # zostaje nietknięty.
+    # B10: cancellation AFTER copying but BEFORE finalization — staging is
+    # complete but not published. We clean it up; the previous artifact
+    # remains untouched.
     if cancel is not None and cancel.cancelled:
         _remove_quietly(staging)
         return None, (Issue("build_cancelled", Severity.INFO),)
@@ -124,7 +124,7 @@ def _is_complete(source: Path, staging: Path, exe_name: str, is_onedir: bool) ->
 
 
 def _next_index(target: Path, stem: str, suffix: str) -> int:
-    """Numer wyliczony z nazwy `stem (n)+suffix`; 1 dla `stem+suffix`."""
+    """Number extracted from the name `stem (n)+suffix`; 1 for `stem+suffix`."""
     name = target.name
     plain = f"{stem}{suffix}"
     if name == plain:

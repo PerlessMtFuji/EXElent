@@ -1,9 +1,9 @@
-"""Powloka okna: stos trzech ekranow, tytul, motyw, jezyk i droga przez program.
+"""Window shell: three-screen stack, title, theme, language and the path through the program.
 
-Tu testujemy to, czego nie widac z zadnego pojedynczego ekranu: ze folder
-wskazany na ekranie 1 dociera jako analiza na ekran 2, ze plan z ekranu 2
-naprawde rusza build, i ze zamkniecie okna w trakcie budowania nie zostawia
-w systemie osieroconego procesu.
+Here we test what no single screen can see: that a folder chosen on screen 1
+arrives as an analysis on screen 2, that the plan from screen 2 actually starts
+the build, and that closing the window during a build does not leave an orphaned
+process in the system.
 """
 
 import threading
@@ -25,8 +25,8 @@ from exelent.ui.screen_review import ReviewScreen
 
 @pytest.fixture(autouse=True)
 def _restore_language():
-    """`MainWindow` ustawia jezyk systemu globalnie — bez tego kolejnosc testow
-    decydowalaby o tym, w jakim jezyku pracuja pozostale."""
+    """`MainWindow` sets the system language globally — without this, test order
+    would determine which language the remaining tests run in."""
     yield
     set_language("pl")
 
@@ -52,10 +52,10 @@ def test_go_to_changes_screen(window):
 
 
 def test_out_of_range_never_leaves_the_window_without_a_screen(window):
-    """Własność, nie gałąź: stos bez bieżącego widgetu to szare okno bez treści.
-    Gwarancję daje dziś `QStackedWidget`, a ten test jest linką ostrzegawczą na
-    wypadek, gdyby `go_to` zaczęło kiedyś trasować po swojemu — na przykład
-    „pomocniczo” przycinać indeks do zakresu."""
+    """An invariant, not a branch: a stack without a current widget is a gray
+    blank window. `QStackedWidget` guarantees this today, and this test is a
+    tripwire in case `go_to` ever starts routing on its own — for example,
+    "helpfully" clamping the index to range."""
     for index in (99, -1, -5):
         window.go_to(index)
         assert window.stack.currentIndex() == 0
@@ -67,8 +67,8 @@ def test_title_is_app_name(window):
 
 
 def test_the_window_wears_the_theme(window):
-    """Motyw ma byc PODPIETY, nie tylko zdefiniowany — bez tego okno wyglada
-    jak domyslne Qt, a paleta jest martwym kodem."""
+    """The theme must be APPLIED, not merely defined — without this the window
+    looks like default Qt and the palette is dead code."""
     from exelent.ui.theme import PALETTE_DARK, PALETTE_LIGHT
 
     sheet = window.styleSheet()
@@ -87,14 +87,14 @@ def test_the_first_screen_is_the_drop_screen(window):
 
 
 def _choose_folder_and_wait(window, qtbot, folder):
-    """B11: analiza jest teraz asynchroniczna — czekamy na sygnał workera."""
+    """B11: analysis is now asynchronous — we wait for the worker signal."""
     with qtbot.waitSignal(window._analysis_worker.finished, timeout=10_000):
         window.screen_drop.folder_chosen.emit(folder)
 
 
 def test_choosing_a_folder_moves_to_the_second_screen(window, tmp_path, qtbot):
-    """Sygnal ekranu ma byc PODPIETY: bez tego upuszczenie folderu wyglada
-    jak brak reakcji programu."""
+    """The screen signal must be CONNECTED: without this, dropping a folder
+    looks like the program is unresponsive."""
     _choose_folder_and_wait(window, qtbot, tmp_path)
     assert window.stack.currentIndex() == SCREEN_REVIEW
 
@@ -104,16 +104,16 @@ def test_the_second_screen_is_the_review_screen(window):
 
 
 def test_choosing_a_folder_shows_its_analysis(window, tmp_path, qtbot):
-    """Sama zmiana ekranu to za malo: bez wywolania analizy uzytkownik dostaje
-    ekran 2 z poprzednim projektem albo z pustka."""
+    """Merely switching screens is not enough: without running the analysis the
+    user gets screen 2 with the previous project or nothing."""
     (tmp_path / "main.py").write_text("print(1)", encoding="utf-8")
     _choose_folder_and_wait(window, qtbot, tmp_path)
     assert "main.py" in window.screen_review.row_entry.value_text()
 
 
 def test_an_unreadable_folder_does_not_crash_the_window(window, tmp_path, qtbot):
-    """Katalog moze zniknac miedzy upuszczeniem a analiza. Rdzen wraca wtedy
-    z blokada, wiec okno ma pokazac zdanie, a nie traceback."""
+    """The directory can disappear between the drop and the analysis. The core
+    returns with a blocker then, so the window should show a message, not a traceback."""
     _choose_folder_and_wait(window, qtbot, tmp_path / "nie-ma-takiego")
     assert window.stack.currentIndex() == SCREEN_REVIEW
     assert window.screen_review.build_button.isEnabled() is False
@@ -121,9 +121,9 @@ def test_an_unreadable_folder_does_not_crash_the_window(window, tmp_path, qtbot)
 
 
 def test_the_window_speaks_the_system_language_on_every_screen(qtbot, monkeypatch):
-    """Ekrany biora napisy z `t()` w konstruktorze, wiec jezyk musi byc
-    ustawiony PRZED nimi. Zmierzone: przy `set_language` po konstrukcji
-    angielski uzytkownik dostawal polski naglowek ekranu 1."""
+    """Screens take their strings from `t()` in the constructor, so the language
+    must be set BEFORE them. Measured: with `set_language` after construction
+    an English user would get a Polish screen 1 headline."""
     monkeypatch.setattr("exelent.ui.app.system_language", lambda: "en")
     window = MainWindow()
     qtbot.addWidget(window)
@@ -148,10 +148,10 @@ def _plan(tmp_path):
 
 @pytest.fixture
 def fake_build(monkeypatch):
-    """Udawany `execute_build`, ktory stoi az do zwolnienia."""
-    # Testuje drogę przez ekrany, nie modalny dialog pobierania. B12 sprawdza
-    # teraz narzędzia także dla projektu bez zależności, więc wyłączamy zgodę
-    # jawnie tak samo, jak może to zrobić użytkownik w ustawieniach.
+    """Fake `execute_build` that blocks until released."""
+    # Tests the path through screens, not the modal download dialog. B12 now
+    # checks tools even for projects without dependencies, so we disable the
+    # consent explicitly just as the user can do in settings.
     save_settings(Settings(ask_before_download=False))
     zwolnij = threading.Event()
     wystartowal = threading.Event()
@@ -178,8 +178,8 @@ def test_the_third_screen_is_the_build_screen(window):
 
 
 def test_the_build_screen_is_not_the_owner_of_the_thread(window):
-    """Ekran pokazuje postep, watkiem zarzadza okno — inaczej kazdy powrot na
-    ekran 1 musialby wiedziec, jak zatrzymac budowanie."""
+    """The screen shows progress, the window owns the thread — otherwise every
+    return to screen 1 would have to know how to stop the build."""
     assert window.worker is not None
     assert window.worker.is_running() is False
 
@@ -195,8 +195,8 @@ def test_requesting_a_build_moves_to_the_third_screen_and_starts_it(
 
 
 def test_progress_from_the_worker_reaches_the_screen(window, qtbot, fake_build, tmp_path):
-    """Sygnaly workera musza byc PODPIETE do ekranu: bez tego pasek stoi na
-    zerze przez cale budowanie i program wyglada na zawieszony."""
+    """Worker signals must be CONNECTED to the screen: without this the progress
+    bar stays at zero for the entire build and the program looks frozen."""
     with qtbot.waitSignal(window.worker.finished, timeout=5000):
         window.screen_review.build_requested.emit(_plan(tmp_path))
         assert fake_build["wystartowal"].wait(timeout=5)
@@ -234,8 +234,8 @@ def test_the_stop_button_stops_the_running_build(window, qtbot, fake_build, tmp_
 
 
 def test_the_new_build_screen_does_not_show_the_previous_one(window, qtbot, fake_build, tmp_path):
-    """Okno wola `start` PRZED pokazaniem ekranu — inaczej uzytkownik widzi
-    przez chwile wynik poprzedniego budowania."""
+    """The window calls `start` BEFORE showing the screen — otherwise the user
+    briefly sees the result of the previous build."""
     with qtbot.waitSignal(window.worker.finished, timeout=5000):
         window.screen_review.build_requested.emit(_plan(tmp_path))
         fake_build["zwolnij"].set()
@@ -256,9 +256,9 @@ def test_restart_returns_to_the_first_screen(window, qtbot, tmp_path):
 
 
 def test_restart_refreshes_the_recent_list(window, monkeypatch, tmp_path):
-    """Projekt zbudowany przed chwila zostal zapamietany na ekranie 1, ale ten
-    ekran czytal liste ostatni raz przy starcie programu — bez odswiezenia
-    powrot pokazuje liste bez wlasnie uzytego projektu."""
+    """The just-built project was remembered on screen 1, but that screen last
+    read the list at program start — without a refresh, the return shows the
+    list without the project just used."""
     odswiezenia = []
     monkeypatch.setattr(window.screen_drop, "refresh_recent", lambda: odswiezenia.append(1))
     window.screen_build.restart_requested.emit()
@@ -266,8 +266,8 @@ def test_restart_refreshes_the_recent_list(window, monkeypatch, tmp_path):
 
 
 def test_closing_the_window_stops_a_running_build(window, fake_build, tmp_path):
-    """Zamkniecie okna w trakcie budowania: Qt niszczy dzialajacy QThread
-    (abort), a proces PyInstallera zostaje sierota trzymajaca pliki."""
+    """Closing the window during a build: Qt destroys a running QThread (abort),
+    and the PyInstaller process remains an orphan holding files open."""
     window.screen_review.build_requested.emit(_plan(tmp_path))
     assert fake_build["wystartowal"].wait(timeout=5)
     assert window.worker.is_running() is True
@@ -293,8 +293,8 @@ def test_back_from_review_returns_to_the_drop_screen(qtbot, tmp_path):
 
 
 def test_going_back_is_blocked_while_a_build_runs(qtbot, tmp_path, monkeypatch):
-    """Drugi build w trakcie pierwszego jest odrzucany przez `BuildWorker`
-    po cichu — uzytkownik zobaczylby ekran postepu, ktory nigdy nie ruszy."""
+    """A second build during the first is silently rejected by `BuildWorker`
+    — the user would see a progress screen that never starts."""
     window = MainWindow()
     qtbot.addWidget(window)
     monkeypatch.setattr(window.worker, "is_running", lambda: True)
@@ -305,8 +305,8 @@ def test_going_back_is_blocked_while_a_build_runs(qtbot, tmp_path, monkeypatch):
 
 
 def test_language_switch_repaints_the_open_screens(qtbot):
-    """`language_changed` istnial, ale nikt go nie sluchal — przelacznik
-    dzialalby dopiero po restarcie programu."""
+    """`language_changed` existed but nobody listened to it — the switch would
+    only take effect after restarting the program."""
     window = MainWindow()
     qtbot.addWidget(window)
     window.set_language("pl")
@@ -327,10 +327,11 @@ def test_saved_language_wins_over_the_system_at_startup(qtbot, tmp_path, monkeyp
 
 
 def test_closing_forces_shutdown_when_the_build_thread_will_not_stop(window, monkeypatch):
-    """Watek, ktory nie wyszedl w limicie, zostaje zniszczony przez Qt przy
-    wychodzeniu — `abort()`, a w buildzie okienkowym proces zostaje w systemie
-    (WER) razem z bootloaderem czekajacym na dziecko. Zamkniecie okna ma wtedy
-    zakonczyc program TWARDO, zamiast oddac sterowanie Qt z zywym watkiem."""
+    """A thread that did not exit within the deadline gets destroyed by Qt on
+    shutdown — `abort()`, and in a windowed build the process stays in the
+    system (WER) along with the bootloader waiting for a child. Closing the
+    window should then terminate the program HARD, instead of returning control
+    to Qt with a live thread."""
     forced = []
     monkeypatch.setattr(window, "hard_exit", lambda: forced.append(1))
     monkeypatch.setattr(window.preflight, "stop", lambda: True)
@@ -353,8 +354,8 @@ def test_closing_forces_shutdown_when_preflight_will_not_stop(window, monkeypatc
 
 
 def test_closing_a_quiet_window_ends_the_program_normally(window, monkeypatch):
-    """Twarde wyjscie omija sprzatanie Qt, wiec siegamy po nie WYLACZNIE
-    wtedy, gdy zwykla droga zawiodla."""
+    """Hard exit bypasses Qt cleanup, so we use it ONLY when the normal path
+    has failed."""
     forced = []
     monkeypatch.setattr(window, "hard_exit", lambda: forced.append(1))
     monkeypatch.setattr(window.preflight, "stop", lambda: True)

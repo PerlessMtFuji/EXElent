@@ -1,15 +1,15 @@
-"""Log builda -> kody Issue. Warstwa prezentacji tlumaczy kody na zdania.
+"""Build log -> Issue codes. The presentation layer translates codes into messages.
 
-Zasada: uzytkownik nigdy nie widzi surowego tracebacku jako glownego komunikatu.
-Kazdy nierozpoznany blad staje sie kandydatem na nowy wzorzec ponizej.
+Rule: the user never sees a raw traceback as the primary message.
+Every unrecognized error becomes a candidate for a new pattern below.
 
-Zasada nadrzedna dla samych wzorcow: diagnoza musi byc albo rozrozniajaca,
-albo neutralna — nigdy pewna siebie i bledna. Ten modul istnieje, zeby
-zastapic sciane tracebacku zdaniem plus akcja. Zdanie z ZLA akcja jest
-gorsze niz brak zdania: uzytkownik traci godzine na wylaczanie antywirusa,
-build dalej pada, i przestaje ufac kazdemu kolejnemu komunikatowi. Gdy dowod
-w logu nie rozroznia dwoch przyczyn jednoznacznie, wzorzec ma zglosic
-neutralny kod, a nie zgadywac bardziej konkretny.
+The governing rule for patterns themselves: a diagnosis must be either
+discriminating or neutral — never confident and wrong. This module replaces a
+wall of traceback with a sentence and an action. A sentence with the WRONG
+action is worse than no sentence: the user loses an hour disabling antivirus,
+the build still fails, and every later message loses credibility. When log
+evidence does not distinguish two causes unambiguously, the pattern must emit
+a neutral code instead of guessing a more specific one.
 """
 
 from __future__ import annotations
@@ -22,59 +22,58 @@ from pathlib import Path
 
 from exelent.models import Issue, Severity
 
-# Surowy sygnal "system odmowil dostepu do pliku". Sam w sobie nie rozroznia
-# przyczyn. Dwie warstwy zglaszaja go inaczej i obie sa realnie osiagalne
-# podczas builda:
-#   - warstwa Win32 ("WinError 5" / "Access is denied") — CreateFile, DeleteFile,
-#     MoveFile, czyli m.in. skladanie i przenoszenie EXE,
-#   - warstwa CRT ("Errno 13" / "Permission denied") — wszystko, co idzie przez
-#     open(). PyInstaller wklada bootloader i kazdy zebrany plik binarny do
-#     dist\myapp\_internal\ przez shutil.copy2, ktory OTWIERA plik docelowy,
-#     wiec blokada antywirusa w fazie COLLECT ma dokladnie ten ksztalt i nigdy
-#     nie pokazuje WinError 5.
-# Brak drugiej formy nie dawal wczesniej ZADNEGO Issue — czyli cisza i generyczne
-# "build sie nie powiodl" bez nastepnego kroku, co lamie zasade z naglowka
-# modulu. "\b" po numerze odcina sasiednie kody: "Errno 130" to inny blad.
+# Raw signal that the system denied access to a file. By itself it does not
+# distinguish causes. Two layers report it differently, and both are reachable
+# during a build:
+#   - Win32 ("WinError 5" / "Access is denied") — CreateFile, DeleteFile,
+#     MoveFile, including assembly and movement of the EXE,
+#   - CRT ("Errno 13" / "Permission denied") — everything through open().
+#     PyInstaller places the bootloader and every collected binary in
+#     dist\myapp\_internal\ through shutil.copy2, which OPENS the destination,
+#     so antivirus blocking during COLLECT has exactly this form and never
+#     reports WinError 5.
+# Missing the second form previously produced NO Issue: silence and a generic
+# "build failed" with no next step, violating the module rule above. "\b" after
+# the number excludes adjacent codes: "Errno 130" is a different error.
 _ACCESS_DENIED = r"(?:WinError 5\b|Access is denied|Errno 13\b|Permission denied)"
 
-# Windows jawnie nazywajacy ingerencje antywirusa. W odroznieniu od surowej
-# odmowy dostepu te komunikaty NIE wymagaja koniunkcji z dist: sama ich tresc
-# jest juz rozrozniajaca, wiec dokladanie drugiego warunku nie usuwa zadnej
-# niejednoznacznosci, a tylko produkuje falszywe negatywy.
+# Windows explicitly naming antivirus intervention. Unlike raw access denial,
+# these messages do NOT require conjunction with dist: their text already
+# distinguishes the cause, so adding another condition removes no ambiguity
+# and only creates false negatives.
 _ANTIVIRUS_EXPLICIT = (
     r"WinError 225\b|WinError 1920\b|contains a virus or potentially unwanted software"
 )
 
-# Koniec segmentu sciezki: separator, cudzyslow, bialy znak albo koniec danych.
+# End of a path segment: separator, quote, whitespace, or end of input.
 #
-# Guard STRUKTURALNY, celowo nie czarna lista sufiksow. Poprzednie wersje
-# wyliczaly znane wyjatki pojedynczo — (?!-info) — i trzy razy z rzedu
-# przepuszczaly kolejny sufiks (".dist-info", potem "dist-packages",
-# potem "distutils"). Warunek "nazwa segmentu konczy sie dokladnie tutaj"
-# wyklucza wszystkie trzy naraz i kazdy przyszly, bo nie zalezy od tego, jaki
-# konkretnie sufiks dopisano — wystarczy, ze cokolwiek jeszcze nalezy do tej
-# samej nazwy katalogu. Separator pominiety w klasie (np. ")") daje falszywy
-# NEGATYW, czyli degradacje do neutralnego access_denied — kierunek bezpieczny.
+# A STRUCTURAL guard rather than a suffix blacklist. Earlier versions listed
+# known exceptions one by one — (?!-info) — and admitted another suffix three
+# times in a row (".dist-info", then "dist-packages", then "distutils"). The
+# condition "the segment name ends exactly here" excludes all three and every
+# future suffix because it does not depend on which suffix was added — any
+# further character belonging to the same directory name is enough. A separator
+# omitted from the class (such as ")") yields a false NEGATIVE and degrades to
+# neutral access_denied, which is the safe direction.
 _SEGMENT_END = r"(?=[\\/'\"\s]|$)"
 
-# Fragment wskazujacy, ze chodzi o katalog wyjsciowy builda.
+# Fragment indicating the build output directory.
 #
-# "dist" musi byc realnym segmentem sciezki ("...\dist\app.exe", "C:/proj/dist"),
-# a nie przypadkowym slowem: albo ma separator z przodu i koniec segmentu z tylu,
-# albo zaczyna sie na granicy tokenu (nic wczesniej nie nalezy do tej nazwy) i ma
-# separator z tylu. Pojedynczy [\\/] obsluguje tez formy podwojone (repr "\\")
-# i poczworne (JSON "\\\\") — dopasowuje sie do ostatniego z powtorzonych
-# separatorow, wiec kwantyfikator {1,2} byl tu bez efektu i zostal usuniety.
+# "dist" must be a real path segment ("...\dist\app.exe", "C:/proj/dist"), not
+# an accidental word: either it has a leading separator and a segment boundary
+# after it, or it starts at a token boundary (nothing before belongs to the
+# name) and has a trailing separator. A single [\\/] also handles doubled
+# (repr "\\") and quadrupled (JSON "\\\\") forms by matching the last repeated
+# separator, so the {1,2} quantifier had no effect and was removed.
 #
-# Swiadoma granica (runda 3, NIE do rozszerzenia): prawdziwe trafienie
-# antywirusa moze wyladowac na workpath ("...\build\myapp.exe"), bo nowszy
-# PyInstaller sklada EXE w workpath i dopiero potem przenosi je do dist.
-# Mimo to "build" NIE wchodzi tutaj. Asymetria kosztow jest rozstrzygnieta:
-# falszywy pozytyw wysyla uzytkownika na godzine wylaczania antywirusa przy
-# zupelnie innej przyczynie (dokladnie ta regresja wrocila juz dwa razy),
-# a falszywy negatyw daje access_denied, ktory uczciwie mowi, ze Windows
-# odmowil dostepu do pliku. "build" to przy tym pospolite slowo w logach
-# ("Building EXE from EXE-00.toc"), wiec kosztowalby drozej niz "dist".
+# Deliberate boundary (round 3, DO NOT extend): a real antivirus hit may occur
+# in workpath ("...\build\myapp.exe") because newer PyInstaller versions
+# assemble the EXE there and move it to dist afterward. Even so, "build" does
+# NOT belong here. The cost asymmetry is settled: a false positive sends the
+# user into an hour of disabling antivirus for an unrelated cause (this exact
+# regression has returned twice), while a false negative yields access_denied,
+# which honestly says Windows denied file access. "build" is also common in
+# logs ("Building EXE from EXE-00.toc"), so it costs more than "dist".
 _DIST_SEGMENT = rf"(?:[\\/]dist{_SEGMENT_END}|(?<![\w.-])dist[\\/])"
 
 PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
@@ -88,29 +87,28 @@ PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
         "module_not_found",
         Severity.BLOCKER,
     ),
-    # Ramie bezwarunkowe: Windows sam nazwal antywirusa. Ten sam kod co ramie
-    # ponizej, wiec explain_log() (dedupe po "code") zwroci dokladnie jedno
-    # Issue nawet, gdy log pasuje do obu drog, a neutralny access_denied jest
-    # tlumiony przez _SUPPRESSED_BY tak samo jak przy drodze warunkowej.
+    # Unconditional branch: Windows named the antivirus itself. This uses the
+    # same code as the branch below, so explain_log() (dedupe by "code") returns
+    # exactly one Issue even when the log matches both paths, and neutral
+    # access_denied is suppressed by _SUPPRESSED_BY in the same way.
     (
         re.compile(_ANTIVIRUS_EXPLICIT),
         "antivirus_blocked",
         Severity.BLOCKER,
     ),
-    # Koniunkcja celowa: samo "WinError 5" / "Access is denied" jest jednym z
-    # najbardziej ogolnych bledow Windows i ma mnostwo przyczyn niezwiazanych
-    # z antywirusem (plik otwarty w innym programie, blokada OneDrive,
-    # katalog wymagajacy podniesienia uprawnien). Zglaszamy antivirus_blocked
-    # tylko, gdy w logu jest TAKZE dowod, ze chodzi o artefakt builda (dist).
+    # Deliberate conjunction: "WinError 5" / "Access is denied" alone is one
+    # of the most generic Windows errors and has many non-antivirus causes (a
+    # file open elsewhere, OneDrive lock, directory requiring elevation).
+    # Report antivirus_blocked only when the log ALSO proves the affected item
+    # is a build artifact (dist).
     #
-    # Oba dowody musza pochodzic z TEGO SAMEGO zdarzenia, czyli z tej samej
-    # linii logu. Wczesniejsza wersja uzywala niezakotwiczonych lookaheadow z
-    # re.DOTALL, wiec kazdy z nich przeszukiwal caly log niezaleznie: dowolny
-    # niepowiazany "WinError 5" gdziekolwiek plus slowo "dist" gdziekolwiek
-    # indziej dawaly pewna i BLEDNA diagnoze. Tutaj "^" z re.MULTILINE
-    # zakotwicza oba lookaheady na poczatku tej samej linii, a "[^\n]*" nie
-    # przekracza konca linii, wiec wspolwystepowanie w skali dokumentu nie
-    # wystarcza.
+    # Both pieces of evidence must come from THE SAME event, meaning the same
+    # log line. An earlier version used unanchored lookaheads with re.DOTALL,
+    # so each independently searched the whole log: any unrelated "WinError 5"
+    # plus "dist" elsewhere produced a confident and WRONG diagnosis. Here
+    # "^" with re.MULTILINE anchors both lookaheads at the same line start, and
+    # "[^\n]*" does not cross the line end, so document-wide co-occurrence is
+    # insufficient.
     (
         re.compile(
             rf"^(?=[^\n]*{_ACCESS_DENIED})(?=[^\n]*{_DIST_SEGMENT})",
@@ -119,20 +117,20 @@ PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
         "antivirus_blocked",
         Severity.BLOCKER,
     ),
-    # WinError 32 ("plik jest uzywany przez inny proces") jest odrozniane od
-    # antywirusa — najczestsza przyczyna to wciaz dzialajacy poprzedni EXE
-    # przy rebuildzie, a odpowiednia akcja to "zamknij program i sprobuj
-    # ponownie", zupelnie inna niz przy antywirusie.
+    # WinError 32 ("the file is used by another process") is distinguished from
+    # antivirus — the most common cause is a previous EXE still running during
+    # rebuild, and the correct action is "close the program and try again",
+    # entirely different from antivirus advice.
     (
         re.compile(r"WinError 32\b|used by another process"),
         "file_in_use",
         Severity.BLOCKER,
     ),
-    # Neutralny fallback: "WinError 5" / "Access is denied" bez dowodu, ze to
-    # dist ani ze to WinError 32 — nie zgadujemy przyczyny, mowimy tylko, ze
-    # Windows odmowil dostepu do pliku. Tlumiony w explain_log(), gdy w tym
-    # samym logu wystapil juz bardziej konkretny kod (antivirus_blocked /
-    # file_in_use), zeby nie pokazywac dwoch komunikatow o tym samym zdarzeniu.
+    # Neutral fallback: "WinError 5" / "Access is denied" without evidence for
+    # dist or WinError 32. Do not guess the cause; say only that Windows denied
+    # file access. Suppressed in explain_log() when the same log already yielded
+    # a more specific code (antivirus_blocked / file_in_use), avoiding two
+    # messages for the same event.
     (
         re.compile(_ACCESS_DENIED),
         "access_denied",
@@ -171,34 +169,34 @@ PATTERNS: tuple[tuple[re.Pattern[str], str, Severity], ...] = (
 )
 
 
-# --- Wyjatki systemu, nie log builda -----------------------------------------
+# --- System exceptions, not the build log ------------------------------------
 #
-# Tabela wyzej opisuje LOG PyInstallera. Tutaj diagnozujemy `OSError`, ktory
-# poleciał w naszym wlasnym kodzie: przy czytaniu plikow zrodlowych uzytkownika,
-# przy kopiowaniu projektu do workspace'u, przy sprawdzaniu miejsca na dysku.
+# The table above describes the PyInstaller LOG. Here we diagnose `OSError`
+# raised by our own code while reading user source files, copying the project
+# into the workspace, or checking free disk space.
 #
-# Dlaczego OSOBNA tabela, skoro napisy sa te same: bo bazowe prawdopodobienstwo
-# jest inne, a diagnoza to zaklad o przyczyne. "WinError 1920" na artefakcie w
-# `dist` najczesciej znaczy antywirusa (Task 14 rozstrzygnal to trzema rundami).
-# Ten sam kod przy CZYTANIU pliku zrodlowego najczesciej znaczy plik trzymany
-# tylko w chmurze — OneDrive Files On-Demand jest w polskim OOBE wlaczone
-# domyslnie, a §8 specyfikacji wymienia ten przypadek wprost. Rada "wylacz
-# antywirusa" jest wtedy pewna siebie i BLEDNA: uzytkownik traci godzine,
-# build dalej pada, i przestaje ufac kazdemu kolejnemu komunikatowi.
+# Why a SEPARATE table when the messages are identical: the base probability is
+# different, and diagnosis is a bet on cause. "WinError 1920" on an artifact in
+# `dist` most often means antivirus (Task 14 settled this over three rounds).
+# The same code while READING a source file usually means a cloud-only file —
+# OneDrive Files On-Demand is enabled by default in Polish OOBE and specification
+# section 8 names this case explicitly. Advice to "disable antivirus" is then
+# confident and WRONG: the user loses an hour, the build still fails, and later
+# messages lose credibility.
 #
-# Dlatego `antivirus_blocked` NIE MA tutaj zadnego ramienia. Dowodem dla tej
-# diagnozy jest artefakt builda w logu, a wyjatek z czytania cudzych plikow
-# takiego dowodu nie niesie.
+# Therefore `antivirus_blocked` has NO branch here. Evidence for that diagnosis
+# is a build artifact in the log, which an exception from reading user files
+# does not carry.
 
-# Windows sam nazywajacy chmure. Dopasowanie po TRESCI, nie po numerze: rodzina
-# ERROR_CLOUD_FILE_* to kilkanascie kodow, ktorych nie chce przepisywac z
-# pamieci — falszywy negatyw degraduje do neutralnego `access_denied`, czyli w
-# bezpieczna strone, a zmyslony numer daloby pewna siebie bzdure.
+# Windows explicitly naming the cloud. Match CONTENT rather than a number: the
+# ERROR_CLOUD_FILE_* family contains over a dozen codes that should not be
+# copied from memory. A false negative degrades safely to neutral
+# `access_denied`; an invented number would produce confident nonsense.
 _CLOUD_EXPLICIT = re.compile(r"cloud file|cloud operation|cloud provider|cloud sync", re.IGNORECASE)
 
-# "The file cannot be accessed by the system" — sam w sobie NIE rozroznia
-# przyczyn, wiec liczy sie jako chmura tylko razem z drugim dowodem: sciezka
-# lezy w katalogu synchronizowanym (`in_cloud`).
+# "The file cannot be accessed by the system" does NOT distinguish causes by
+# itself, so it counts as cloud-related only with a second piece of evidence:
+# the path lies in a synchronized directory (`in_cloud`).
 _CANNOT_ACCESS = re.compile(r"WinError 1920\b|cannot be accessed by the system", re.IGNORECASE)
 
 _FILE_IN_USE = re.compile(r"WinError 32\b|used by another process", re.IGNORECASE)
@@ -207,11 +205,11 @@ _PATH_TOO_LONG = re.compile(r"WinError 206\b|filename or extension is too long",
 
 
 def filename_of(exc: OSError) -> str:
-    """Nazwa pliku z wyjatku — cokolwiek system w nia wlozyl.
+    """Filename from the exception — whatever the system put there.
 
-    `OSError.filename` bywa bajtami (`open(b"...")`), a bywa i deskryptorem.
-    Diagnostyka jest ostatnia siatka bezpieczenstwa: siatka, ktora sama rzuca
-    `TypeError`, przestaje nia byc i uzytkownik dostaje traceback.
+    `OSError.filename` may be bytes (`open(b"...")`) or even a descriptor.
+    Diagnostics are the last safety net; a net that raises `TypeError` itself
+    ceases to be one and exposes a traceback to the user.
     """
     raw = getattr(exc, "filename", None)
     if raw is None:
@@ -222,17 +220,16 @@ def filename_of(exc: OSError) -> str:
 
 
 def os_error_text(exc: OSError) -> str:
-    """Wyjatek w ksztalcie, w ktorym numery i tresc leza obok siebie.
+    """Exception text with numeric codes and the message placed together.
 
-    SCIEZKI TU NIE MA i to jest cala rzecz: ponizsze wzorce pytaja o to, co
-    zeznal system, a nazwa pliku jest tekstem UZYTKOWNIKA. Katalog nazwany
-    "Cloud Files" nie ma prawa uchodzic za dowod z chmury — a uchodzil, i to
-    przykrywajac diagnozy poprawne (`disk_full`, `file_in_use`), bo ramie
-    chmury stoi pierwsze.
+    THE PATH IS OMITTED, and that is the point: the patterns below ask what the
+    system reported, while a filename is USER text. A directory named "Cloud
+    Files" must not count as cloud evidence — it once did, masking correct
+    diagnoses (`disk_full`, `file_in_use`) because the cloud branch comes first.
 
-    Tabela logow (`explain_log`) traktuje sciezke inaczej i slusznie: tam
-    segment `dist` w tej samej linii JEST dowodem na antywirusa (ruling
-    Taska 14). Roznica jest w tym, czyj to tekst — log pisze PyInstaller.
+    The log table (`explain_log`) correctly treats paths differently: there a
+    `dist` segment on the same line IS antivirus evidence (Task 14 ruling).
+    The difference is who wrote the text — PyInstaller writes the log.
     """
     parts = [f"[Errno {exc.errno}]" if exc.errno is not None else ""]
     winerror = getattr(exc, "winerror", None)
@@ -243,10 +240,10 @@ def os_error_text(exc: OSError) -> str:
 
 
 def map_os_error(exc: OSError, *, in_cloud: bool = False) -> tuple[Issue, ...]:
-    """Bledy systemu -> Issue. Pusta krotka znaczy "nie wiem" i to jest OK.
+    """System errors -> Issue. An empty tuple means "unknown", and that is OK.
 
-    `run_build` zamienia brak dopasowania na `unexpected_error`, ktory mowi
-    uczciwie "cos poszlo nie tak". Zmyslona diagnoza byla by gorsza.
+    `run_build` converts no match into `unexpected_error`, which honestly says
+    "something went wrong". An invented diagnosis would be worse.
     """
     text = os_error_text(exc)
     name = Path(filename_of(exc)).name
@@ -268,15 +265,15 @@ SEVERITY_ORDER = {Severity.BLOCKER: 0, Severity.WARNING: 1, Severity.INFO: 2}
 
 
 def sort_issues(issues: Iterable[Issue]) -> tuple[Issue, ...]:
-    """BLOCKERy pierwsze, reszta w kolejnosci wejscia.
+    """BLOCKERs first, with the rest in input order.
 
-    Publiczne, bo `explain_log` nie jest jedynym miejscem, ktore sklada liste
-    Issue dla uzytkownika: `run_build` dokleja do niej ostrzezenia analizy.
-    Dopoki obie strony sortowaly osobno, ostrzezenie "w kodzie jest klucz
-    dostepu" ladowalo przed BLOCKEREM, ktory naprawde zatrzymal build — a
-    zadanie 20 pokazuje pierwszy Issue najbardziej prominentnie.
+    Public because `explain_log` is not the only place assembling the user's
+    Issue list: `run_build` appends analysis warnings. While both sides sorted
+    independently, a "code contains an access key" warning appeared before the
+    BLOCKER that actually stopped the build — and task 20 presents the first
+    Issue most prominently.
 
-    `sorted` jest stabilne, wiec kolejnosc w obrebie jednej wagi zostaje.
+    `sorted` is stable, preserving order within one priority.
     """
     return tuple(sorted(issues, key=lambda issue: SEVERITY_ORDER[issue.severity]))
 

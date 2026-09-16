@@ -1,8 +1,8 @@
-"""Ekran 1 — pole na folder z kodem.
+"""Screen 1: the source path drop area.
 
-Ten ekran jest jedynym wejsciem do programu, wiec pilnujemy tu nie wygladu,
-tylko trzech rzeczy: co uznajemy za wskazanie folderu, czego NIE uznajemy, i
-czy wskazanie da sie powtorzyc jednym kliknieciem nastepnym razem.
+This screen is the sole entry into the program. The tests cover which inputs
+count as a selection, which do not, and whether the choice can be repeated with
+one click next time.
 """
 
 from pathlib import Path
@@ -27,12 +27,12 @@ def screen(qtbot, monkeypatch, tmp_path):
 
 @pytest.fixture
 def mime():
-    """Fabryka `QMimeData`, ktora trzyma referencje do konca testu.
+    """Create `QMimeData` while retaining references until the test ends.
 
-    Bez tego obiekt ginie razem z ramka helpera, a `event.mimeData()` oddaje
-    wskaznik po zwolnionej pamieci — PySide wraca wtedy golym `QObject`, a
-    pytest wywala sie access violation przy renderowaniu tracebacku. To jest
-    zycie obiektu w tescie, nie zachowanie ekranu.
+    Otherwise the object dies with the helper frame and `event.mimeData()`
+    points into freed memory. PySide then returns a bare `QObject`, and pytest
+    can hit an access violation while rendering the traceback. This fixture
+    manages test-object lifetime rather than screen behavior.
     """
     kept = []
 
@@ -76,13 +76,11 @@ def _recent_buttons(screen):
     return [w for w in widgets if isinstance(w, QPushButton)]
 
 
-# --- tekst ---
+# --- text ---
 
 
 def test_the_screen_shows_sentences_not_key_names(screen):
-    """`t()` przy nieznanym kluczu oddaje sam klucz i nie rzuca. Bez tego
-    straznika literowka albo zapomniane tlumaczenie konczy sie napisem
-    "drop_headline" na jedynym ekranie, ktory laik widzi na starcie."""
+    """Guard against raw translation keys on the initial user-facing screen."""
     catalog = CATALOGS[current_language()]
     shown = (screen.headline.text(), screen.browse.text(), screen.recent_label.text())
     assert [text for text in shown if text not in catalog.values()] == []
@@ -92,11 +90,12 @@ def test_the_screen_shows_sentences_not_key_names(screen):
 
 
 def test_the_drop_zone_is_one_continuous_surface(screen):
-    """Etykiety dziedzicza po regule `QWidget` NIEPRZEZROCZYSTE tlo `bg`, wiec
-    naglowek i strzalka wycinaja w jasniejszej strefie ciemne prostokaty —
-    widac to dopiero w renderingu, bo `styleSheet()` jako napis jest poprawny.
-    Mierzone na pikselach: wewnatrz strefy nie moze byc ANI JEDNEGO piksela
-    w kolorze tla okna (przed poprawka bylo ich 3624 w co trzecim punkcie).
+    """Labels can inherit the opaque `bg` from the `QWidget` rule.
+
+    The headline and arrow then cut dark rectangles into the lighter zone.
+    Only rendering reveals it because the stylesheet string itself is valid.
+    Pixel sampling requires no window-background pixels inside the zone; the
+    broken version had 3,624 at every fourth point.
     """
     screen.setStyleSheet(theme.build_stylesheet(dark=True))
     screen.resize(900, 620)
@@ -111,21 +110,23 @@ def test_the_drop_zone_is_one_continuous_surface(screen):
         for y in range(inset, image.height() - inset, 4)
         for x in range(inset, image.width() - inset, 4)
     )
-    assert holes == 0, f"etykiety maluja wlasne tlo: {holes} pikseli koloru okna w strefie"
+    assert holes == 0, f"labels paint their own background: {holes} window-color pixels"
 
 
-# --- co uznajemy za wskazanie folderu ---
+# --- accepted selections ---
 
 
 def test_the_screen_accepts_drops_at_all(screen):
-    """Testy wolaja `dropEvent` wprost, wiec omijaja bramke Qt: bez
-    `setAcceptDrops(True)` Qt nie dostarczy ekranowi ZADNEGO zdarzenia
-    przeciagania, a caly ekran przestaje dzialac przy zielonych testach."""
+    """Direct `dropEvent` calls bypass Qt's gate.
+
+    Without `setAcceptDrops(True)`, Qt sends the screen no drag events even
+    though direct-call tests remain green.
+    """
     assert screen.acceptDrops() is True
 
 
 def test_dropping_folder_emits_signal(screen, qtbot, mime, tmp_path):
-    project = tmp_path / "projekt"
+    project = tmp_path / "project"
     project.mkdir()
     with qtbot.waitSignal(screen.folder_chosen, timeout=1000) as blocker:
         screen.dropEvent(_drop(mime(project)))
@@ -133,9 +134,7 @@ def test_dropping_folder_emits_signal(screen, qtbot, mime, tmp_path):
 
 
 def test_dropping_a_file_selects_the_file_not_its_folder(screen, qtbot, mime, tmp_path):
-    """Upuszczenie pojedynczego pliku wybiera SAM plik, nie jego folder
-    nadrzedny — plik `test.txt` z Pobranych nie moze wciagnac calych
-    Pobranych do analizy."""
+    """Dropping one file selects that file rather than its parent directory."""
     script = tmp_path / "test.txt"
     script.write_text("print('x')\n", encoding="utf-8")
     with qtbot.waitSignal(screen.folder_chosen, timeout=1000) as blocker:
@@ -144,21 +143,21 @@ def test_dropping_a_file_selects_the_file_not_its_folder(screen, qtbot, mime, tm
 
 
 def test_a_handled_drop_is_accepted(screen, mime, tmp_path):
-    """Bez `acceptProposedAction` program-zrodlo pokazuje kursor odmowy i
-    uzytkownik widzi, ze upuszczenie sie nie udalo — mimo ze sie udalo."""
+    """Without `acceptProposedAction`, the source app displays a rejection cursor."""
     event = _drop(mime(tmp_path))
     screen.dropEvent(event)
     assert event.isAccepted()
 
 
-# --- czego nie uznajemy ---
+# --- rejected selections ---
 
 
 def test_dropping_a_link_from_a_browser_chooses_nothing(screen, qtbot, mime):
-    """`QUrl("https://...").toLocalFile()` to pusty napis, a `Path("").parent`
-    to katalog biezacy. Bez straznika przeciagniecie linku uruchamialoby
-    analize katalogu, w ktorym akurat stoi program."""
-    data = mime(urls=[QUrl("https://example.com/kod.zip")])
+    """A web URL maps to an empty local path whose parent is the current directory.
+
+    The guard prevents dragging a link from analyzing the program's cwd.
+    """
+    data = mime(urls=[QUrl("https://example.com/code.zip")])
     with qtbot.assertNotEmitted(screen.folder_chosen):
         screen.dropEvent(_drop(data))
 
@@ -169,13 +168,13 @@ def test_dropping_nothing_useful_chooses_nothing(screen, qtbot, mime):
 
 
 def test_dragging_plain_text_is_refused(screen, mime):
-    event = _drag_enter(mime(text="to nie jest folder"))
+    event = _drag_enter(mime(text="this is not a folder"))
     screen.dragEnterEvent(event)
     assert screen.zone.property("active") is False
     assert not event.isAccepted()
 
 
-# --- podswietlenie ramki ---
+# --- frame highlight ---
 
 
 def test_drag_enter_marks_zone_active(screen, mime, tmp_path):
@@ -197,22 +196,22 @@ def test_dropping_clears_the_highlight(screen, mime, tmp_path):
     assert screen.zone.property("active") is False
 
 
-# --- lista ostatnich ---
+# --- recent list ---
 
 
 def test_choosing_a_folder_remembers_it(screen, mime, tmp_path):
-    project = tmp_path / "projekt"
+    project = tmp_path / "project"
     project.mkdir()
     screen.dropEvent(_drop(mime(project)))
     assert recent.load_recent() == [project]
 
 
 def test_recent_list_is_shown(screen, tmp_path):
-    project = tmp_path / "wczesniejszy"
+    project = tmp_path / "earlier"
     project.mkdir()
     recent.remember(project)
     screen.refresh_recent()
-    assert [b.text() for b in _recent_buttons(screen)] == ["wczesniejszy"]
+    assert [b.text() for b in _recent_buttons(screen)] == ["earlier"]
 
 
 def test_nothing_remembered_means_no_recent_row(screen):
@@ -222,7 +221,7 @@ def test_nothing_remembered_means_no_recent_row(screen):
 
 
 def test_clicking_a_recent_entry_chooses_it(screen, qtbot, tmp_path):
-    project = tmp_path / "wczesniejszy"
+    project = tmp_path / "earlier"
     project.mkdir()
     recent.remember(project)
     screen.refresh_recent()
@@ -232,9 +231,8 @@ def test_clicking_a_recent_entry_chooses_it(screen, qtbot, tmp_path):
 
 
 def test_every_recent_entry_points_at_its_own_folder(screen, qtbot, tmp_path):
-    """Lambda bez domyslnego argumentu zamyka sie po ZMIENNEJ petli, wiec
-    wszystkie przyciski wskazywalyby ten sam, ostatni folder."""
-    for name in ("pierwszy", "drugi"):
+    """Without a default argument, the lambda closes over the changing loop variable."""
+    for name in ("first", "second"):
         (tmp_path / name).mkdir()
         recent.remember(tmp_path / name)
     screen.refresh_recent()
@@ -245,9 +243,8 @@ def test_every_recent_entry_points_at_its_own_folder(screen, qtbot, tmp_path):
 
 
 def test_refreshing_twice_does_not_double_the_row(screen, tmp_path):
-    """`refresh_recent` czysci uklad przed wypelnieniem — inaczej kazdy powrot
-    na ekran dokladalby te same przyciski jeszcze raz."""
-    project = tmp_path / "wczesniejszy"
+    """`refresh_recent` clears the layout before repopulating it."""
+    project = tmp_path / "earlier"
     project.mkdir()
     recent.remember(project)
     screen.refresh_recent()
@@ -255,11 +252,11 @@ def test_refreshing_twice_does_not_double_the_row(screen, tmp_path):
     assert len(_recent_buttons(screen)) == 1
 
 
-# --- przycisk "wybierz folder" ---
+# --- browse button ---
 
 
 def test_browsing_chooses_the_folder_from_the_dialog(screen, qtbot, monkeypatch, tmp_path):
-    project = tmp_path / "z-okienka"
+    project = tmp_path / "from-dialog"
     project.mkdir()
     monkeypatch.setattr(screen_drop, "choose_source", lambda *a, **k: project)
     with qtbot.waitSignal(screen.folder_chosen, timeout=1000) as blocker:
@@ -274,7 +271,7 @@ def test_a_cancelled_dialog_chooses_nothing(screen, qtbot, monkeypatch):
 
 
 def test_colliding_recent_entries_are_told_apart(screen, tmp_path):
-    """Dwa rozne pliki o tej samej nazwie dawaly dwa identyczne kafelki."""
+    """Two different files with the same name need distinct tiles."""
     nested = tmp_path / "test"
     nested.mkdir()
     (nested / "test.txt").write_text("print(1)", encoding="utf-8")
@@ -289,7 +286,7 @@ def test_colliding_recent_entries_are_told_apart(screen, tmp_path):
 
 
 def test_a_recent_entry_shows_its_full_path_on_hover(screen, tmp_path):
-    project = tmp_path / "wczesniejszy"
+    project = tmp_path / "earlier"
     project.mkdir()
     recent.remember(project)
     screen.refresh_recent()
@@ -297,8 +294,7 @@ def test_a_recent_entry_shows_its_full_path_on_hover(screen, tmp_path):
 
 
 def test_a_grown_label_still_chooses_the_right_path(screen, qtbot, tmp_path):
-    """Etykieta rosnie, ale kafelek ma nadal wskazywac swoja wlasna sciezke —
-    nie da sie jej juz odtworzyc z samego napisu."""
+    """A longer label must retain its own path because text cannot reconstruct it."""
     nested = tmp_path / "test"
     nested.mkdir()
     (nested / "test.txt").write_text("print(1)", encoding="utf-8")
@@ -313,13 +309,12 @@ def test_a_grown_label_still_chooses_the_right_path(screen, qtbot, tmp_path):
     assert blocker.args == [Path(first.toolTip())]
 
 
-# --- przycisk "wybierz" ---
+# --- choose button ---
 
 
 def test_browsing_can_choose_a_single_file(screen, qtbot, monkeypatch, tmp_path):
-    """Do tej pory okno wyboru bylo wylacznie na katalogi, wiec uzytkownik
-    proszacy o pojedynczy plik dostawal caly folder, w ktorym stal."""
-    source = tmp_path / "kod.py"
+    """The chooser must return a requested file rather than its entire folder."""
+    source = tmp_path / "code.py"
     source.write_text("print(1)", encoding="utf-8")
     monkeypatch.setattr(screen_drop, "choose_source", lambda *a, **k: source)
     with qtbot.waitSignal(screen.folder_chosen, timeout=1000) as blocker:
@@ -328,12 +323,10 @@ def test_browsing_can_choose_a_single_file(screen, qtbot, monkeypatch, tmp_path)
 
 
 def test_the_dialog_accepts_a_single_file(qtbot, tmp_path):
-    """Sedno naprawy: Qt nie ma trybu "plik albo katalog", wiec `accept()`
-    musi przepuscic plik sam. Test seamu wyzej tego nie sprawdza — mierzy
-    tylko, ze ekran wola `choose_source`."""
-    source = tmp_path / "kod.py"
+    """Qt has no "file or directory" mode, so `accept()` must allow files itself."""
+    source = tmp_path / "code.py"
     source.write_text("print(1)", encoding="utf-8")
-    dialog = screen_drop.SourceDialog(None, "wybierz")
+    dialog = screen_drop.SourceDialog(None, "choose")
     qtbot.addWidget(dialog)
     dialog.selectFile(str(source))
     dialog.accept()
@@ -342,9 +335,9 @@ def test_the_dialog_accepts_a_single_file(qtbot, tmp_path):
 
 
 def test_the_dialog_still_accepts_a_folder(qtbot, tmp_path):
-    project = tmp_path / "projekt"
+    project = tmp_path / "project"
     project.mkdir()
-    dialog = screen_drop.SourceDialog(None, "wybierz")
+    dialog = screen_drop.SourceDialog(None, "choose")
     qtbot.addWidget(dialog)
     dialog.selectFile(str(project))
     dialog.accept()
@@ -353,10 +346,8 @@ def test_the_dialog_still_accepts_a_folder(qtbot, tmp_path):
 
 
 def test_the_dialog_shows_files_so_there_is_something_to_click(qtbot):
-    """Tryb katalogu domyslnie chowa pliki (`ShowDirsOnly`), a natywne okno
-    Windows chowa je zawsze — wtedy nie da sie wskazac pliku niezaleznie od
-    tego, co robi `accept()`."""
-    dialog = screen_drop.SourceDialog(None, "wybierz")
+    """Directory mode hides files unless the nonnative dialog disables ShowDirsOnly."""
+    dialog = screen_drop.SourceDialog(None, "choose")
     qtbot.addWidget(dialog)
     assert dialog.testOption(QFileDialog.Option.ShowDirsOnly) is False
     assert dialog.testOption(QFileDialog.Option.DontUseNativeDialog) is True

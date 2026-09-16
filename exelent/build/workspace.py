@@ -1,7 +1,7 @@
-"""Kopia robocza projektu.
+"""Project working copy.
 
-Build nigdy nie dotyka katalogu użytkownika: odbiorca nie używa gita i nie
-ma jak cofnąć zmian. Wszystko dzieje się na kopii w %LOCALAPPDATA%.
+The build never touches the user's directory: the intended user does not use
+Git and cannot undo changes. Everything happens on a copy in %LOCALAPPDATA%.
 """
 
 from __future__ import annotations
@@ -14,29 +14,29 @@ from exelent.constants import EXCLUDED_DIRS, MAX_SCAN_BYTES, MAX_SCAN_FILES
 from exelent.models import BuildPlan, Issue, IssueError, Severity
 from exelent.runtime.paths import work_dir_for
 
-# B10: co ile plików sprawdzamy token anulowania przy kopiowaniu. Sprawdzanie
-# przy każdym pliku jest tanie, ale nie chcemy narzutu, gdy plików jest 5.
+# B10: how often to check the cancellation token while copying. Checking every
+# file is cheap, but avoid needless overhead when there are only five files.
 _CANCEL_CHECK_INTERVAL = 1
 
 
 def workspace_for(root: Path, single_file: Path | None = None) -> Path:
-    """Gdzie lezy kopia robocza projektu z `root`.
+    """Location of the working copy for the project at `root`.
 
-    Jedno miejsce, ktore to wie. Wczesniej ta sciezka powstawala dwa razy —
-    tutaj i w `pyinstaller.py` — z tych samych skladnikow, ale niezaleznie:
-    zmiana jednej definicji dawala build uruchomiony w katalogu bez kodu,
-    co widac dopiero po kilkunastu minutach pracy PyInstallera.
+    This is the single source of truth. The path used to be assembled twice —
+    here and in `pyinstaller.py` — from the same components but independently.
+    Changing one definition then started a build in a directory without code,
+    which became visible only after many minutes of PyInstaller work.
     """
     return work_dir_for(root, single_file) / "src"
 
 
 def _copy_and_verify(source: Path, target: Path, expected_hash: str) -> str | None:
-    """Kopiuje plik i weryfikuje hash (B08).
+    """Copy a file and verify its hash (B08).
 
-    Zwraca `None` jeśli OK; nazwę pliku z opisem jeśli hash się nie zgadza.
-    Pusty `expected_hash` (plik nie dał się odczytać przy analizie) pomija
-    weryfikację — kopiowanie nadal się odbywa, bo brak hashu to brak
-    dowodu, nie dowód braku.
+    Return `None` on success, or the filename if the hash does not match.
+    An empty `expected_hash` (the file could not be read during analysis)
+    skips verification — copying still happens because lack of a hash means
+    lack of evidence, not evidence of absence.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
@@ -52,39 +52,39 @@ def _copy_and_verify(source: Path, target: Path, expected_hash: str) -> str | No
 
 
 def _check_cancel(cancel) -> None:
-    """B10: przerwanie kopiowania daje `build_cancelled`, nie błąd I/O."""
+    """B10: interrupted copying produces `build_cancelled`, not an I/O error."""
     if cancel is not None and cancel.cancelled:
         raise IssueError(Issue("build_cancelled", Severity.INFO))
 
 
 def _validate_rel_path(rel_path: str) -> bool:
-    """Czy ścieżka względna jest bezpieczna do materializacji (B08).
+    """Whether a relative path is safe to materialize (B08).
 
-    Odrzuca ścieżki z `..`, bezwzględne ścieżki i inne próby wyjścia poza
-    workspace. Nie ufa samemu `relative_to` — sprawdza surowy tekst.
+    Reject paths containing `..`, absolute paths, and other attempts to escape
+    the workspace. Do not trust `relative_to` alone — inspect the raw text.
     """
     if not rel_path:
         return False
-    # Bezwzględne ścieżki (Windows: `C:\\`, `\\\\server`, `/root`).
+    # Absolute paths (Windows: `C:\\`, `\\\\server`, `/root`).
     if rel_path.startswith(("/", "\\")) or (len(rel_path) >= 2 and rel_path[1] == ":"):
         return False
-    # Segmenty `..` w dowolnym miejscu.
+    # `..` segments anywhere in the path.
     parts = rel_path.replace("\\", "/").split("/")
     return ".." not in parts
 
 
 def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
-    """Kopia robocza projektu z weryfikacją inwentarza (B08).
+    """Create a project working copy with inventory verification (B08).
 
-    Kopiuje TYLKO pliki zaakceptowane przez analizę (z inwentarza planu),
-    nie cały katalog. Nowe pliki dodane po analizie nie wchodzą do builda
-    bez ponownej analizy. Konwersje TXT->PY zapisywane z planu.
+    Copy ONLY files accepted by analysis (from the plan inventory), not the
+    whole directory. New files added after analysis do not enter the build
+    without another analysis pass. Write TXT->PY conversions from the plan.
 
-    `cancel` (B10) przerywa kopiowanie między plikami. Anulowanie przed
-    kopią nie tworzy workspace; anulowanie w trakcie sprząta go.
+    `cancel` (B10) interrupts copying between files. Cancellation before the
+    copy creates no workspace; cancellation during copying cleans it up.
 
-    Gdy inwentarz jest pusty (starszy plan bez B08), spada do kopiowania
-    jawnych pól planu — bezpieczniejsze niż copytree, choć bez weryfikacji."""
+    When the inventory is empty (an older plan without B08), fall back to
+    copying explicit plan fields — safer than copytree, though unverified."""
     _check_cancel(cancel)
     workspace = workspace_for(plan.root, plan.single_file)
     if workspace.exists():
@@ -93,68 +93,68 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
 
     changed: list[str] = []
-    # B08: te same limity co skan — materializacja nie może kopiować więcej
-    # plików ani bajtów niż analiza zaakceptowała.
+    # B08: the same limits as scanning — materialization may not copy more
+    # files or bytes than analysis accepted.
     copied_files = 0
     copied_bytes = 0
 
     if plan.source_inventory:
-        # B08: kopiowanie inwentarza — TYLKO zaakceptowane pliki.
+        # B08: inventory copying — accepted files ONLY.
         inventory_lookup = {e.rel_path: e.sha256 for e in plan.source_inventory}
         for i, entry in enumerate(plan.source_inventory):
             if i % _CANCEL_CHECK_INTERVAL == 0:
                 _check_cancel(cancel)
-            # B08: ochrona przed path traversal — ścieżka z `..` lub bezwzględna
-            # nie może wyjść poza workspace.
+            # B08: path-traversal protection — a path with `..` or an absolute
+            # path may not escape the workspace.
             if not _validate_rel_path(entry.rel_path):
-                changed.append(f"{entry.rel_path} (niedozwolona ścieżka)")
+                changed.append(f"{entry.rel_path} (disallowed path)")
                 continue
             source = plan.root / entry.rel_path
             if not source.is_file():
-                changed.append(f"{entry.rel_path} (usunięty)")
+                changed.append(f"{entry.rel_path} (deleted)")
                 continue
-            # B08: symlinki mogą wyjść poza zaakceptowany zakres — sprawdzamy,
-            # czy cel mieści się w korzeniu projektu.
+            # B08: symlinks may escape the accepted scope — verify that the
+            # target remains within the project root.
             if source.is_symlink():
                 try:
                     real = source.resolve(strict=True)
                     root_real = plan.root.resolve(strict=True)
                     if root_real not in real.parents and real != root_real:
-                        changed.append(f"{entry.rel_path} (symlink poza projekt)")
+                        changed.append(f"{entry.rel_path} (symlink outside project)")
                         continue
                 except OSError:
-                    changed.append(f"{entry.rel_path} (niedostępny symlink)")
+                    changed.append(f"{entry.rel_path} (unavailable symlink)")
                     continue
             target = workspace / entry.rel_path
             mismatch = _copy_and_verify(source, target, entry.sha256)
             if mismatch:
-                changed.append(f"{entry.rel_path} (zmieniony)")
+                changed.append(f"{entry.rel_path} (changed)")
             else:
                 copied_files += 1
                 try:
                     copied_bytes += target.stat().st_size
                 except OSError:
                     pass
-            # B08: wspólne limity — materializacja nie kopiuje więcej niż skan.
+            # B08: shared limits — materialization copies no more than scanning.
             if copied_files > MAX_SCAN_FILES or copied_bytes > MAX_SCAN_BYTES:
                 raise IssueError(
                     Issue("scan_truncated", Severity.BLOCKER, {"files": str(copied_files)})
                 )
-        # Upewnij się, że plik główny jest w workspace, nawet jeśli nie
-        # trafił do inwentarza (konwersja TXT → nowy .py).
+        # Ensure the entry file is in the workspace even if it did not enter
+        # the inventory (TXT conversion -> a new .py file).
         entry_rel = plan.entry.relative_to(plan.root).as_posix()
         if entry_rel not in inventory_lookup and plan.entry.is_file():
             target = workspace / entry_rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(plan.entry, target)
     else:
-        # Fallback: brak inwentarza — kopiuj jawne pola planu.
+        # Fallback: no inventory — copy explicit plan fields.
         all_sources: list[Path] = []
         if plan.single_file is not None:
             all_sources.append(plan.single_file)
         all_sources.extend(plan.extra_sources)
-        # Dodaj WSZYSTKIE pliki .py z korzenia, jeśli to projekt (nie single file).
-        # Filtrujemy wykluczone katalogi — tak samo jak skaner (B08 fallback).
+        # Add ALL .py files from the root for a project (not single-file mode).
+        # Filter excluded directories just like the scanner (B08 fallback).
         if plan.single_file is None:
             for dirpath, dirnames, filenames in plan.root.walk():
                 dirnames[:] = [
@@ -176,7 +176,7 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
                 copied_bytes += target.stat().st_size
             except OSError:
                 pass
-            # B08: wspólne limity — materializacja nie kopiuje więcej niż skan.
+            # B08: shared limits — materialization copies no more than scanning.
             if copied_files > MAX_SCAN_FILES or copied_bytes > MAX_SCAN_BYTES:
                 raise IssueError(
                     Issue("scan_truncated", Severity.BLOCKER, {"files": str(copied_files)})
@@ -192,15 +192,15 @@ def materialize_workspace(plan: BuildPlan, cancel=None) -> Path:
         )
 
     for name, code in plan.converted:
-        # `name` to sciezka WZGLEDNA (np. `pkg/help.py`), wiec odtwarzamy
-        # katalog docelowy — inaczej konwersja z podkatalogu ladowala w
-        # korzeniu, a dwie o tej samej nazwie nadpisywały się.
+        # `name` is a RELATIVE path (for example `pkg/help.py`), so recreate
+        # the destination directory. Otherwise a conversion from a subfolder
+        # lands at the root and two files with the same name overwrite one another.
         target = workspace / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(code, encoding="utf-8")
 
-    # B05: kopiowanie manifestów i constraints do workspace, żeby uv mógł
-    # rozwinąć `-r`/`-c` z poprawnymi bazami ścieżek.
+    # B05: copy manifests and constraints into the workspace so uv can expand
+    # `-r`/`-c` using the correct path bases.
     for rel in (*plan.manifest_paths, *plan.constraint_paths):
         source = plan.root / rel
         if source.is_file():

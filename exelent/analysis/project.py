@@ -1,7 +1,7 @@
-"""Orkiestracja analizy: katalog na wejściu, ProjectAnalysis na wyjściu.
+"""Analysis orchestration: directory in, ProjectAnalysis out.
 
-Nic tu nie zapisuje na dysk. Konwersja TXT żyje w pamięci aż do zadania,
-które tworzy kopię roboczą — katalog użytkownika pozostaje nietknięty.
+Nothing here writes to disk. TXT conversion lives in memory until the task
+that creates a working copy — the user's directory remains untouched.
 """
 
 from __future__ import annotations
@@ -32,43 +32,44 @@ OTHER_LANGUAGE_SUFFIXES = {".js", ".ts", ".java", ".cs", ".cpp", ".c", ".go", ".
 
 
 def _read(path: Path) -> str | None:
-    """Czyta plik źródłowy. Zwraca `None` przy błędzie I/O (B11).
+    """Read a source file. Returns ``None`` on I/O error (B11).
 
-    Odmowa dostępu, znikający plik i uszkodzone kodowanie NIE są powodem do
-    przerwania całej analizy: użytkownik ma zobaczyć diagnostykę z nazwą pliku,
-    a pozostałe pliki mają być nadal widoczne.
+    Permission denied, disappearing files and broken encoding are NOT
+    reasons to abort the entire analysis: the user should see diagnostics
+    naming the file, and the remaining files should still be visible.
     """
     try:
-        # utf-8-sig: automatycznie zdejmuje BOM (U+FEFF) z początku pliku.
-        # Plik z BOM jest legalnym UTF-8 (PEP 263, kodowanie `utf-8-sig`),
-        # ale `ast.parse` odrzuca U+FEFF jako „invalid non-printable character".
+        # utf-8-sig: automatically strips BOM (U+FEFF) from the beginning.
+        # A BOM file is legal UTF-8 (PEP 263, ``utf-8-sig`` encoding),
+        # but ``ast.parse`` rejects U+FEFF as "invalid non-printable character".
         return path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return None
 
 
 def _module_name_collisions(py_files: tuple[Path, ...], root: Path) -> list[tuple[str, list[Path]]]:
-    """Moduły o tej samej gołej nazwie w różnych folderach.
+    """Modules with the same bare name in different folders.
 
-    Plik w pakiecie (`__init__.py` obok) ma nazwę kwalifikowaną — `pkg_a.util`
-    vs `pkg_b.util` się nie mylą. Ale dwa `util.py` w folderach BEZ `__init__.py`
-    importują się oba jako `util`; o zwycięzcy decyduje kolejność `sys.path`,
-    która przy pakowaniu bywa przypadkowa. To ostrzeżenie, nie blokada: build da
-    się zrobić, ale użytkownik musi wiedzieć, że jeden z modułów przesłoni drugi.
+    A file inside a package (``__init__.py`` beside it) has a qualified name —
+    ``pkg_a.util`` vs ``pkg_b.util`` do not clash. But two ``util.py`` files
+    in folders WITHOUT ``__init__.py`` both import as ``util``; the winner is
+    decided by ``sys.path`` order, which can be arbitrary when packaging.
+    This is a warning, not a blocker: the build can proceed, but the user
+    must know that one module will shadow the other.
 
-    B03/B04: case-insensitive — na Windows `Helper.py` i `helper.py` to ten sam
-    plik, ale `import Helper` i `import helper` na Linuksie to różne moduły.
-    Budujemy na Windows, więc dopasowujemy bez rozróżniania wielkości liter.
-    Namespace packages (foldery bez `__init__.py`) są traktowane jak luźne
-    moduły — ich pliki mogą kolidować z innymi tego samego poziomu.
+    B03/B04: case-insensitive — on Windows ``Helper.py`` and ``helper.py``
+    are the same file, but ``import Helper`` and ``import helper`` on Linux
+    are different modules. We build on Windows, so we match case-insensitively.
+    Namespace packages (folders without ``__init__.py``) are treated as loose
+    modules — their files can collide with others at the same level.
     """
     by_name: dict[str, list[Path]] = {}
     for path in py_files:
         if path.name == "__init__.py":
             continue
-        # B03: namespace packages — folder bez __init__.py nadal może być
-        # pakietem. Plik w takim folderze jest luźnym modułem (koliduje jak
-        # każdy inny), chyba że folder jest jawnym pakietem.
+        # B03: namespace packages — a folder without __init__.py can still
+        # be a package. A file in such a folder is a loose module (collides
+        # like any other), unless the folder is an explicit package.
         if (path.parent / "__init__.py").exists():
             continue
         by_name.setdefault(path.stem.lower(), []).append(path)
@@ -80,25 +81,27 @@ def _module_name_collisions(py_files: tuple[Path, ...], root: Path) -> list[tupl
 
 
 def _rel_key(root: Path, path: Path) -> str:
-    """Znormalizowany klucz sciezki wzgledem korzenia — do wykrywania kolizji.
+    """Normalized path key relative to root — for collision detection.
 
-    Male litery, bo Windows nie rozroznia wielkosci liter: `Main.py` i `main.py`
-    to na dysku ten sam plik."""
+    Lowercase because Windows is case-insensitive: ``Main.py`` and ``main.py``
+    are the same file on disk.
+    """
     return path.relative_to(root).as_posix().lower()
 
 
 def _detect_other_language(scan: ScanResult) -> str | None:
-    """Sufiks jezyka, jesli to on wypelnia projekt zamiast Pythona.
+    """Language suffix if it fills the project instead of Python.
 
-    W trybie jednoplikowym `scan.root` to katalog NADRZEDNY dropnietego pliku —
-    zwykle cudzy folder (Pobrane). Chodzenie po nim (`rglob`) to dokladnie ta
-    szkoda, ktora zadanie 7 mialo usunac: pojedynczy dropniety plik nie moze
-    uruchamiac skanu calego sasiedztwa. Sygnal jednoplikowy jest wiec wziety
-    wylacznie z sufiksu dropnietego pliku, bez zadnego chodzenia po dysku.
+    In single-file mode ``scan.root`` is the PARENT directory of the dropped
+    file — usually someone else's folder (Downloads). Walking it (``rglob``)
+    is exactly the harm that task 7 was meant to eliminate: a single dropped
+    file must not trigger a scan of the entire neighbourhood. The single-file
+    signal therefore comes solely from the dropped file's suffix, without
+    any directory walking.
 
-    B11: używamy `scan.root.walk()` z TYMI SAMYMI wykluczeniami i limitem co
-    skaner, zamiast nieograniczonego `rglob`. Bez tego projekt w folderze z
-    `node_modules` mógł chodzić po milionach plików.
+    B11: we use ``scan.root.walk()`` with the SAME exclusions and limit as the
+    scanner, instead of an unrestricted ``rglob``. Without this a project
+    inside a folder with ``node_modules`` could walk millions of files.
     """
     if scan.single_file is not None:
         suffix = scan.single_file.suffix.lower()
@@ -139,8 +142,8 @@ def analyze_project(root: Path) -> ProjectAnalysis:
                 Issue("scan_truncated", Severity.WARNING, {"files": str(scan.file_count)})
             )
 
-    # B11: pliki niedostępne (odmowa ACL, znikający plik) nie przerywają analizy.
-    # Użytkownik dostaje diagnostykę z nazwą pliku; pozostałe pliki działają.
+    # B11: inaccessible files (ACL denial, disappearing file) do not abort analysis.
+    # The user gets diagnostics naming the file; remaining files keep working.
     sources: dict[Path, str] = {}
     for p in scan.py_files:
         text = _read(p)
@@ -157,9 +160,9 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     converted: dict[str, str] = {}
     conversion_failures: list[dict[str, str]] = []
 
-    # Kolizje: cel konwersji nie moze nadpisac istniejacego pliku .py ani
-    # innej konwersji. Klucz jest znormalizowany do malych liter, bo Windows
-    # nie rozróżnia wielkości liter w nazwach.
+    # Collisions: conversion target must not overwrite an existing .py file
+    # or another conversion. Key is normalized to lowercase because Windows
+    # is case-insensitive.
     taken: dict[str, Path] = {p: p for p in (_rel_key(root, s) for s in scan.py_files)}
 
     for txt in scan.text_candidates:
@@ -180,22 +183,22 @@ def analyze_project(root: Path) -> ProjectAnalysis:
             rel = virtual.relative_to(root).as_posix()
             key = _rel_key(root, virtual)
             if key in taken:
-                # Nie nadpisujemy cudzego kodu po cichu. Blokada, dopoki
-                # uzytkownik nie rozstrzygnie, ktory plik jest wejsciem.
+                # Do not silently overwrite someone else's code. Block until
+                # the user decides which file is the input.
                 issues.append(
                     Issue("txt_collision", Severity.BLOCKER, {"file": txt.name, "target": rel})
                 )
                 continue
             taken[key] = virtual
-            # Klucz konwersji to SCIEZKA WZGLEDNA, nie sama nazwa: `pkg/help.txt`
-            # ma trafic do `pkg/help.py`, a `a/help.txt` i `b/help.txt` musza
-            # zostać dwoma osobnymi modułami.
+            # Conversion key is a RELATIVE PATH, not just the name: ``pkg/help.txt``
+            # should go to ``pkg/help.py``, and ``a/help.txt`` and ``b/help.txt``
+            # must remain two separate modules.
             converted[rel] = result.code
             sources[virtual] = result.code
             if result.code_blocks:
-                # Wiele bloków kodu w jednym TXT (B02): informujemy użytkownika
-                # o granicach i sposobie połączenia, żeby mógł ocenić, czy
-                # bloki to kontynuacja jednego programu, czy alternatywy.
+                # Multiple code blocks in a single TXT (B02): inform the user
+                # about boundaries and how they were joined, so they can judge
+                # whether the blocks are a continuation or alternatives.
                 ranges = ", ".join(f"{b.start_line}–{b.end_line}" for b in result.code_blocks)
                 issues.append(
                     Issue(
@@ -209,12 +212,12 @@ def analyze_project(root: Path) -> ProjectAnalysis:
                     )
                 )
             if "fence_label" in result.steps:
-                # Cicha zmiana cudzego pliku jest gorsza niz brak zmiany.
-                # Pozostale kroki konwersji (ogrodzenia, numery linii, prompty)
-                # zdejmuja rzeczy, ktore NIE SA Pythonem i nikt ich nie broni.
-                # Ten zdejmuje linie, ktora jest skladniowo poprawnym kodem —
-                # wiec jesli kiedys trafi w cos, co uzytkownik naprawde napisal,
-                # ta notatka jest jedynym sladem, po ktorym da sie to odkryc.
+                # Silently changing someone else's file is worse than not
+                # changing it. Other conversion steps (fences, line numbers,
+                # prompts) strip things that are NOT Python and nobody
+                # defends them. This one strips a line that is syntactically
+                # valid code — so if it ever hits something the user actually
+                # wrote, this note is the only trace to discover it.
                 issues.append(Issue("fence_label_removed", Severity.INFO, {"file": txt.name}))
         else:
             conversion_failures.append(
@@ -230,29 +233,29 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     # other sources and the user just needs to be told one file was skipped.
     txt_severity = Severity.WARNING if sources else Severity.BLOCKER
     for data in conversion_failures:
-        # Pusty wynik (sama otoczka czatu, pusty blok) dostaje osobny, ludzki
-        # komunikat zamiast "błąd w linii 0".
+        # Empty result (just chat wrapper, empty block) gets a separate,
+        # human-friendly message instead of "error on line 0".
         if data["detail"] == NO_CODE:
             issues.append(Issue("txt_no_code", txt_severity, {"file": data["file"]}))
         else:
             issues.append(Issue("txt_syntax_error", txt_severity, data))
 
-    # B11: opakowujemy kompletny dict w ParsedSources — jedno parsowanie
-    # na plik, współdzielone przez wszystkie etapy analizy.
+    # B11: wrap the complete dict in ParsedSources — one parse per file,
+    # shared across all analysis stages.
     parsed = ParsedSources(sources)
 
-    # Realne pliki .py nie przechodzily dotad zadnej kontroli skladni: analiza
-    # (`_trees`) po cichu pomijala nieparsowalne drzewa, wiec niepoprawny program
-    # przechodzil przez caly potok i przewracal sie dopiero jako uruchomiony EXE
-    # (build zglaszal "sukces"). Konwersje TXT sa juz sprawdzone przez
-    # convert_text_to_python, wiec walidujemy tylko oryginalne pliki .py.
+    # Real .py files had no syntax check until now: analysis (``_trees``)
+    # silently skipped unparseable trees, so an invalid program passed through
+    # the entire pipeline and only crashed as a running EXE (the build
+    # reported "success"). TXT conversions are already checked by
+    # convert_text_to_python, so we only validate original .py files.
     for py in scan.py_files:
         if py not in parsed:
-            continue  # B11: plik nieodczytany — diagnostyka już dodana
+            continue  # B11: unreadable file — diagnostics already added
         tree = parsed.tree(py)
         if tree is None:
-            # ast.parse zwrocil None (SyntaxError) — parsujemy ponownie,
-            # zeby wyciagnac komunikat bledu.
+            # ast.parse returned None (SyntaxError) — re-parse to extract
+            # the error message.
             try:
                 ast.parse(parsed[py])
             except SyntaxError as exc:
@@ -281,13 +284,12 @@ def analyze_project(root: Path) -> ProjectAnalysis:
         if other:
             issues.append(Issue("other_language", Severity.BLOCKER, {"suffix": other}))
         elif not conversion_failures:
-            # "Nie widze tu Pythona" tylko wtedy, gdy naprawde go nie widzimy.
-            # Gdy plik ZOSTAL rozpoznany jako kod i przewrocil sie dopiero na
-            # skladni, `txt_syntax_error` juz powiedzial, co i w ktorej linii
-            # poprawic. Doklejenie drugiego BLOCKERa zaprzecza pierwszemu, a
-            # przy pojedynczym upuszczonym pliku nazywa przy okazji katalog
-            # NADRZEDNY ("nie widze programu w folderze Pobrane"), ktorego
-            # uzytkownik nigdy nie wskazywal.
+            # "No Python found" only when we truly see none. When a file WAS
+            # recognized as code and only failed on syntax, ``txt_syntax_error``
+            # already says what and on which line to fix. Appending a second
+            # BLOCKER contradicts the first, and for a single dropped file it
+            # also names the PARENT directory ("no program found in Downloads"),
+            # which the user never pointed to.
             issues.append(Issue("no_python_found", Severity.BLOCKER, {"dir": root.name}))
         return ProjectAnalysis(
             root=root,
@@ -311,20 +313,21 @@ def analyze_project(root: Path) -> ProjectAnalysis:
         )
 
     app_kind, kind_certain = detect_app_kind(parsed)
-    # Tryb wyjscia nie jest juz zgadywany z tresci (B01): zalecany jest zawsze
-    # ONEDIR, bo tylko on gwarantuje trwaly zapis ORAZ odczyt zasobow lezacych
-    # obok EXE. ONEFILE zostaje recznym wyborem uzytkownika na ekranie przegladu.
+    # Output mode is no longer guessed from content (B01): the recommended
+    # mode is always ONEDIR because only it guarantees persistent writes AND
+    # reading resources located next to the EXE. ONEFILE remains a manual
+    # user choice on the review screen.
     output_mode = OutputMode.ONEDIR
     issues.extend(collect_code_issues(parsed))
 
-    # Ukryte importy muszą być znane PRZED resolverem: dynamiczny
-    # `importlib.import_module('PIL.Image')` zasila zarówno `--hidden-import`
-    # PyInstallera, jak i listę paczek do instalacji (B04).
+    # Hidden imports must be known BEFORE the resolver: a dynamic
+    # ``importlib.import_module('PIL.Image')`` feeds both PyInstaller's
+    # ``--hidden-import`` and the package install list (B04).
     hidden_imports = collect_hidden_imports(parsed)
 
-    # Ścieżka, a nie sam tekst: resolver rozwija `-r`/`-c` względem katalogu
-    # manifestu. `dep_issues` niesie diagnostykę manifestu (cykl, brak
-    # pliku, nieczytelny pyproject).
+    # Path, not just text: the resolver expands ``-r``/``-c`` relative to
+    # the manifest's directory. ``dep_issues`` carries manifest diagnostics
+    # (cycle, missing file, unreadable pyproject).
     dep_issues: list[Issue] = []
     dependencies = resolve_dependencies(
         parsed,
@@ -339,10 +342,11 @@ def analyze_project(root: Path) -> ProjectAnalysis:
     heavy_packages = [dep.package for dep in dependencies if dep.heavy]
     low, high, heaviest = estimate_exe_size(heavy_packages)
     if heaviest:
-        # Widełki, a nie jedna liczba: PyInstaller wyrzuca z paczki to, czego
-        # kod nie dotyka, więc stałe „kilkaset megabajtów" mijało się z
-        # prawdą o 26-megabajtowym EXE (zgłoszenie 7). Powyżej progu to nadal
-        # ostrzeżenie — poniżej jest zwykłą informacją, nie alarmem.
+        # A range, not a single number: PyInstaller strips from the package
+        # what the code does not touch, so a flat "several hundred megabytes"
+        # was off by a factor of ten for a 26 MB EXE (issue 7). Above the
+        # threshold it is still a warning — below it is just information,
+        # not an alarm.
         size_data = {"low": str(low), "high": str(high), "packages": ", ".join(heaviest[:3])}
         if high >= LARGE_WARNING_MB:
             issues.append(Issue("size_estimate_large", Severity.WARNING, size_data))

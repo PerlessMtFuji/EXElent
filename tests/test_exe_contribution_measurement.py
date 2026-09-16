@@ -1,12 +1,12 @@
-"""Pomiar wkladu paczek do EXE. Uruchamiany recznie, nie w CI.
+"""Measure package contributions to an EXE. Run manually, not in CI.
 
     pytest tests/test_exe_contribution_measurement.py -m slow -s
 
-Buduje minimalny skrypt-swiadek dla kazdej paczki z tabeli i drukuje realny
-wklad = rozmiar EXE ze swiadkiem minus rozmiar EXE pustego skryptu. Wynik
-przepisuje sie RECZNIE do `EXE_CONTRIBUTION` razem z dzisiejsza data.
+Build a minimal witness script for every package in the table and print its
+actual contribution: witness EXE size minus empty-script EXE size. Copy the
+result manually into `EXE_CONTRIBUTION` with today's date.
 
-Trwa dziesiatki minut i pobiera gigabajty. Dlatego `slow`.
+It takes tens of minutes and downloads gigabytes, hence the `slow` marker.
 """
 
 import pytest
@@ -14,8 +14,8 @@ import pytest
 from exelent.cli import run_build
 from exelent.deps.sizes import EXE_CONTRIBUTION
 
-# Import + JEDNO realne uzycie. Sam import bywa wycinany przez PyInstallera
-# jako martwy, a wtedy pomiar klamie w dol.
+# Import plus one real use. PyInstaller may remove an unused import as dead
+# code, which would understate the measurement.
 WITNESSES = {
     "numpy": "import numpy\nprint(numpy.zeros(3).sum())\n",
     "pandas": "import pandas\nprint(pandas.DataFrame({'a': [1]}).sum())\n",
@@ -44,26 +44,25 @@ def _build_size_mb(tmp_path, name: str, code: str) -> float:
     project.mkdir(parents=True)
     (project / "main.py").write_text(code, encoding="utf-8")
     result = run_build(project)
-    assert result.ok, f"{name}: build padl — {[i.code for i in result.issues]}"
+    assert result.ok, f"{name}: build failed — {[i.code for i in result.issues]}"
     return result.size_bytes / 1024**2
 
 
 @pytest.mark.slow
 def test_measure_every_entry_in_the_table(tmp_path):
     baseline = _build_size_mb(tmp_path, "baseline", "print('x')\n")
-    print(f"\nBAZA (pusty skrypt): {baseline:.1f} MB\n")
+    print(f"\nBASELINE (empty script): {baseline:.1f} MB\n")
 
     for package in sorted(EXE_CONTRIBUTION):
         code = WITNESSES.get(package)
         if code is None:
-            print(f"{package}: BRAK swiadka — dopisz go przed pomiarem")
+            print(f"{package}: MISSING witness — add one before measuring")
             continue
         size = _build_size_mb(tmp_path, package, code)
         print(f"{package}: {size - baseline:.1f} MB (EXE {size:.1f} MB)")
 
 
 def test_every_table_entry_has_a_witness():
-    """Wpis bez swiadka nigdy nie zostanie zmierzony i na zawsze zostanie
-    liczba z sufitu."""
+    """An entry without a witness can never replace its unsupported guess."""
     missing = sorted(set(EXE_CONTRIBUTION) - set(WITNESSES))
-    assert missing == [], f"brak skryptu-swiadka dla: {missing}"
+    assert missing == [], f"missing witness scripts for: {missing}"

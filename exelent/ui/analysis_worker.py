@@ -1,8 +1,8 @@
-"""Worker analizy w tle — pętla Qt nie zamraża się przy dużych projektach (B11).
+"""Background analysis worker that keeps Qt responsive on large projects (B11).
 
-Każde żądanie dostaje identyfikator: jeśli użytkownik wybierze nowy folder
-zanim poprzednia analiza się skończy, spóźniony wynik jest odrzucany, a nie
-wyświetlany na ekranie nowego wyboru.
+Every request receives an identifier. If the user selects a new folder before
+the previous analysis finishes, the stale result is discarded instead of
+appearing on the screen for the new selection.
 """
 
 from __future__ import annotations
@@ -17,13 +17,12 @@ from exelent.models import Issue, ProjectAnalysis, Severity
 
 _THREAD_QUIT_TIMEOUT_MS = 5000
 
-# Monotoniczny generator identyfikatorów żądań — dwa wywołania `start()`
-# nigdy nie dostaną tego samego identyfikatora.
+# Monotonic request-ID generator: two `start()` calls never receive the same ID.
 _request_counter = itertools.count(1)
 
 
 class _AnalysisJob(QObject):
-    """Właściwa robota, wykonywana w wątku roboczym."""
+    """The actual work, executed on the worker thread."""
 
     finished = Signal(int, object)  # (request_id, ProjectAnalysis)
 
@@ -35,7 +34,7 @@ class _AnalysisJob(QObject):
     def run(self) -> None:
         try:
             result = analyze_project(self._folder)
-        except Exception as exc:  # noqa: BLE001 - analiza nie moze zabic okna
+        except Exception as exc:  # noqa: BLE001 - analysis must not kill the window
             result = ProjectAnalysis(
                 root=self._folder,
                 scan=__import__("exelent.models", fromlist=["ScanResult"]).ScanResult(
@@ -55,9 +54,9 @@ class _AnalysisJob(QObject):
 class AnalysisWorker(QObject):
     """Worker analizy projektu w tle (B11).
 
-    Sygnał `finished` niesie wyłącznie wynik AKTUALNEGO żądania — wynik
-    starego żądania (nowy wybór nastąpił w trakcie) jest odrzucany, a nie
-    emitowany do ekranu.
+    The `finished` signal carries only the CURRENT request's result. A stale
+    result (a new selection occurred in the meantime) is discarded rather than
+    emitted to the screen.
     """
 
     finished = Signal(object)  # ProjectAnalysis
@@ -72,8 +71,8 @@ class AnalysisWorker(QObject):
         return self._thread is not None
 
     def start(self, folder: Path) -> None:
-        """Uruchamia analizę w tle. Poprzednie niedokończone żądanie jest
-        cichym anulowaniem — jego wynik zostanie odrzucony po dostarczeniu."""
+        """Start background analysis. A previous unfinished request is silently
+        cancelled; its result will be discarded when delivered."""
         self.stop()
         self._current_request = next(_request_counter)
         self._thread = QThread()
@@ -91,14 +90,14 @@ class AnalysisWorker(QObject):
             thread.wait(_THREAD_QUIT_TIMEOUT_MS)
         self._job = None
 
-        # B11: spóźniony wynik starego żądania — odrzucamy, nie emitujemy.
+        # B11: stale result from an old request — discard rather than emit.
         if request_id != self._current_request:
             return
 
         self.finished.emit(result)
 
     def stop(self, timeout_ms: int = _THREAD_QUIT_TIMEOUT_MS) -> bool:
-        """Zatrzymuje trwającą analizę. Do zamykania okna."""
+        """Stop running analysis when closing the window."""
         thread = self._thread
         if thread is None:
             return True

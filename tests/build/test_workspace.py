@@ -225,7 +225,7 @@ def test_inventory_verifies_hash_and_raises_on_mismatch(tmp_path, monkeypatch):
 
 
 def test_inventory_raises_on_deleted_file(tmp_path, monkeypatch):
-    """B08: plik usunięty po analizie blokuje build."""
+    """B08: a file deleted after analysis blocks the build."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
     root = tmp_path / "src"
     root.mkdir()
@@ -240,7 +240,7 @@ def test_inventory_raises_on_deleted_file(tmp_path, monkeypatch):
     with pytest.raises(IssueError) as exc_info:
         materialize_workspace(plan)
 
-    assert "usunięty" in exc_info.value.issue.data["files"]
+    assert "deleted" in exc_info.value.issue.data["files"]
 
 
 def test_inventory_happy_path_copies_and_verifies(tmp_path, monkeypatch):

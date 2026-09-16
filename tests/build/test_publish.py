@@ -1,5 +1,4 @@
-"""A01: publikowanie gotowego artefaktu nigdy nie niszczy poprzedniej wersji
-ani danych, ktore uzytkownik zapisal w katalogu wczesniejszego builda."""
+"""A01: publishing an artifact preserves earlier versions and their user data."""
 
 from __future__ import annotations
 
@@ -78,9 +77,9 @@ def test_existing_onedir_user_data_survives_a_rebuild(tmp_path):
 
     assert issues == ()
     assert final == dest / "Program (2)"
-    # Baza danych poprzedniej wersji bajtowo identyczna.
+    # The previous version's database remains byte-for-byte identical.
     assert db.read_bytes() == db_bytes
-    # Nowy build nie wsiakl w stary katalog.
+    # The new build did not leak into the old directory.
     assert not (prev / "_internal").exists()
 
 

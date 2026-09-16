@@ -1,15 +1,17 @@
-"""Typ aplikacji (okno vs konsola) i ostrzeżenia o kodzie, którego nie da się
-w pełni spakować.
+"""App type (windowed vs console) and warnings about code that cannot be
+fully packaged.
 
-O trybie wyjścia (jeden plik EXE vs folder) NIE decyduje analiza źródeł.
-Wcześniej robiła to heurystyka „czy program zapisuje na dysk": brak wykrytego
-zapisu dawał ONEFILE, a ten ustawiał katalog roboczy na `sys._MEIPASS` —
-tymczasowy katalog rozpakowania, który znika przy zakończeniu procesu. Zapis
-przez alias `open`, `Image.save` czy dowolny wzorzec spoza listy wymykał się
-heurystyce, trafiał do ONEFILE i ginął. Brak rozpoznanego zapisu nie jest
-dowodem, że program niczego nie zapisuje (B01), więc zalecanym i domyślnym
-trybem jest teraz zawsze ONEDIR — patrz `planning.onefile_limitation_issues`
-oraz launcher, który w obu trybach kotwiczy cwd w trwałym katalogu EXE."""
+The output mode (single EXE file vs folder) is NOT decided by source
+analysis. Previously a heuristic "does the program write to disk" did this:
+no detected writes resulted in ONEFILE, which set the working directory to
+``sys._MEIPASS`` — a temporary extraction directory that vanishes when the
+process exits. Writes via an alias like ``open``, ``Image.save`` or any
+pattern not in the list escaped the heuristic, ended up in ONEFILE and were
+lost. Absence of a detected write is not proof that the program writes
+nothing (B01), so the recommended and default mode is now always ONEDIR —
+see ``planning.onefile_limitation_issues`` and the launcher, which in both
+modes anchors cwd in the persistent EXE directory.
+"""
 
 from __future__ import annotations
 
@@ -52,7 +54,7 @@ _SECRET = re.compile(r"['\"](?:sk-|ghp_|AIza|xox[bap]-)[A-Za-z0-9_\-]{16,}['\"]"
 
 
 def _ensure_parsed(sources: Mapping[Path, str]) -> ParsedSources:
-    """Opakowuje zwykly dict w ParsedSources jesli trzeba (B11)."""
+    """Wrap a plain dict in ParsedSources if needed (B11)."""
     if isinstance(sources, ParsedSources):
         return sources
     return ParsedSources(sources)
@@ -64,7 +66,7 @@ def _trees(sources: Mapping[Path, str]) -> list[ast.AST]:
 
 
 def _is_dead_branch(node: ast.If) -> bool:
-    """Blok ``if TYPE_CHECKING:`` lub ``if False:`` — nie wykonuje się w runtime."""
+    """``if TYPE_CHECKING:`` or ``if False:`` block — never executes at runtime."""
     test = node.test
     return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
         isinstance(test, ast.Constant) and test.value is False
@@ -72,7 +74,7 @@ def _is_dead_branch(node: ast.If) -> bool:
 
 
 def _dead_import_lines(tree: ast.AST) -> set[int]:
-    """Linie importów w martwych gałęziach (``if TYPE_CHECKING`` / ``if False``)."""
+    """Lines of imports in dead branches (``if TYPE_CHECKING`` / ``if False``)."""
     dead: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.If) and _is_dead_branch(node):
@@ -161,7 +163,7 @@ def package_submodule_collections(top_imports: set[str]) -> tuple[str, ...]:
 
 
 def _is_meipass_access(node: ast.AST) -> bool:
-    """Rozpoznaje ``sys._MEIPASS`` i ``getattr(sys, '_MEIPASS', ...)``."""
+    """Recognizes ``sys._MEIPASS`` and ``getattr(sys, '_MEIPASS', ...)``."""
     if (
         isinstance(node, ast.Attribute)
         and node.attr == "_MEIPASS"
@@ -182,26 +184,26 @@ def _is_meipass_access(node: ast.AST) -> bool:
 
 
 def _frozen_path_patterns(sources: Mapping[Path, str]) -> list[str]:
-    """Wykrywa uzycie ``__file__`` i ``sys._MEIPASS`` w kodzie uzytkownika.
+    """Detects use of ``__file__`` and ``sys._MEIPASS`` in user code.
 
-    Oba wzorce odwoluja sie do lokalizacji, ktora zmienia sie po spakowaniu
-    przez PyInstaller: ``__file__`` wskazuje na katalog rozpakowania w trybie
-    ONEFILE (nie na katalog EXE), a ``_MEIPASS`` nie istnieje przy normalnym
-    uruchomieniu. Program, ktory na ich podstawie buduje sciezki do zapisu lub
-    odczytu zasobow, moze dzialac inaczej niz zamierzal autor.
+    Both patterns reference a location that changes after packaging by
+    PyInstaller: ``__file__`` points to the extraction directory in ONEFILE
+    mode (not the EXE directory), and ``_MEIPASS`` does not exist during
+    normal execution. A program that builds paths to write or read resources
+    based on them may behave differently than the author intended.
 
-    Nie przepisujemy sciezek w cudzym kodzie (B01). Zamiast tego informujemy
-    uzytkownika PRZED budowaniem, ze te wzorce zostaly rozpoznane, i opisujemy
-    ograniczenia — bez przedstawiania heurystyki jako gwarancji.
+    We do not rewrite paths in other people's code (B01). Instead we inform
+    the user BEFORE building that these patterns were detected, and describe
+    the limitations — without presenting the heuristic as a guarantee.
     """
     found: list[str] = []
     for tree in _trees(sources):
         for node in ast.walk(tree):
-            # __file__ uzyte jako wartosc (nie w przypisaniu lewostronnym)
+            # __file__ used as a value (not in a left-hand assignment)
             if isinstance(node, ast.Name) and node.id == "__file__":
                 if "__file__" not in found:
                     found.append("__file__")
-            # sys._MEIPASS lub getattr(sys, '_MEIPASS', ...)
+            # sys._MEIPASS or getattr(sys, '_MEIPASS', ...)
             elif "_MEIPASS" not in found and _is_meipass_access(node):
                 found.append("_MEIPASS")
     return found

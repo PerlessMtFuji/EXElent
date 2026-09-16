@@ -6,8 +6,7 @@ from exelent.runtime.env import create_build_env
 
 @pytest.mark.slow
 def test_real_env_has_tkinter_and_pyinstaller(tmp_path, monkeypatch):
-    """Dowodzi najważniejszego założenia specyfikacji: CPython sprowadzony
-    przez uv zawiera tkinter, którego oficjalny embeddable Python nie ma."""
+    """Prove that uv's CPython includes tkinter, unlike official embeddable Python."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     src = tmp_path / "src"
     src.mkdir()

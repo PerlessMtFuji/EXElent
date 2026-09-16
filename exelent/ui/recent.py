@@ -1,9 +1,9 @@
-"""Ostatnio uzywane sciezki. Zwykly plik JSON — nie zapisujemy konfiguracji
-buildow, tylko liste folderow, zeby drugi raz nie trzeba bylo ich szukac.
+"""Recently used paths. A plain JSON file stores folder history rather than
+build configuration, so users do not have to find the same folders again.
 
-Kazda operacja jest bezpieczna w obie strony: uszkodzony albo niedostepny plik
-oddaje pusta liste, a nieudany zapis nie przerywa wyboru folderu. Lista jest
-wygoda, wiec nie moze byc powodem, dla ktorego program nie rusza.
+Every operation fails safely in both directions: a corrupt or unavailable file
+returns an empty list, and a failed write does not interrupt folder selection.
+The list is a convenience and must never prevent the application from starting.
 """
 
 from __future__ import annotations
@@ -40,20 +40,19 @@ def load_recent(limit: int = LIMIT) -> list[Path]:
 def display_labels(paths: Sequence[Path]) -> list[str]:
     """Napisy na kafelki — najkrotsze, jakie jeszcze rozrozniaja wpisy.
 
-    Sama `path.name` nie wystarcza: `Pobrane\\test\\test.txt` i
-    `Pobrane\\test.txt` obie nazywaja sie "test.txt", wiec uzytkownik widzial
-    dwa identyczne kafelki prowadzace w rozne miejsca i nie mial jak zgadnac,
-    ktory jest ktory.
+    `path.name` alone is insufficient: `Downloads\\test\\test.txt` and
+    `Downloads\\test.txt` are both named "test.txt", so the user saw two
+    identical tiles leading to different places with no way to distinguish them.
 
-    Rosna TYLKO wpisy, ktore sie zderzaja — reszta zostaje krotka, bo pelna
-    sciezka na kazdym kafelku byla by gorsza od kolizji, ktora naprawia.
+    ONLY colliding entries grow; the rest stay short because displaying the
+    full path on every tile would be worse than the collision being fixed.
     """
     parts = [path.parts for path in paths]
     depths = [1] * len(paths)
-    # Kazdy obrot doklada jeden poziom katalogu tym wpisom, ktore wciaz sa
-    # nierozroznialne. Ograniczenie petli najdluzsza sciezka daje twardy
-    # koniec takze wtedy, gdy dwoch wpisow nie da sie rozroznic w ogole
-    # (sciezka wzgledna kontra bezwzgledna o tym samym ogonie).
+    # Each pass adds one directory level to entries still indistinguishable.
+    # Bounding the loop by the longest path guarantees termination even when
+    # two entries cannot be distinguished at all (relative and absolute paths
+    # with the same suffix).
     for _ in range(max((len(p) for p in parts), default=1)):
         labels = [_tail(parts[i], depths[i]) for i in range(len(paths))]
         counts = Counter(labels)

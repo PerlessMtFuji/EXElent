@@ -7,7 +7,7 @@ from exelent.runtime import Progress, bootstrap, noop_progress
 
 
 def _fake_urlopen(monkeypatch, payload: bytes):
-    """Atrapa `urlopen` oddajaca gotowe bajty. ZADNEJ sieci."""
+    """Fake `urlopen` that returns prepared bytes without network access."""
 
     class FakeResponse:
         def __init__(self) -> None:
@@ -45,7 +45,7 @@ def test_missing_network_is_a_blocker(monkeypatch, tmp_path):
 def test_network_not_checked_when_not_needed(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(bootstrap, "_free_bytes", lambda _p: 10**12)
-    monkeypatch.setattr(bootstrap, "_has_network", lambda: pytest.fail("nie wolno sprawdzać"))
+    monkeypatch.setattr(bootstrap, "_has_network", lambda: pytest.fail("must not check"))
     assert bootstrap.check_preconditions(need_network=False) == ()
 
 
@@ -53,9 +53,9 @@ def test_ensure_uv_returns_cached_binary_without_download(monkeypatch, tmp_path)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     target = bootstrap.uv_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    # Plik musi przejść walidację integralności: nagłówek PE + minimalny rozmiar.
+    # The file must pass integrity validation: PE header plus minimum size.
     target.write_bytes(b"MZ" + b"\x00" * bootstrap._UV_MIN_SIZE)
-    monkeypatch.setattr(bootstrap, "_download", lambda *a, **k: pytest.fail("nie pobieraj"))
+    monkeypatch.setattr(bootstrap, "_download", lambda *a, **k: pytest.fail("do not download"))
     assert bootstrap.ensure_uv(noop_progress) == target
 
 
@@ -66,7 +66,7 @@ def test_ensure_uv_downloads_when_missing(monkeypatch, tmp_path):
     def fake_download(url, dest, progress, cancel=None):
         calls.append(url)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"pobrany uv")
+        dest.write_bytes(b"downloaded uv")
 
     monkeypatch.setattr(bootstrap, "_download_and_extract_uv", fake_download)
     result = bootstrap.ensure_uv(noop_progress)
@@ -74,7 +74,7 @@ def test_ensure_uv_downloads_when_missing(monkeypatch, tmp_path):
     assert bootstrap.UV_VERSION in calls[0]
 
 
-def _fake_uv_zip_bytes(content: bytes = b"prawdziwa zawartosc uv.exe") -> bytes:
+def _fake_uv_zip_bytes(content: bytes = b"real uv.exe contents") -> bytes:
     import io
     import zipfile
 
@@ -98,7 +98,7 @@ def test_interrupted_download_leaves_no_partial_artifact(monkeypatch, tmp_path):
     monkeypatch.setattr(bootstrap, "_download", lambda url, progress, cancel=None: payload)
 
     def failing_replace(_src, _dst):
-        raise OSError("symulowane zerwanie polaczenia w polowie zapisu")
+        raise OSError("simulated connection loss halfway through the write")
 
     monkeypatch.setattr(bootstrap.os, "replace", failing_replace)
 
@@ -115,7 +115,7 @@ def test_ensure_uv_raises_typed_error_with_issue_code(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bootstrap,
         "_download",
-        lambda url, progress, cancel=None: (_ for _ in ()).throw(OSError("brak sieci")),
+        lambda url, progress, cancel=None: (_ for _ in ()).throw(OSError("no network")),
     )
 
     with pytest.raises(bootstrap.UvDownloadError) as exc_info:
@@ -143,7 +143,7 @@ def test_ensure_uv_retries_download_after_prior_interruption(monkeypatch, tmp_pa
     def flaky_replace(src, dst):
         if state["fail_next"]:
             state["fail_next"] = False
-            raise OSError("symulowane zerwanie polaczenia w polowie zapisu")
+            raise OSError("simulated connection loss halfway through the write")
         return real_replace(src, dst)
 
     monkeypatch.setattr(bootstrap.os, "replace", flaky_replace)
@@ -160,8 +160,7 @@ def test_ensure_uv_retries_download_after_prior_interruption(monkeypatch, tmp_pa
 
 
 def test_uv_download_reports_real_bytes(monkeypatch, tmp_path):
-    """`_download` zna Content-Length i czyta porcjami — bajty sa dokladne,
-    nie zgadywane."""
+    """`_download` knows Content-Length and reads chunks, so byte counts are exact."""
     payload = b"x" * (300 * 1024)
     seen: list[Progress] = []
     _fake_urlopen(monkeypatch, payload)

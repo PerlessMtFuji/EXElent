@@ -1,9 +1,8 @@
-"""Parser wyjscia uv. Wszystkie formaty ZMIERZONE na uv 0.8.17, nie zalozone.
+"""Parser for uv output. Every format was measured on uv 0.8.17, not assumed.
 
-Ten plik jest jedynym miejscem, ktore wie, jak uv mowi. Kazdy format tutaj
-pochodzi z prawdziwego przebiegu zapisanego w `fixtures/` — bo parser oparty
-na wyobrazeniu o wyjsciu narzedzia psuje sie cicho, przy pierwszej zmianie
-wersji, i objawia sie paskiem postepu, ktory stoi.
+This file is the only place that knows how uv speaks. Every format comes from
+a real run saved in `fixtures/`, because a parser based on imagined tool output
+fails silently on the first version change and leaves a frozen progress bar.
 """
 
 from pathlib import Path
@@ -44,9 +43,9 @@ def test_download_completion_has_a_leading_space_and_no_size():
 
 
 def test_python_download_name_contains_parentheses():
-    """Naiwny regex bierze `(download)` za rozmiar i wywraca sie.
+    """A naive regex treats `(download)` as the size and fails.
 
-    Wzorzec musi kotwiczyc sie na OSTATNIM nawiasie i wymagac w nim jednostki.
+    The pattern must anchor on the final parentheses and require a unit there.
     """
     event = parse_line("Downloading cpython-3.11.13-windows-x86_64-none (download) (24.3MiB)")
     assert event.kind == DOWNLOAD_START
@@ -71,7 +70,7 @@ def test_python_download_completion_keeps_the_parenthesised_name():
     ],
 )
 def test_counting_lines_accept_singular_and_plural(line, kind, count):
-    """uv pisze "1 package" i "12 packages" — wzorzec musi przyjac obie formy."""
+    """uv writes both "1 package" and "12 packages"; accept both forms."""
     event = parse_line(line)
     assert event.kind == kind
     assert event.count == count
@@ -96,11 +95,11 @@ def test_verbose_dry_run_identifies_the_uncached_distribution():
         "Using Python 3.12.11 environment at: probe-venv",
         "Would install 14 packages",
         " + cpython-3.11.13-windows-x86_64-none (python3.11.exe)",
-        "cos zupelnie nieznanego",
+        "something completely unknown",
     ],
 )
 def test_unknown_lines_return_none_and_never_raise(line):
-    """Postep jest ozdoba. Parser, ktory rzuca, zabija build."""
+    """Progress is optional presentation; a parser exception must not kill a build."""
     assert parse_line(line) is None
 
 
@@ -111,7 +110,7 @@ def test_all_units_are_powers_of_1024():
 
 
 def test_real_install_transcript():
-    """`Installed` jest osobnym zdarzeniem, a nie cisza przed lista pakietow."""
+    """`Installed` is a separate event rather than silence before the package list."""
     kinds = [e.kind for e in _events("uv_install.txt")]
     assert kinds == [RESOLVED, DOWNLOAD_START, DOWNLOAD_DONE, PREPARED, INSTALLED, PACKAGE]
 
@@ -126,9 +125,10 @@ def test_real_dry_run_transcript_yields_every_pinned_package():
 
 
 def test_small_packages_produce_no_download_lines():
-    """ZMIERZONE: `six` i `packaging` z --no-cache nie daly ani jednej linii
-    `Downloading`. Suma liczona z tych linii bylaby systematycznie zanizona,
-    dlatego calosc bierzemy z PyPI, a `Prepared` jest sygnalem 100%.
+    """Measured: `six` and `packaging` emitted no `Downloading` line with --no-cache.
+
+    Summing those lines would systematically undercount, so the total comes
+    from PyPI and `Prepared` signals 100% completion.
     """
     text = "Resolved 2 packages in 372ms\nPrepared 2 packages in 239ms\n"
     events = [e for e in (parse_line(line) for line in text.splitlines()) if e]

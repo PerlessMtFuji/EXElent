@@ -1,4 +1,4 @@
-"""Chodzenie po katalogu użytkownika i klasyfikacja tego, co w nim leży."""
+"""Walking the user's directory and classifying what is in it."""
 
 from __future__ import annotations
 
@@ -46,15 +46,15 @@ _CODE_HINT = re.compile(r"^\s*(def |class |import |from \S+ import |print\()", r
 
 
 def looks_like_python(text: str) -> bool:
-    """Czy tekst wygląda na kod Pythona, nawet jeśli jeszcze się nie parsuje.
+    """Whether the text looks like Python code, even if it does not parse yet.
 
-    Kandydatem jest tekst, który albo (a) po konwersji (odcięcie ogrodzeń
-    markdown, normalizacja cudzysłowów itd. — patrz `textconv`) parsuje się
-    jako prawdziwy Python, albo (b) ma choć jeden strukturalny sygnał kodu
-    na początku linii. (a) łapie krótkie, czyste programy wklejone z okna
-    czatu, których nie da się odróżnić po samych sygnałach — a to jest
-    flagowa ścieżka produktu. (b) nadal łapie zepsuty kod, o którym trzeba
-    użytkownika ostrzec, zamiast po cichu zaklasyfikować go jako dane.
+    A candidate is text that either (a) parses as real Python after
+    conversion (stripping markdown fences, normalizing quotes etc. — see
+    ``textconv``), or (b) has at least one structural code signal at the
+    start of a line. (a) catches short, clean programs pasted from a chat
+    window that cannot be distinguished by signals alone — and this is
+    the product's flagship path. (b) still catches broken code that the
+    user should be warned about, instead of silently classifying it as data.
     """
     if not text.strip():
         return False
@@ -64,9 +64,9 @@ def looks_like_python(text: str) -> bool:
     except SyntaxError:
         pass
     except ValueError:
-        # `ast.parse` rzuca ValueError (nie SyntaxError) na bajty NUL — np.
-        # binarny plik przemianowany na .txt. To nie jest Python; klasyfikujemy
-        # jako dane zamiast wywracac skan wyjatkiem.
+        # ``ast.parse`` raises ValueError (not SyntaxError) on NUL bytes —
+        # e.g. a binary file renamed to .txt. This is not Python; classify
+        # as data instead of crashing the scan with an exception.
         return False
     if convert_text_to_python(text.encode("utf-8", errors="replace")).ok:
         return True
@@ -74,15 +74,18 @@ def looks_like_python(text: str) -> bool:
 
 
 def _read_head(path: Path, limit: int = 64_000) -> tuple[str, bool]:
-    """Czyta co najwyżej `limit` bajtów — do rozpoznania rodzaju pliku.
+    """Read at most ``limit`` bytes — enough to identify the file type.
 
-    Czytamy tylko potrzebny prefiks, nie cały plik. Zwraca ``(tekst, obcięto)``.
+    We read only the needed prefix, not the entire file. Returns
+    ``(text, truncated)``.
 
-    Dekodujemy przez `decode_bytes` — TĄ SAMĄ funkcją co konwerter — więc TXT w
-    UTF-16/BOM jest widziany jako program, a nie jako śmieć z twardego utf-8
-    (B02: skaner i konwerter dekodują tak samo). Prefiks może uciąć 2-bajtową
-    jednostkę UTF-16; wtedy `decode_bytes` rzuca UnicodeDecodeError na gałęzi
-    BOM i do samej KLASYFIKACJI wracamy do tolerancyjnego utf-8."""
+    We decode via ``decode_bytes`` — the SAME function as the converter — so
+    a TXT in UTF-16/BOM is seen as a program, not as garbage from hard utf-8
+    (B02: scanner and converter decode the same way). The prefix may cut a
+    2-byte UTF-16 unit; in that case ``decode_bytes`` raises
+    ``UnicodeDecodeError`` on the BOM branch and for CLASSIFICATION alone
+    we fall back to tolerant utf-8.
+    """
     try:
         with open(path, "rb") as handle:
             raw = handle.read(limit)
@@ -96,11 +99,14 @@ def _read_head(path: Path, limit: int = 64_000) -> tuple[str, bool]:
 
 
 def _module_imports(code: str) -> list[tuple[int, str | None, tuple[str, ...]]]:
-    """`(poziom, moduł, nazwy)` dla każdego importu. Plik z błędem składni →
-    pusta lista: nie wiemy, co importuje, ale to nie powód, żeby go pominąć.
+    """``(level, module, names)`` for every import. A file with a syntax error
+    yields an empty list: we do not know what it imports, but that is no
+    reason to skip it.
 
-    Poziom > 0 to import względny (`from ..pkg import x`); moduł bywa `None`
-    (`from . import helper`); nazwy z `from X import a, b` mogą być podmodułami."""
+    Level > 0 is a relative import (``from ..pkg import x``); module may be
+    ``None`` (``from . import helper``); names from ``from X import a, b``
+    can be submodules.
+    """
     try:
         tree = ast.parse(code)
     except SyntaxError:
@@ -115,14 +121,16 @@ def _module_imports(code: str) -> list[tuple[int, str | None, tuple[str, ...]]]:
 
 
 def _resolve_module(base: Path, parts: list[str]) -> list[Path]:
-    """Pliki modułu `a.b.c` względem `base`: `__init__.py` każdego pakietu po
-    drodze plus sam moduł (`a/b/c.py` albo `a/b/c/__init__.py`). Pusta lista,
-    gdy moduł nie istnieje lokalnie albo pakiet pośredni nie jest pakietem.
+    """Files of module ``a.b.c`` relative to ``base``: ``__init__.py`` of every
+    package along the way plus the module itself (``a/b/c.py`` or
+    ``a/b/c/__init__.py``). Empty list when the module does not exist locally
+    or an intermediate package is not a package.
 
-    B03/B04: namespace packages (PEP 420) — foldery BEZ `__init__.py` — są
-    obsługiwane jako fallback: jeśli folder istnieje, ale nie ma `__init__.py`,
-    moduł jest nadal rozwiązywany (plik liścia musi istnieć). `__init__.py`
-    pośrednich pakietów jest dodawany do wyniku tylko wtedy, gdy istnieje.
+    B03/B04: namespace packages (PEP 420) — folders WITHOUT ``__init__.py`` —
+    are supported as a fallback: if the folder exists but has no
+    ``__init__.py``, the module is still resolved (the leaf file must exist).
+    Intermediate packages' ``__init__.py`` is added to the result only when
+    it exists.
     """
     if not parts:
         return []
@@ -135,8 +143,8 @@ def _resolve_module(base: Path, parts: list[str]) -> list[Path]:
         init = cur / "__init__.py"
         if init.is_file():
             files.append(init)
-        # Namespace package — folder istnieje, ale bez __init__.py.
-        # Kontynuujemy rozwiązywanie, bo plik liścia może istnieć.
+        # Namespace package — folder exists but without __init__.py.
+        # Continue resolving because the leaf file may exist.
     leaf = cur / f"{parts[-1]}.py"
     package = cur / parts[-1] / "__init__.py"
     if leaf.is_file():
@@ -149,8 +157,10 @@ def _resolve_module(base: Path, parts: list[str]) -> list[Path]:
 
 
 def _relative_base(current: Path, root: Path, level: int) -> Path | None:
-    """Katalog bazowy importu względnego. `None`, gdy `..` wychodzi ponad korzeń
-    projektu — to już poza zakresem pojedynczego pliku (nie wciągamy Pobranych)."""
+    """Base directory of a relative import. ``None`` when ``..`` goes above the
+    project root — that is beyond the scope of a single file (we do not pull
+    in Downloads).
+    """
     base = current.parent
     for _ in range(level - 1):
         base = base.parent
@@ -168,11 +178,11 @@ def _import_targets(
     extra_roots: tuple[Path, ...] = (),
 ) -> list[Path]:
     if level == 0:
-        # Szukamy w każdym korzeniu importów. Dla układu `src/` plik
-        # `src/demo/helper.py` jest osiągalny przez `import demo.helper`
-        # zarówno z `root/src/` (korzeń importów), jak i zwykle z `root/`
-        # (tylko gdy `root/demo/` istnieje). Sprawdzamy od najbardziej
-        # specyficznego (B04).
+        # Search every import root. For the ``src/`` layout the file
+        # ``src/demo/helper.py`` is reachable via ``import demo.helper``
+        # from both ``root/src/`` (import root) and normally from ``root/``
+        # (only if ``root/demo/`` exists). Check from the most specific
+        # first (B04).
         bases = [root, *extra_roots]
     else:
         found = _relative_base(current, root, level)
@@ -187,7 +197,7 @@ def _import_targets(
             resolved += _resolve_module(base, [*parts, name])
         if resolved:
             targets.extend(resolved)
-            break  # Pierwszy trafiony korzeń wygrywa.
+            break  # First matching root wins.
     return targets
 
 
@@ -199,20 +209,21 @@ def local_import_closure(
     extra_roots: tuple[Path, ...] = (),
     initial_code: str | None = None,
 ) -> tuple[tuple[Path, ...], bool, tuple[Path, ...]]:
-    """Moduły lokalne, których potrzebuje `entry`, wraz z ich własnymi.
+    """Local modules that ``entry`` needs, together with their own.
 
-    Zwraca ``(pliki_bez_entry, przekroczono_limit, obcięte_pliki)``.
-    Po przekroczeniu limitu wynikiem jest PUSTA krotka, a nie obcięta lista:
-    wciągnięcie losowej połowy łańcucha importów dałoby EXE, które wywala się
-    u odbiorcy na brakującym module — czyli awarię gorszą i późniejszą niż
-    uczciwe „nie dam rady, zostaje sam plik".
+    Returns ``(files_without_entry, exceeded_limit, truncated_files)``.
+    When the limit is exceeded the result is an EMPTY tuple, not a truncated
+    list: pulling in a random half of the import chain would produce an EXE
+    that crashes on a missing module for the recipient — a failure worse and
+    later than an honest "cannot handle it, keeping the single file".
 
-    ``obcięte_pliki`` to pliki, których prefiks (1 MB) nie pokrył całej treści
-    — ich importy mogą być niekompletne (B11).
+    ``truncated_files`` are files whose prefix (1 MB) did not cover the full
+    content — their imports may be incomplete (B11).
 
-    `extra_roots`: dodatkowe korzenie importów (np. `root/src/` dla układu
-    `src/`). `initial_code`: kod pliku głównego, gdy odczyt z dysku nie daje
-    prawidłowej treści — np. po konwersji TXT (B04).
+    ``extra_roots``: additional import roots (e.g. ``root/src/`` for the
+    ``src/`` layout). ``initial_code``: code of the main file when reading
+    from disk does not give the correct content — e.g. after TXT conversion
+    (B04).
     """
     seen: set[Path] = {entry}
     queue = [entry]
@@ -276,12 +287,12 @@ def scan_directory(
             if suffix in {".py", ".pyw"}:
                 py.append(path)
             elif name.lower() == "requirements.txt" and requirements is None:
-                # Pierwszy trafiony wygrywa; walk() idzie od korzenia, więc
-                # manifest projektu bije ten z podkatalogu (B05).
+                # First match wins; walk() goes from root, so the project's
+                # manifest beats one from a subdirectory (B05).
                 requirements = path
             elif name.lower() == "pyproject.toml" and pyproject is None:
-                # Pierwszy trafiony wygrywa; walk() idzie od korzenia, więc
-                # pyproject projektu bije ten z podkatalogu.
+                # First match wins; walk() goes from root, so the project's
+                # pyproject beats one from a subdirectory.
                 pyproject = path
             elif suffix == ".txt":
                 if looks_like_python(_read_head(path)[0]):
@@ -291,10 +302,10 @@ def scan_directory(
             elif suffix in IMAGE_SUFFIXES:
                 if path.stem.lower() in ICON_STEMS or suffix == ".ico":
                     icons.append(path)
-                # Ikona aplikacji może być RÓWNOCZEŚNIE zasobem runtime (B07):
-                # `logo.png` użyty jako ikona EXE musi nadal być dostępny
-                # przez `Image.open('logo.png')` w uruchomionym programie.
-                # Nie: `else` — ZAWSZE do danych, niezależnie od roli ikony.
+                # An app icon can ALSO be a runtime resource (B07):
+                # ``logo.png`` used as the EXE icon must still be accessible
+                # via ``Image.open('logo.png')`` in the running program.
+                # Not ``else`` — ALWAYS to data, regardless of icon role.
                 data.append(path)
             elif suffix in DATA_SUFFIXES:
                 data.append(path)
@@ -316,13 +327,13 @@ def scan_directory(
 
 
 def scan_single_file(path: Path) -> ScanResult:
-    """Skan dla pojedynczego pliku wskazanego przez użytkownika.
+    """Scan for a single file pointed to by the user.
 
-    `root` to katalog nadrzędny, bo ścieżki względne w kodzie użytkownika i
-    `work_dir_for` potrzebują punktu odniesienia — ale katalog NIE jest
-    projektem. Leżące w nim `requirements.txt`, ikona czy pliki danych należą
-    do czegoś innego (najczęściej: do folderu Pobrane) i wciągnięcie ich byłoby
-    tą samą pomyłką, przed którą ta funkcja broni.
+    ``root`` is the parent directory because relative paths in the user's
+    code and ``work_dir_for`` need a reference point — but the directory is
+    NOT the project. The ``requirements.txt``, icon or data files sitting in
+    it belong to something else (usually the Downloads folder) and pulling
+    them in would be the very mistake this function guards against.
     """
     path = Path(path)
     suffix = path.suffix.lower()
@@ -339,10 +350,11 @@ def scan_single_file(path: Path) -> ScanResult:
     except OSError:
         size = 0
 
-    # Dla TXT konwertujemy PRZED liczeniem domknięcia importów (B04): surowy
-    # tekst z ogrodzeniami markdown nie parsuje się jako Python, więc
-    # `_module_imports` zwraca pustą listę i `import helper` w TXT nie znajduje
-    # sąsiedniego `helper.py`. Konwersja jest idempotentna i tania.
+    # For TXT we convert BEFORE computing the import closure (B04): raw
+    # text with markdown fences does not parse as Python, so
+    # ``_module_imports`` returns an empty list and ``import helper`` in
+    # the TXT does not find the neighbouring ``helper.py``. Conversion is
+    # idempotent and cheap.
     initial_code: str | None = None
     if texts:
         try:
@@ -361,8 +373,8 @@ def scan_single_file(path: Path) -> ScanResult:
     if py:
         py = (path, *extra)
     elif texts:
-        # Plik glowny jest kandydatem do konwersji, ale jego sasiedzi to juz
-        # zwykly Python — nie przepuszczamy ich przez konwersje.
+        # The main file is a conversion candidate, but its neighbours are
+        # plain Python — do not run them through conversion.
         py = extra
 
     return ScanResult(

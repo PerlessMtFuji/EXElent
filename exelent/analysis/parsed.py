@@ -1,14 +1,14 @@
-"""Leniwy cache sparsowanych drzew AST — jedno parsowanie na plik (B11).
+"""Lazy cache of parsed AST trees — one parse per file (B11).
 
-Analiza przechodzi przez wiele etapów (typ aplikacji, punkt wejścia,
-importy, zależności, ostrzeżenia), z których KAŻDY potrzebuje AST tych
-samych źródeł. Bez cache każdy etap parsuje je od nowa — w projekcie
-z 10 plikami to 60–70 wywołań `ast.parse` zamiast 10.
+Analysis goes through many stages (app type, entry point, imports,
+dependencies, warnings), ALL of which need the AST of the same sources.
+Without a cache each stage would parse them from scratch — in a project
+with 10 files that means 60–70 calls to ``ast.parse`` instead of 10.
 
-`ParsedSources` jest widokiem nad istniejącym `dict[Path, str]`:
-implementuje `Mapping[Path, str]`, więc dotychczasowy kod nie wie,
-że dostał cache zamiast zwykłego słownika. Drzewa AST są tworzone
-LENIWIE — dopiero przy pierwszym zapytaniu o dany plik.
+``ParsedSources`` is a view over an existing ``dict[Path, str]``:
+it implements ``Mapping[Path, str]``, so existing code does not know
+it got a cache instead of a plain dictionary. AST trees are created
+LAZILY — only on the first access to a given file.
 """
 
 from __future__ import annotations
@@ -19,14 +19,14 @@ from pathlib import Path
 
 
 class ParsedSources(Mapping[Path, str]):
-    """Mapping[Path, str] z cachowanymi drzewami AST.
+    """Mapping[Path, str] with cached AST trees.
 
-    Zachowuje kontrakt ``Mapping[Path, str]`` (klucze = ścieżki, wartości =
-    kod źródłowy), więc może zastąpić ``dict[Path, str]`` wszędzie tam,
-    gdzie dotychczasowy kod oczekiwał ``Mapping[Path, str]``.
+    Maintains the ``Mapping[Path, str]`` contract (keys = paths, values =
+    source code), so it can replace ``dict[Path, str]`` everywhere that
+    existing code expects ``Mapping[Path, str]``.
 
-    Drzewa AST są leniwie cachowane: każdy plik jest parsowany co najwyżej
-    raz, niezależnie od liczby etapów analizy (B11).
+    AST trees are lazily cached: each file is parsed at most once,
+    regardless of the number of analysis stages (B11).
     """
 
     __slots__ = ("_cache", "_sources")
@@ -49,10 +49,10 @@ class ParsedSources(Mapping[Path, str]):
     # --- AST cache ---
 
     def tree(self, path: Path) -> ast.Module | None:
-        """Zwraca sparsowane AST dla pliku lub ``None`` przy błędzie składni.
+        """Return the parsed AST for a file, or ``None`` on syntax error.
 
-        Wynik jest cachowany: powtórne wywołanie dla tej samej ścieżki
-        nie parsuje ponownie.
+        The result is cached: a repeat call for the same path does not
+        re-parse.
         """
         if path not in self._cache:
             try:
@@ -62,5 +62,5 @@ class ParsedSources(Mapping[Path, str]):
         return self._cache[path]
 
     def trees(self) -> list[ast.Module]:
-        """Wszystkie poprawnie sparsowane drzewa."""
+        """All successfully parsed trees."""
         return [t for p in self._sources if (t := self.tree(p)) is not None]

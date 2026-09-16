@@ -1,15 +1,15 @@
-"""Uruchamianie zbudowanych programow tak, zeby timeout NAPRAWDE ograniczal czas.
+"""Run built programs so a timeout actually bounds the elapsed time.
 
-`subprocess.run(..., capture_output=True, timeout=T)` tego nie robi. Po
-przekroczeniu czasu ubija BEZPOSREDNIE dziecko, a potem czyta potok do konca —
-a potok zamyka sie dopiero, gdy skonczy WNUK, ktory odziedziczyl uchwyty. EXE w
-trybie ONEFILE ma dokladnie ten ksztalt: bootloader rozpakowuje `_MEI...` i
-uruchamia w nim prawdziwy program. Zmierzone na tej maszynie: timeout 3 s przy
-dziecku zyjacym 30 s -> powrot po 30.1 s.
+`subprocess.run(..., capture_output=True, timeout=T)` does not guarantee that.
+After the timeout it kills the direct child and then drains the pipe, which
+stays open until a grandchild that inherited the handles exits. A ONEFILE EXE
+has exactly this shape: the bootloader unpacks `_MEI...` and starts the real
+program inside it. Measured on this machine, a 3-second timeout with a child
+living for 30 seconds returned after 30.1 seconds.
 
-Skutek w tescie golden byl gorszy niz porazka: przy regresji w programie z
-oknem test nie zapalal sie na czerwono, tylko wisial, a w nocnym CI oznacza to
-zajety runner i BRAK sygnalu.
+The effect in a golden test was worse than a failure: a windowed-program
+regression made the test hang instead of fail, occupying the nightly CI runner
+without producing a result.
 """
 
 from __future__ import annotations
@@ -19,23 +19,23 @@ import sys
 from contextlib import suppress
 from pathlib import Path
 
-# Ile czekamy na domkniecie potokow PO ubiciu drzewa. Normalnie to ulamek
-# sekundy. Ma wlasna granice, bo gdy `taskkill` zawiedzie (proces podniesiony,
-# brak `taskkill` w obrazie CI), potok trzyma ktos, kogo nie ubilismy — a
-# wtedy `communicate()` bez timeoutu czeka do konca zycia RODZICA. Zmierzone:
-# 300.1 s przy `timeout=3`. Test ma sie zaswiecic na czerwono, nigdy wisiec.
+# How long to drain pipes after killing the tree. This normally takes a fraction
+# of a second. It has its own bound because if `taskkill` fails (an elevated
+# process or a CI image without `taskkill`), an unkilled process keeps the pipe
+# open and an unbounded `communicate()` waits for the parent's full lifetime.
+# Measured at 300.1 seconds with `timeout=3`. The test must fail, never hang.
 DRAIN_TIMEOUT = 10.0
 
 
 def kill_tree(process: subprocess.Popen) -> None:
-    """Ubija cale drzewo procesow, nie tylko rodzica."""
+    """Kill the entire process tree, not only its parent."""
     if sys.platform == "win32":
         subprocess.run(
             ["taskkill", "/F", "/T", "/PID", str(process.pid)],
             capture_output=True,
             check=False,
         )
-    else:  # pragma: no cover - projekt jest windowsowy, ale nie klam o tym
+    else:  # pragma: no cover - Windows project, but keep fallback behavior honest
         process.kill()
     with suppress(subprocess.TimeoutExpired):
         process.wait(timeout=30)
@@ -69,12 +69,12 @@ def run_bounded(
     cwd: Path | None = None,
     allow_timeout: bool = False,
 ) -> subprocess.CompletedProcess:
-    """Uruchamia program i wraca w zadanym czasie — takze gdy zyje jego dziecko.
+    """Run a program and return on time even while its child remains alive.
 
-    `allow_timeout=True` znaczy "przekroczenie czasu jest tu spodziewane"
-    (program z oknem, ktore czeka na uzytkownika) i oddaje wynik z
-    `returncode is None`. Domyslnie przekroczenie czasu jest PORAZKA: test ma
-    sie zaswiecic na czerwono, a nie wisiec.
+    `allow_timeout=True` means the timeout is expected, as for a windowed
+    program waiting for user input, and returns a result whose `returncode` is
+    `None`. By default an overrun is a failure: the test fails instead of
+    hanging.
     """
     process = subprocess.Popen(
         [str(part) for part in command],
@@ -90,9 +90,9 @@ def run_bounded(
     except subprocess.TimeoutExpired:
         kill_tree(process)
         try:
-            # Drzewo nie zyje, wiec potoki zamykaja sie od reki — chyba ze
-            # ubicie zawiodlo. Wtedy rezygnujemy z wyjscia zamiast wisiec:
-            # wynik bez logu jest do uratowania, zawieszony CI nie jest.
+            # The dead tree normally closes its pipes immediately. If killing
+            # failed, give up the output rather than hang: a result without a
+            # log can be investigated, while a stuck CI run cannot.
             out, err = process.communicate(timeout=DRAIN_TIMEOUT)
         except subprocess.TimeoutExpired:
             out, err = "", ""

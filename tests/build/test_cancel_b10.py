@@ -1,8 +1,8 @@
-"""B10: anulowanie całego procesu — wspólny token, timeouty, kill_tree.
+"""B10: cancel the whole process with a shared token, timeouts, and kill_tree.
 
-Testy reprodukują mechanizmy anulowania w każdej fazie pipeline'u:
-bootstrap, materializacja, walidacja, publikacja. Synchronizowane
-zdarzeniami, nie arbitralnym `sleep`.
+The tests reproduce cancellation in every pipeline phase: bootstrap,
+materialization, validation, and publication. Events provide synchronization
+instead of arbitrary sleeps.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from exelent.runtime.bootstrap import ensure_uv
 
 
 def _plan_with_inventory(tmp_path: Path, n_files: int = 5) -> BuildPlan:
-    """Plan z inwentarzem `n_files` plików."""
+    """Create a plan with `n_files` entries in its inventory."""
     root = tmp_path / "proj"
     root.mkdir(parents=True, exist_ok=True)
     entry = root / "main.py"
@@ -38,13 +38,13 @@ def _plan_with_inventory(tmp_path: Path, n_files: int = 5) -> BuildPlan:
     inventory: list[SourceEntry] = []
     for i in range(n_files):
         name = f"mod{i}.py"
-        (root / name).write_text(f"# modul {i}\n", encoding="utf-8")
+        (root / name).write_text(f"# module {i}\n", encoding="utf-8")
         import hashlib
 
-        h = hashlib.sha256(f"# modul {i}\n".encode()).hexdigest()
+        h = hashlib.sha256(f"# module {i}\n".encode()).hexdigest()
         inventory.append(SourceEntry(rel_path=name, sha256=h))
 
-    # dodaj entry do inwentarza
+    # Add the entry point to the inventory.
     import hashlib
 
     eh = hashlib.sha256(b"print('ok')\n").hexdigest()
@@ -61,11 +61,11 @@ def _plan_with_inventory(tmp_path: Path, n_files: int = 5) -> BuildPlan:
     )
 
 
-# --- B10: anulowany token PRZED startem ---
+# --- B10: token cancelled before start ---
 
 
 def test_cancelled_token_before_materialize_does_not_copy(tmp_path, monkeypatch):
-    """Anulowany token przed startem nie tworzy workspace (B10)."""
+    """A token cancelled before start does not create a workspace (B10)."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
     plan = _plan_with_inventory(tmp_path)
     token = CancelToken()
@@ -78,7 +78,7 @@ def test_cancelled_token_before_materialize_does_not_copy(tmp_path, monkeypatch)
 
 
 def test_cancelled_token_before_ensure_uv_does_not_download(monkeypatch, tmp_path):
-    """Anulowany token przed startem ensure_uv nie pobiera (B10)."""
+    """A token cancelled before `ensure_uv` downloads nothing (B10)."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     token = CancelToken()
     token.cancel()
@@ -89,11 +89,11 @@ def test_cancelled_token_before_ensure_uv_does_not_download(monkeypatch, tmp_pat
     assert exc_info.value.issue.code == "build_cancelled"
 
 
-# --- B10: cancel w materialize_workspace przerywa kopiowanie ---
+# --- B10: cancellation stops materialize_workspace copying ---
 
 
 def test_cancel_during_materialize_stops_copying(tmp_path, monkeypatch):
-    """Token ustawiany po pierwszym pliku przerywa kopiowanie (B10)."""
+    """A token set after the first file stops copying (B10)."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
     plan = _plan_with_inventory(tmp_path, n_files=10)
     token = CancelToken()
@@ -110,15 +110,15 @@ def test_cancel_during_materialize_stops_copying(tmp_path, monkeypatch):
         materialize_workspace(plan, cancel=token)
 
     assert exc_info.value.issue.code == "build_cancelled"
-    # Nie skopiowaliśmy wszystkich 11 plików (10 modułów + main.py)
+    # Fewer than all 11 files were copied (10 modules plus main.py).
     assert len(copied) < 11
 
 
-# --- B10: cancel w publish_artifact sprząta staging ---
+# --- B10: cancellation in publish_artifact cleans staging ---
 
 
 def test_cancel_before_publish_does_not_create_staging(tmp_path):
-    """Anulowanie PRZED kopiowaniem nie tworzy stagingu (B10)."""
+    """Cancellation before copying creates no staging directory (B10)."""
     source = tmp_path / "source.exe"
     source.write_bytes(b"\x00" * 100)
     dest_dir = tmp_path / "dest"
@@ -131,15 +131,16 @@ def test_cancel_before_publish_does_not_create_staging(tmp_path):
 
     assert result is None
     assert any(i.code == "build_cancelled" for i in issues)
-    # Żaden staging nie został
+    # No staging directory remains.
     assert not list(dest_dir.glob(".exelent-publish-*"))
 
 
 def test_cancel_after_copy_before_rename_cleans_staging(tmp_path):
-    """Anulowanie PO skopiowaniu, ale PRZED finalizacją sprząta staging (B10).
+    """Cancellation after copying but before finalization removes staging (B10).
 
-    Punkt zatwierdzenia: atomic rename. Przed nią staging jest usuwany;
-    po niej artefakt zostaje. Test ustawia cancel PO copy2/copytree."""
+    The commit point is the atomic rename. Before it, staging is removed; after
+    it, the artifact remains. The test cancels after copy2/copytree.
+    """
     source = tmp_path / "source.exe"
     source.write_bytes(b"\x00" * 100)
     dest_dir = tmp_path / "dest"
@@ -150,7 +151,7 @@ def test_cancel_after_copy_before_rename_cleans_staging(tmp_path):
 
     def copy_then_cancel(src, dst, **kwargs):
         result = original_copy2(src, dst, **kwargs)
-        token.cancel()  # cancel ZARAZ PO skopiowaniu
+        token.cancel()  # cancel immediately after copying
         return result
 
     with patch("exelent.build.publish.shutil.copy2", side_effect=copy_then_cancel):
@@ -158,15 +159,15 @@ def test_cancel_after_copy_before_rename_cleans_staging(tmp_path):
 
     assert result is None
     assert any(i.code == "build_cancelled" for i in issues)
-    # Staging został sprzątnięty
+    # Staging was removed.
     assert not list(dest_dir.glob(".exelent-publish-*"))
 
 
-# --- B10: cancelled build z execute_build ---
+# --- B10: execute_build with a cancelled token ---
 
 
 def test_precancelled_build_returns_immediately(tmp_path, monkeypatch):
-    """Token anulowany PRZED startem nie uruchamia żadnej pracy (B10)."""
+    """A token cancelled before start performs no work (B10)."""
     from exelent.build import service
 
     monkeypatch.setattr(service, "check_preconditions", lambda **_kw: ())
@@ -176,7 +177,7 @@ def test_precancelled_build_returns_immediately(tmp_path, monkeypatch):
     (root / "main.py").write_text("print(1)\n", encoding="utf-8")
 
     def _should_not_run(plan, cancel=None):
-        raise RuntimeError("nie powinno zostac wywolane")
+        raise RuntimeError("must not be called")
 
     monkeypatch.setattr(service, "materialize_workspace", _should_not_run)
 
@@ -200,11 +201,11 @@ def test_precancelled_build_returns_immediately(tmp_path, monkeypatch):
     assert any(i.code == "build_cancelled" for i in result.issues)
 
 
-# --- B10: validate_target_syntax z cancel ---
+# --- B10: validate_target_syntax cancellation ---
 
 
 def test_validate_cancellation_returns_none(tmp_path):
-    """Anulowanie walidacji zwraca None, a build kończy się jako przerwany (B10)."""
+    """Cancelled validation returns None and the build finishes as cancelled (B10)."""
     from exelent.build.validate import validate_target_syntax
 
     workspace = tmp_path / "ws"
@@ -214,9 +215,9 @@ def test_validate_cancellation_returns_none(tmp_path):
     token = CancelToken()
     token.cancel()
 
-    # cancel PRZED startem → None
+    # Cancellation before start returns None.
     result = validate_target_syntax(
-        Path("python.exe"),  # nie zostanie wywołany
+        Path("python.exe"),  # will not be invoked
         workspace,
         python_version="3.12",
         cancel=token,

@@ -1,6 +1,6 @@
-"""Warstwa GUI. Jedyne miejsce w projekcie, które importuje Qt.
+"""GUI layer. The only place in the project that imports Qt.
 
-Rdzeń (analiza → środowisko → build → diagnostyka) nie wie o istnieniu okna;
-`tests/test_layering.py` tego pilnuje. Dzięki temu ta sama logika działa z CLI
-i da się ją testować bez ekranu.
+The core (analysis -> environment -> build -> diagnostics) knows nothing about
+the window; `tests/test_layering.py` enforces this. The same logic therefore
+works from the CLI and can be tested without a display.
 """

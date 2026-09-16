@@ -1,1 +1,1 @@
-"""Generowanie plików potrzebnych do zbudowania EXE (launcher, spec, itd.)."""
+"""Files needed to build an EXE (launcher, spec, etc.)."""

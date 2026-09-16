@@ -693,7 +693,7 @@ def test_manually_added_hidden_import_reaches_the_exe(tmp_path, shared_state):
     _assert_source_untouched(root, {"main.py", "pkg", "pkg/__init__.py", "pkg/plugin.py"})
 
 
-# --- B04: wspólny model importów i zależności ---------------------------------
+# --- B04: unified import and dependency model ---------------------------------
 
 
 def test_src_layout_absolute_import_of_own_package(tmp_path, shared_state):
@@ -744,13 +744,13 @@ def test_txt_single_file_with_local_helper(tmp_path, shared_state):
     assert "TXT-HELPER-OK SKONWERTOWANY" in run.stdout
 
 
-# --- B03 domknięcie: pakiet z __main__.py i plik .pyw ---
+# --- B03 closure: package with __main__.py and .pyw file ---
 
 
 def test_package_dunder_main_runs_as_module(tmp_path, shared_state):
-    """B03: pakiet z `__main__.py` uruchamiany jak `python -m pkg`.
-    Launcher musi użyć runpy z poprawnym module spec, a __name__ i __package__
-    muszą mieć oczekiwane wartości."""
+    """B03: package with `__main__.py` run like `python -m pkg`.
+    Launcher must use runpy with the correct module spec, and __name__ and
+    __package__ must have the expected values."""
     root = _project(
         tmp_path,
         "pakiet-main",
@@ -777,8 +777,8 @@ def test_package_dunder_main_runs_as_module(tmp_path, shared_state):
 
 
 def test_pyw_file_builds_as_windowed_and_runs(tmp_path, shared_state):
-    """B03: plik `.pyw` jest rozpoznawany jako program w oknie — podsystem PE
-    musi być GUI, a program musi się poprawnie uruchomić."""
+    """B03: `.pyw` file is recognized as a windowed program — PE subsystem
+    must be GUI, and the program must run correctly."""
     root = _project(
         tmp_path,
         "pyw-okno",
@@ -801,7 +801,7 @@ def test_pyw_file_builds_as_windowed_and_runs(tmp_path, shared_state):
     run = run_bounded([exe], timeout=180, cwd=exe.parent)
     assert run.returncode == 0, run.stderr
     assert (exe.parent / "dowod.txt").read_text(encoding="utf-8") == "PYW-DZIALA"
-    assert _pe_subsystem(exe) == SUBSYSTEM_GUI, "pyw powinno mieć podsystem GUI"
+    assert _pe_subsystem(exe) == SUBSYSTEM_GUI, "pyw should have GUI subsystem"
     _assert_source_untouched(root, {"main.pyw"})
 
 
@@ -981,7 +981,7 @@ def test_dependency_conflict_blocks_build(tmp_path, shared_state):
     codes = {i.code for i in result.issues}
     assert "requirements_conflict" in codes, codes
     assert result.artifact is None
-    assert result.log_path is None, "PyInstaller nie powinien się uruchomić"
+    assert result.log_path is None, "PyInstaller should not have been invoked"
 
 
 # --- B15 macierz regresji: odpornosc ------------------------------------------

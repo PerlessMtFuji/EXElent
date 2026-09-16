@@ -1,4 +1,4 @@
-"""GUI domyślnie; jawne --cli pozwala automatyzować również spakowany produkt."""
+"""GUI by default; explicit --cli enables automation even from the packaged product."""
 
 import os
 import sys
@@ -10,8 +10,8 @@ def main(argv=None) -> int:
     if argv[1:2] == ["--cli"]:
         from exelent.cli import main as run_cli
 
-        # Bootloader --windowed nie udostępnia strumieni konsoli.
-        # Wynik automatyzacji można odebrać przez --report.
+        # The --windowed bootloader does not provide console streams.
+        # Automation output can be retrieved via --report.
         with ExitStack() as stack:
             if sys.stdout is None or sys.stderr is None:
                 sink = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))

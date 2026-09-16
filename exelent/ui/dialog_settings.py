@@ -1,4 +1,4 @@
-"""Ustawienia programu. Dwa przełączniki — i oba mają widoczny skutek."""
+"""Application settings. Two controls, both with a visible effect."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ class SettingsDialog(QDialog):
         self.ask_checkbox.setChecked(settings.ask_before_download)
 
         self.language_combo = QComboBox()
-        # `None` znaczy "idz za systemem" — to zachowanie domyslne i musi dac
-        # sie do niego wrocic, a nie tylko z niego wyjsc.
+        # `None` means "follow the system" — this is the default and users must
+        # be able to return to it, rather than only leave it.
         self.language_combo.addItem(t("settings_language_system"), None)
         self.language_combo.addItem("Polski", "pl")
         self.language_combo.addItem("English", "en")

@@ -1,8 +1,8 @@
-"""Ile trzeba będzie pobrać — policzone w tle, zanim użytkownik kliknie.
+"""How much must be downloaded, calculated before the user clicks.
 
-Rozwiązanie zależności woła uv i PyPI, więc nie może biec w wątku okna.
-Wątek jest anulowalny i cicho degraduje: brak uv, brak sieci albo błąd PyPI
-zostawia pusty plan, a ekran wraca do szacunku z tabeli.
+Dependency resolution calls uv and PyPI, so it cannot run on the window thread.
+The worker is cancellable and degrades quietly: missing uv, no network, or a
+PyPI error leaves an empty plan and the screen falls back to the table estimate.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from exelent.runtime.env import run_uv
 
 _THREAD_QUIT_TIMEOUT_MS = 5000
 
-# B12: monotoniczny generator identyfikatorów żądań.
+# B12: monotonic request-ID generator.
 _request_counter = itertools.count(1)
 
 
@@ -54,7 +54,7 @@ class _Job(QObject):
             plan = replace(
                 self._resolve(self._packages, self._cancel), request_key=self._request_key
             )
-        except Exception:  # noqa: BLE001 - liczba dla uzytkownika nie moze zabic okna
+        except Exception:  # noqa: BLE001 - a user-facing number must not kill the window
             plan = DownloadPlan(status="error", request_key=self._request_key)
         self.finished.emit(self._request_id, plan)
 
@@ -68,24 +68,23 @@ class PreflightWorker(QObject):
         self._job: _Job | None = None
         self._token: CancelToken | None = None
         self._plan = DownloadPlan()
-        # B12: identyfikator żądania — spóźniony wynik starego żądania nie
-        # nadpisuje nowego.
+        # B12: request identifier prevents a stale result from replacing a new one.
         self._current_request: int = 0
         self._queued: tuple[tuple[str, ...], str, int] | None = None
-        # Zdarzenie, a nie `QThread.wait`: wątek roboczy kręci własną pętlę
-        # zdarzeń i kończy ją dopiero `quit()` z wątku głównego. Gdyby okno
-        # czekało na `QThread.wait`, czekałoby na `quit()`, którego samo nie
-        # zdąży zawołać — czyli zawsze do końca limitu.
+        # Use an event rather than `QThread.wait`: the worker thread runs its
+        # own event loop and ends it only after `quit()` from the main thread.
+        # If the window waited through `QThread.wait`, it would wait for a
+        # `quit()` it cannot call in time — always until the deadline.
         self._done = threading.Event()
         self._done.set()
 
     def plan(self, wait_ms: int = 0) -> DownloadPlan:
-        """Ostatni policzony plan. `wait_ms > 0` czeka na trwające liczenie.
+        """Last calculated plan. `wait_ms > 0` waits for active calculation.
 
-        Specyfikacja §9.2 wymaga tego wprost: kliknięcie „Stwórz EXE" ma
-        chwilę POCZEKAĆ na wynik, a nie zawiesić okno na zapytaniu sieciowym
-        ani po cichu pominąć pytanie o zgodę. Po upływie limitu oddajemy to,
-        co jest — pusty plan znaczy „licz z tabeli".
+        Specification §9.2 requires this explicitly: clicking "Create EXE"
+        should WAIT briefly for a result rather than freeze the window on a
+        network request or silently skip consent. At the deadline return what
+        is available; an empty plan means "use the table estimate".
         """
         if wait_ms > 0:
             self._done.wait(wait_ms / 1000)
@@ -94,14 +93,14 @@ class PreflightWorker(QObject):
     def _resolve(self, packages: Sequence[str], cancel: CancelToken) -> DownloadPlan:
         uv = uv_path()
         if not uv.exists():
-            # Preflight NIE pobiera uv. To praca fazy budowania, ktora ma na to
-            # wlasny pasek postepu — sciaganie 15 MB w tle ekranu 2, bez slowa
+            # Preflight does NOT download uv. That belongs to the build phase,
+            # which has its own progress bar; downloading 15 MB behind screen 2
             # do uzytkownika, byloby niespodzianka.
             return DownloadPlan(status="missing_uv", uv_cached=False)
-        # Wersja DOCELOWEGO Pythona, nie sciezka do `preflight-venv`, ktorego
-        # nikt nie tworzyl: --dry-run rozwiazuje wersje kol dla wlasciwego
-        # interpretera (te sama, ktorej uzyje build), gdy jest juz w cache uv;
-        # bez cache uv i tak degradujemy do pustego planu.
+        # Use the TARGET Python version, not a path to a nonexistent
+        # `preflight-venv`: --dry-run resolves wheels for the correct interpreter
+        # (the one used by the build) when it is already in uv's cache. Without
+        # that cache, degrade to an empty plan anyway.
         python_probe = run_uv(
             uv,
             ["python", "find", TARGET_PYTHON, "--no-python-downloads"],
@@ -130,14 +129,14 @@ class PreflightWorker(QObject):
         stopped = self.stop()
         request_id = next(_request_counter)
         self._current_request = request_id
-        # B12: czyszczenie poprzedniego wyniku — nie pokazujemy szacunku
-        # poprzedniego projektu podczas oczekiwania.
+        # B12: clear the previous result rather than show the old project's
+        # estimate while waiting.
         request_key = preflight_key(packages)
         self._plan = DownloadPlan(status="pending", request_key=request_key)
         self._done.clear()
         if not stopped:
-            # Działającego QThread nie wolno porzucić ani nadpisać referencji.
-            # Ostatnia zmiana wygrywa i wystartuje, gdy stary job naprawdę wyjdzie.
+            # Never abandon a running QThread or overwrite its reference. The
+            # latest change wins and starts after the old job truly exits.
             self._queued = (tuple(packages), request_key, request_id)
             return
         self._launch(tuple(packages), request_key, request_id)
@@ -150,17 +149,17 @@ class PreflightWorker(QObject):
         self._thread = thread
         self._job = job
         job.moveToThread(thread)
-        # DWA połączenia do jednego sygnału, celowo. Bezpośrednie zapisuje
-        # wynik jeszcze w wątku roboczym, żeby `plan(wait_ms)` miał na co
-        # czekać; kolejkowane sprząta wątek w wątku głównym, bo tylko stamtąd
-        # wolno wołać `quit()`/`wait()` na własnym wątku.
+        # TWO deliberate connections to one signal. The direct connection
+        # stores the result on the worker thread so `plan(wait_ms)` has something
+        # to await; the queued one cleans up on the main thread, the only place
+        # allowed to call `quit()`/`wait()` on the owned thread.
         job.finished.connect(self._store, Qt.ConnectionType.DirectConnection)
         job.finished.connect(self._on_done)
         thread.started.connect(job.run)
         thread.start()
 
     def _store(self, request_id: int, plan: DownloadPlan) -> None:
-        # B12: tylko aktualny wynik trafia do _plan.
+        # B12: only the current result enters _plan.
         if request_id == self._current_request:
             self._plan = plan
             self._done.set()
@@ -177,28 +176,26 @@ class PreflightWorker(QObject):
             self._queued = None
             self._launch(packages, request_key, queued_id)
             return
-        # B12: spóźniony wynik starego żądania — odrzucamy, nie emitujemy.
+        # B12: stale result from an old request — discard rather than emit.
         if request_id != self._current_request:
             return
         self._plan = plan
         self.finished.emit(plan)
 
     def stop(self, timeout_ms: int = _THREAD_QUIT_TIMEOUT_MS) -> bool:
-        """Zatrzymuje trwające liczenie i CZEKA na wątek. Mówi, czy wyszedł.
+        """Stop active calculation and WAIT for its thread. Return whether it exited.
 
-        Qt niszczy działający `QThread` przy wychodzeniu (abort), więc
-        `MainWindow.closeEvent` musi to zawołać — tak samo jak robi to dla
+        Qt destroys a running `QThread` on exit (abort), so
+        `MainWindow.closeEvent` must call this just as it calls
         `BuildWorker.shutdown`.
 
-        Anulowanie idzie NAJPIERW, bo samo `quit()` kończy jedynie pętlę
-        zdarzeń wątku: robota siedząca w `uv pip install --dry-run` nie ma
-        pętli, w której by to zauważyła, i `wait()` zawsze dosiedziałby do
-        końca limitu.
+        Cancellation comes FIRST because `quit()` only ends the thread's event
+        loop. Work blocked in `uv pip install --dry-run` has no loop in which to
+        notice it, and `wait()` would always consume the full deadline.
 
-        Referencje kasujemy tylko wtedy, gdy wątek NAPRAWDĘ wyszedł.
-        Zapomnienie o działającym wątku nie sprawia, że przestaje istnieć —
-        sprawia tylko, że nikt już nie wie, że trzeba na niego poczekać, a
-        Qt niszczy go przy wychodzeniu z programu.
+        Clear references only after the thread REALLY exits. Forgetting a live
+        thread does not make it disappear; it only means nobody remembers to
+        wait for it, and Qt destroys it during application shutdown.
         """
         self._queued = None
         thread = self._thread
@@ -212,7 +209,7 @@ class PreflightWorker(QObject):
         if stopped:
             self._thread = None
             self._job = None
-        # Nikt juz nie policzy tego planu — czekajacy ma ruszyc dalej, a nie
-        # dosiedziec do konca limitu.
+        # Nobody will calculate this plan now; release waiters instead of making
+        # them sit through the full deadline.
         self._done.set()
         return stopped

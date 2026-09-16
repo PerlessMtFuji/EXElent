@@ -1,14 +1,13 @@
-"""Wykrywanie pliku głównego. Najsilniejszym sygnałem jest graf importów
-wewnątrz projektu: korzeń to plik, który importuje inne, ale sam nie jest
-importowany przez żaden nietestowy plik projektu.
+"""Entry point detection. The strongest signal is the import graph within
+the project: the root is the file that imports others but is not itself
+imported by any non-test file in the project.
 
-Ten graf sygnał celowo dominuje nad wszystkimi słabszymi wskazówkami razem
-wziętymi (nazwa pliku, blok __main__, lokalizacja w korzeniu, wywołanie
-startowe): korzeń grafu (ROOT_CANDIDATE_BONUS) jest liczbowo większy niż
-suma wszystkich pozostałych bonusów, więc żadna kombinacja słabych sygnałów
-nie potrafi przebić prawdziwego korzenia importów. Importy pochodzące z
-plików testowych (test_*.py / *_test.py) nie liczą się do tego grafu —
-plik importowany wyłącznie przez test nadal jest traktowany jak korzeń.
+This graph signal intentionally dominates over all weaker hints combined
+(file name, __main__ guard, root location, startup call): the import-graph
+root (ROOT_CANDIDATE_BONUS) is numerically larger than the sum of all other
+bonuses, so no combination of weak signals can outweigh the true import
+root. Imports from test files (test_*.py / *_test.py) do not count toward
+this graph — a file imported only by tests is still treated as a root.
 """
 
 from __future__ import annotations
@@ -24,10 +23,10 @@ PREFERRED_STEMS = ("main", "app", "run", "start", "__main__", "program", "gui")
 STARTUP_CALLS = frozenset({"mainloop", "exec", "exec_", "run", "run_app", "show"})
 CERTAINTY_MARGIN = 15
 
-# Suma wszystkich słabszych bonusów (IMPORTS_LOCAL_BONUS + MAIN_GUARD_BONUS +
-# ROOT_LOCATION_BONUS + PREFERRED_NAME_BONUS + STARTUP_CALL_BONUS) wynosi
-# 15+25+10+20+15 = 85. ROOT_CANDIDATE_BONUS musi być od tego większy, żeby
-# sygnał grafu importów zawsze wygrywał — patrz docstring modułu.
+# The sum of all weaker bonuses (IMPORTS_LOCAL_BONUS + MAIN_GUARD_BONUS +
+# ROOT_LOCATION_BONUS + PREFERRED_NAME_BONUS + STARTUP_CALL_BONUS) equals
+# 15+25+10+20+15 = 85. ROOT_CANDIDATE_BONUS must exceed this so the
+# import-graph signal always wins — see module docstring.
 ROOT_CANDIDATE_BONUS = 100
 IMPORTS_LOCAL_BONUS = 15
 MAIN_GUARD_BONUS = 25
@@ -38,16 +37,16 @@ TEST_FILE_PENALTY = 40
 
 
 def import_roots(root: Path, sources: Mapping[Path, str]) -> tuple[Path, ...]:
-    """Korzenie importów projektu — katalogi, od których `import X` się rozwiązuje.
+    """Import roots of the project — directories from which ``import X`` resolves.
 
-    Układ zwykły: sam `root`. Układ `src/`: RÓWNIEŻ `root/src/`, gdy `src/`
-    istnieje jako katalog, ale NIE jest pakietem Pythona (brak `__init__.py`),
-    a przynajmniej jeden plik źródłowy leży pod `src/` (B04).
+    Normal layout: just ``root``. ``src/`` layout: ALSO ``root/src/`` when
+    ``src/`` exists as a directory but is NOT a Python package (no
+    ``__init__.py``) and at least one source file resides under ``src/`` (B04).
 
-    Ta sama logika musi obowiązywać wszędzie: w zestawie modułów lokalnych
-    (żeby `import demo` nie szło na PyPI), w domknięciu importów skanera
-    (żeby `import helper` znalazło sąsiada) i w argumentach PyInstallera
-    (`--paths`). Jedno miejsce.
+    This same logic must apply everywhere: in the set of local modules (so
+    that ``import demo`` does not go to PyPI), in the scanner's import
+    closure (so that ``import helper`` finds a neighbour), and in PyInstaller
+    arguments (``--paths``). One place.
     """
     roots: list[Path] = [root]
     src = root / "src"
@@ -61,7 +60,7 @@ def import_roots(root: Path, sources: Mapping[Path, str]) -> tuple[Path, ...]:
 
 
 def _is_under(path: Path, directory: Path) -> bool:
-    """Czy `path` leży pod `directory` (nie jest samym `directory`)."""
+    """Whether ``path`` lies under ``directory`` (not ``directory`` itself)."""
     try:
         path.relative_to(directory)
         return path != directory
@@ -70,19 +69,20 @@ def _is_under(path: Path, directory: Path) -> bool:
 
 
 def _module_name_from_root(import_root: Path, path: Path) -> str:
-    """Nazwa modułu najwyższego poziomu względem jednego korzenia importów."""
+    """Top-level module name relative to a single import root."""
     rel = path.relative_to(import_root)
     return rel.stem if rel.parent == Path(".") else rel.parts[0]
 
 
 def _module_name(root: Path, path: Path, roots: tuple[Path, ...] | None = None) -> str:
-    """Nazwa modułu najwyższego poziomu, z uwzględnieniem układu `src/`.
+    """Top-level module name, accounting for the ``src/`` layout.
 
-    Dla `src/demo/main.py` gdy `src/` nie jest pakietem: zwraca `"demo"`,
-    nie `"src"`. Bez tego `import demo.helper` zostaje oznaczony jako
-    zewnętrzna paczka (B04)."""
+    For ``src/demo/main.py`` when ``src/`` is not a package: returns
+    ``"demo"``, not ``"src"``. Without this, ``import demo.helper`` would
+    be flagged as an external package (B04).
+    """
     if roots is not None:
-        # Wybierz najgłębszy pasujący korzeń (src/ jest głębszy niż root).
+        # Pick the deepest matching root (src/ is deeper than root).
         for ir in sorted(roots, key=lambda r: len(r.parts), reverse=True):
             try:
                 return _module_name_from_root(ir, path)
@@ -156,9 +156,9 @@ def rank_entry_candidates(root: Path, sources: Mapping[Path, str]) -> tuple[Entr
         return ()
     if len(sources) == 1:
         only = next(iter(sources))
-        return (EntryCandidate(path=only, score=100, reasons=("jedyny plik",)),)
+        return (EntryCandidate(path=only, score=100, reasons=("only file",)),)
 
-    # B11: korzystamy z cache AST jesli sources to ParsedSources
+    # B11: use AST cache if sources is a ParsedSources
     parsed = sources if isinstance(sources, ParsedSources) else ParsedSources(sources)
 
     roots = import_roots(root, sources)
@@ -181,25 +181,25 @@ def rank_entry_candidates(root: Path, sources: Mapping[Path, str]) -> tuple[Entr
 
         if module not in imported_by_nontest:
             score += ROOT_CANDIDATE_BONUS
-            reasons.append("korzeń grafu importów (nikt nietestowy go nie importuje)")
+            reasons.append("import graph root (no non-test file imports it)")
         if imports_map[path]:
             score += IMPORTS_LOCAL_BONUS
-            reasons.append("importuje inne pliki projektu")
+            reasons.append("imports other project files")
         if _has_main_guard(code, tree=t):
             score += MAIN_GUARD_BONUS
-            reasons.append("ma blok __main__")
+            reasons.append("has __main__ guard")
         if path.parent == root:
             score += ROOT_LOCATION_BONUS
-            reasons.append("leży w korzeniu")
+            reasons.append("located in project root")
         if path.stem.lower() in PREFERRED_STEMS or path.stem.lower() == root.name.lower():
             score += PREFERRED_NAME_BONUS
-            reasons.append("typowa nazwa pliku startowego")
+            reasons.append("typical entry point filename")
         if _has_startup_call(code, tree=t):
             score += STARTUP_CALL_BONUS
-            reasons.append("wywołuje start aplikacji")
+            reasons.append("calls application startup")
         if _is_test_file(path):
             score -= TEST_FILE_PENALTY
-            reasons.append("wygląda na test")
+            reasons.append("looks like a test")
 
         candidates.append(EntryCandidate(path=path, score=score, reasons=tuple(reasons)))
 

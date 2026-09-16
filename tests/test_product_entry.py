@@ -1,4 +1,4 @@
-"""Ten sam adapter CLI działa ze strumieniami konsoli i bez nich."""
+"""The same CLI adapter works with and without console streams."""
 
 import json
 import sys

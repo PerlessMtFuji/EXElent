@@ -1,7 +1,7 @@
-"""Raport z nieudanego builda i gotowe zgloszenie na GitHubie.
+"""Failed-build report and a ready-to-file GitHub issue.
 
-Kazdy nierozpoznany blad trafiajacy do nas jako zgloszenie z pelnym
-kontekstem staje sie kandydatem na nowy wzorzec w patterns.py.
+Every unrecognized error reported with full context becomes a candidate for a
+new pattern in patterns.py.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ REPO_URL = "https://github.com/PerlessMtFuji/EXElent"
 # headroom below that so we never rely on being exactly at the edge.
 MAX_URL_CHARS = 7500
 
-_TITLE = "Build nie powiodl sie"
-_TRUNCATED_SUFFIX = "\n...(log skrocony)...\n"
+_TITLE = "Build failed"
+_TRUNCATED_SUFFIX = "\n...(log truncated)...\n"
 
 
 def tail(log: str, lines: int = 40) -> str:
@@ -32,7 +32,7 @@ def tail(log: str, lines: int = 40) -> str:
 def _context(plan_summary: str) -> str:
     return (
         f"**{APP_NAME}**\n\n"
-        f"- Projekt: {plan_summary}\n"
+        f"- Project: {plan_summary}\n"
         f"- System: {platform.platform()}\n"
         f"- Python EXElent: {sys.version.split()[0]}\n"
     )
@@ -60,7 +60,7 @@ def github_issue_url(log: str, plan_summary: str) -> str:
 
     while len(url) > MAX_URL_CHARS and excerpt:
         excerpt = excerpt[: len(excerpt) // 2]
-        suffix = _TRUNCATED_SUFFIX if excerpt else "(log skrocony)\n"
+        suffix = _TRUNCATED_SUFFIX if excerpt else "(log truncated)\n"
         body = f"{header}\n\n```\n{excerpt}{suffix}```\n"
         url = _build_url(body)
 

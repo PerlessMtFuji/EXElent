@@ -1,7 +1,7 @@
-"""Rozmiary i czasy po ludzku. Jedyne miejsce, które je formatuje.
+"""Human-readable sizes and times. The single place that formats them.
 
-Cztery niezależne implementacje „ile to megabajtów" rozjeżdżają się co do
-zaokrąglenia, a użytkownik widzi 26,0 MB w oknie i 26 MB na ekranie obok.
+Four independent implementations of "how many megabytes" disagree on rounding,
+so the user sees 26.0 MB in one window and 26 MB on the adjacent screen.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ def human_size(size_bytes: int) -> str:
     megabytes = size_bytes / 1024**2
     if megabytes >= 1:
         return f"{megabytes:.1f} MB"
-    # Zaokrąglenie połówek W GÓRĘ, a nie bankierskie: `f"{0.5:.0f}"` daje
-    # w Pythonie "0", więc pobranie 512 bajtów meldowało się jako "0 KB".
+    # Round halves UP rather than using banker's rounding: `f"{0.5:.0f}"`
+    # produces "0" in Python, so a 512-byte download was reported as "0 KB".
     return f"{math.floor(size_bytes / 1024 + 0.5):.0f} KB"
 
 

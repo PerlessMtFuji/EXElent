@@ -1,7 +1,7 @@
-"""Okno zgody przed pobieraniem.
+"""Consent dialog shown before a download.
 
-Pytanie o zgode na pobranie ZERA megabajtow uczy uzytkownika klikac OK bez
-czytania — dlatego to okno musi umiec sie nie pokazac.
+Asking for consent to download zero megabytes teaches users to click OK without
+reading, so the dialog must be able to stay hidden.
 """
 
 import pytest
@@ -58,17 +58,19 @@ def test_dont_ask_again_persists(qtbot):
     assert load_settings().ask_before_download is False
 
 
-# --- spec 9.2: preflight, ktory nie zdazyl, nie moze skasowac pytania ---
+# --- spec 9.2: an unfinished preflight must not suppress the question ---
 
 
 def test_an_unanswered_preflight_still_asks_using_the_table():
-    """Zgloszenie 4 powstalo na WOLNYM laczu — czyli dokladnie tam, gdzie
-    preflight nie zdazy. Cichy start builda bylby ta sama szkoda."""
+    """Issue 4 was reported on a slow link, where preflight may not finish.
+
+    Starting the build silently would recreate the same problem.
+    """
     assert should_ask_offline(DownloadPlan(), Settings(), estimate_high_mb=115) is True
 
 
 def test_a_resolved_plan_with_nothing_to_download_does_not_ask_again():
-    """Niepusty `specs` znaczy, ze preflight ODPOWIEDZIAL: nic nie brakuje."""
+    """Nonempty `specs` means preflight answered that nothing is missing."""
     cached = DownloadPlan(specs=("six==1.17.0",), would_download=0)
     assert should_ask_offline(cached, Settings(), estimate_high_mb=115) is False
 
@@ -104,7 +106,7 @@ def test_missing_tool_dialog_does_not_call_zero_an_exe_or_transfer_size(qtbot):
     assert "0-0" not in dialog.summary_label.text()
 
 
-# --- okno ustawien: oba przelaczniki maja widoczny skutek ---
+# --- settings dialog: both controls have an observable effect ---
 
 
 def test_settings_dialog_reports_what_the_user_picked(qtbot):

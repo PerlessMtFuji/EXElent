@@ -1,7 +1,7 @@
-"""Ustawienia sa WYGODA i nie moga byc powodem, dla ktorego program nie rusza.
+"""Settings are optional state and must never prevent the program from starting.
 
-Ta sama zasada rzadzi `ui/recent.py`: uszkodzony plik oddaje wartosci domyslne,
-a nieudany zapis nie przerywa pracy.
+The same rule governs `ui/recent.py`: a corrupt file returns defaults, and a
+failed write does not interrupt the work.
 """
 
 import json
@@ -30,21 +30,21 @@ def test_roundtrip():
 def test_corrupt_file_gives_defaults_instead_of_crashing(tmp_path):
     path = tmp_path / "EXElent" / "settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("{ to nie jest json", encoding="utf-8")
+    path.write_text("{ this is not json", encoding="utf-8")
     assert load_settings() == Settings()
 
 
 def test_a_json_list_is_not_settings(tmp_path):
     path = tmp_path / "EXElent" / "settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(["czemu nie"]), encoding="utf-8")
+    path.write_text(json.dumps(["why not"]), encoding="utf-8")
     assert load_settings() == Settings()
 
 
 def test_unknown_keys_are_ignored_and_missing_ones_filled_in(tmp_path):
     path = tmp_path / "EXElent" / "settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"jakis_stary_klucz": 1, "language": "pl"}), encoding="utf-8")
+    path.write_text(json.dumps({"some_old_key": 1, "language": "pl"}), encoding="utf-8")
     settings = load_settings()
     assert settings.language == "pl"
     assert settings.ask_before_download is True
@@ -59,7 +59,7 @@ def test_wrong_type_falls_back_to_the_default(tmp_path):
 
 def test_failed_write_does_not_raise(monkeypatch):
     def boom(*_args, **_kwargs):
-        raise OSError("dysk tylko do odczytu")
+        raise OSError("read-only disk")
 
     monkeypatch.setattr("pathlib.Path.write_text", boom)
-    save_settings(Settings(ask_before_download=False))  # nie rzuca
+    save_settings(Settings(ask_before_download=False))  # does not raise

@@ -1,16 +1,15 @@
-"""Co rdzen NAPRAWDE produkuje — liczone z kodu, nie przepisane do testu.
+"""Derive what the core actually produces from code instead of a copied list.
 
-Recenzja rundy 4 (I12) pokazala, po co to istnieje: oba straznik i kompletnosci
-przewidziane w planie byly slepe na 7 kodow, ktore rdzen produkuje, w tym na
-`cloud_file_unavailable` stworzony rundu wczesniej. Lista przepisana recznie
-starzeje sie po cichu — nikt nie dostaje czerwonego testu, tylko uzytkownik
-dostaje goly kod zamiast zdania.
+Review round 4 (I12) showed why this exists: both planned completeness guards
+missed seven codes emitted by the core, including `cloud_file_unavailable`
+added one round earlier. A manually copied list becomes stale silently, leaving
+the user with a raw code instead of a sentence while tests remain green.
 
-Skan jest skladniowy (AST), wiec ma swoje granice: widzi `Issue("kod", ...)`
-z literalem, nie widzi kodu skladanego w locie. Dlatego kazde takie miejsce
-musi byc ZADEKLAROWANE ponizej, a test pilnuje, ze deklaracja zgadza sie z
-rzeczywistoscia. Nowa konstrukcja dynamiczna zapala test, zamiast po cichu
-wypasc z inwentarza.
+The scan is syntax-based (AST), so it has limits: it sees a literal
+`Issue("code", ...)`, but not a code assembled at runtime. Every dynamic site
+must therefore be declared below, and a test checks declarations against
+reality. A new dynamic construction fails a test instead of leaving the
+inventory silently.
 """
 
 from __future__ import annotations
@@ -23,29 +22,29 @@ from exelent.diagnostics.patterns import PATTERNS
 
 CORE = Path(__file__).resolve().parents[2] / "exelent"
 
-# Kody, ktorych `data` nie jest literalnym slownikiem w miejscu wywolania.
-# Klucze podane recznie, bo skan ich nie widzi — i wlasnie dlatego test
-# `test_codes_with_non_literal_data_are_declared` pilnuje tej listy.
+# Codes whose `data` is not a literal dictionary at the call site. The keys are
+# listed manually because the scan cannot see them, which is precisely why
+# `test_codes_with_non_literal_data_are_declared` protects this list.
 DECLARED_DATA: dict[str, frozenset[str]] = {
     "txt_syntax_error": frozenset({"file", "line", "detail"}),
     "size_estimate": frozenset({"low", "high", "packages"}),
     "size_estimate_large": frozenset({"low", "high", "packages"}),
 }
 
-# Miejsca, w ktorych sam KOD Issue nie jest literalem. Jedyne takie miejsce to
-# `explain_log`, ktore przepisuje kody z `PATTERNS` — a te inwentarz i tak zna.
+# Sites where the Issue code itself is not a literal. The only such site is
+# `explain_log`, which copies codes from `PATTERNS`, already known to inventory.
 DECLARED_DYNAMIC_ISSUES = frozenset({"diagnostics/patterns.py::explain_log"})
 
-# To samo dla faz postepu: `_run_pyinstaller` przepisuje wartosci z `PHASES`.
+# Likewise for progress phases: `_run_pyinstaller` copies values from `PHASES`.
 DECLARED_DYNAMIC_PHASES = frozenset({"build/pyinstaller.py::build"})
 
 
 def _calls(name: str):
-    """(sciezka::funkcja, wezel wywolania) dla kazdego wywolania `name` w rdzeniu."""
+    """Yield (path::function, call node) for each core call to `name`."""
     for path in sorted(CORE.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         where = path.relative_to(CORE).as_posix()
-        yield from _in_scope(tree, f"{where}::<modul>", where, name)
+        yield from _in_scope(tree, f"{where}::<module>", where, name)
 
 
 def _in_scope(node: ast.AST, scope: str, where: str, name: str):
@@ -72,7 +71,7 @@ def _data_node(node: ast.Call) -> ast.AST | None:
 
 
 def issue_data_keys() -> dict[str, set[str]]:
-    """Kod Issue -> klucze `data`, ktore rdzen pod niego podklada."""
+    """Map each Issue code to the `data` keys supplied by the core."""
     found: dict[str, set[str]] = {}
     for _where, node in _calls("Issue"):
         code = _literal_str(node.args[0]) if node.args else None
@@ -110,12 +109,13 @@ def dynamic_issue_sites() -> set[str]:
 
 
 def _phase_of(node: ast.Call) -> str | None:
-    """Faza z wywolania `progress(...)` — w obu ksztaltach.
+    """Extract the phase from either form of a `progress(...)` call.
 
-    Do zadania 10 faza byla pierwszym argumentem: `progress("analyze", 0.3)`.
-    Teraz siedzi w obiekcie: `progress(Progress(phase="analyze", ...))`.
-    Bez tego skan przestaje widziec fazy, `test_every_progress_phase_is_translated`
-    slepnie na pustym zbiorze, a jedynym sygnalem zostaje
+    Before task 10, the phase was the first argument: `progress("analyze", 0.3)`.
+    It now lives in an object: `progress(Progress(phase="analyze", ...))`.
+    Without both forms, the scan stops seeing phases,
+    `test_every_progress_phase_is_translated` passes on an empty set, and the
+    only remaining signal is
     `test_dynamic_progress_sites_are_declared`.
     """
     if not node.args:

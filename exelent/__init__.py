@@ -1,1 +1,1 @@
-"""EXElent — zamienia folder z kodem Python na plik EXE dla Windows."""
+"""EXElent turns a folder of Python code into a Windows EXE."""

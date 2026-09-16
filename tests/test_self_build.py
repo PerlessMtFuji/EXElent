@@ -1,10 +1,9 @@
-"""EXElent pakujący sam siebie.
+"""EXElent packaging itself.
 
-Testy z planu asertowały obecność napisów w pliku (`"--noupx" in text`).
-Taki test przechodzi także dla komentarza albo dla flagi w martwej gałęzi —
-to ta sama klasa słabej asercji, która w tym projekcie przeżyła już pięć
-zadań. Tutaj mierzona jest LISTA ARGUMENTÓW, którą naprawdę dostanie
-PyInstaller.
+The plan's tests asserted string presence in a file (`"--noupx" in text`).
+Such a test also passes for a comment or a flag in a dead branch — the
+same class of weak assertion that survived five tasks in this project.
+Here we measure the actual ARGUMENT LIST that PyInstaller will receive.
 """
 
 from __future__ import annotations
@@ -15,8 +14,8 @@ from pathlib import Path
 import build_exelent
 from exelent.constants import APP_NAME, PYINSTALLER_SPEC
 
-# Zakotwiczone w katalogu repozytorium, nie w katalogu bieżącym: test ma
-# mierzyć plik wydania, a nie to, skąd ktoś uruchomił pytest.
+# Anchored to the repository directory, not the current directory: the test
+# must measure the release file, not wherever someone ran pytest from.
 REPO = Path(build_exelent.__file__).parent
 RELEASE_WORKFLOW = REPO / ".github" / "workflows" / "release.yml"
 
@@ -84,21 +83,21 @@ def test_release_workflow_uploads_the_file_the_script_produces():
     assert f"dist/{APP_NAME}.exe" in text
 
 
-# --- README i program muszą wysyłać użytkownika w to samo miejsce ---
+# --- README and the program must send the user to the same place ---
 
 
 def test_readme_points_at_the_same_repository_as_the_report_button():
-    """Program po nieudanym buildzie proponuje zgłoszenie na GitHubie.
+    """After a failed build, the program offers to file a report on GitHub.
 
-    Gdyby README kierowało gdzie indziej, połowa użytkowników pisałaby w
-    miejscu, którego nikt nie czyta — a rozjazd tych dwóch adresów jest
-    niewidoczny, dopóki ktoś ręcznie ich nie porówna.
+    If the README pointed elsewhere, half the users would write in a place
+    nobody reads — and the divergence of those two addresses is invisible
+    until someone manually compares them.
     """
     from exelent.diagnostics.report import REPO_URL
 
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    # Sprawdzany jest LINK DO POBRANIA, nie samo wystąpienie adresu gdziekolwiek
-    # w pliku: mutant podmieniający wyłącznie ten link przechodził, dopóki inne
-    # wzmianki o repozytorium zostawały nietknięte.
+    # We check the DOWNLOAD LINK, not just any occurrence of the address
+    # anywhere in the file: a mutant replacing only this link passed as long
+    # as other mentions of the repository remained untouched.
     assert f"{REPO_URL}/releases/latest" in readme
     assert f"{REPO_URL}/issues" in readme

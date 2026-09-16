@@ -38,10 +38,10 @@ def test_plain_script_defaults_to_console():
     assert kind is AppKind.CONSOLE
 
 
-# Tryb wyjscia (ONEFILE vs ONEDIR) NIE jest juz zgadywany z tresci zrodel (B01):
-# zalecany jest zawsze ONEDIR, a wybor ONEFILE nalezy do uzytkownika. Regresje
-# tej decyzji sa w tests/analysis/test_project.py (zalecany tryb) oraz
-# tests/test_planning.py (ograniczenie recznego ONEFILE).
+# Output mode (ONEFILE versus ONEDIR) is no longer inferred from source (B01).
+# ONEDIR is always recommended, while the user chooses ONEFILE. Regression
+# coverage lives in test_project.py (recommendation) and test_planning.py
+# (manual ONEFILE constraint).
 
 
 def test_type_checking_import_does_not_trigger_windowed():
@@ -87,7 +87,7 @@ def test_variable_dynamic_import_raises_issue():
     assert "dynamic_import_unresolved" in codes
 
 
-# B01: heurystyka __file__ / _MEIPASS — ostrzezenia bez przepisywania kodu
+# B01: __file__ / _MEIPASS heuristics warn without rewriting code
 
 
 def test_dunder_file_raises_frozen_path_issue():

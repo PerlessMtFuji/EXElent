@@ -1,26 +1,25 @@
-"""Kończenie procesów potomnych — wspólne dla trzech miejsc, które tego
-potrzebują.
+"""Child-process termination shared by the three places that need it.
 
-Przerwany build (PyInstaller uruchamia własne procesy potomne), anulowany
-preflight (uv) i awaryjne zamknięcie okna mają ten sam obowiązek: nie
-zostawić po sobie niczego, co mieli w tle. Bez `/T` zostają sieroty
-trzymające otwarte pliki w workspace.
+A cancelled build (PyInstaller spawns its own children), cancelled preflight
+(uv), and emergency window shutdown all have the same obligation: leave no
+background processes behind. Without `/T`, orphans remain and keep workspace
+files open.
 """
 
 from __future__ import annotations
 
 import subprocess
 
-# Bez tego użytkownikowi GUI mignie czarne okno konsoli przy każdym
-# wywołaniu narzędzia wiersza poleceń.
+# Without this, GUI users see a black console window flash on every
+# command-line tool invocation.
 CREATE_NO_WINDOW = 0x08000000
 
 
 def kill_tree(pid: int) -> int:
-    """Zabija proces i całe jego potomstwo.
+    """Terminate a process and all its descendants.
 
-    Zwraca kod wyjścia taskkill, żeby wywołujący mógł wykryć nieudane
-    zabicie (proces może wciąż trzymać otwarte pliki w workspace).
+    Return taskkill's exit code so the caller can detect failed termination
+    (the process may still hold workspace files open).
     """
     result = subprocess.run(
         ["taskkill", "/F", "/T", "/PID", str(pid)],

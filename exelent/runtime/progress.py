@@ -1,9 +1,8 @@
-"""Jeden kształt postępu dla całego programu.
+"""One progress shape for the entire application.
 
-Pola bajtowe są zerowe dla faz, które nic nie pobierają (pakowanie
-PyInstallerem). Warstwa prezentacji poznaje to po `total_bytes == 0` i wtedy
-nie pokazuje drugiej linijki — pusty licznik megabajtów pod paskiem jest
-gorszy niż jego brak.
+Byte fields are zero for phases that download nothing (PyInstaller packaging).
+The presentation layer detects this through `total_bytes == 0` and hides the
+second line — an empty megabyte counter below the bar is worse than no counter.
 """
 
 from __future__ import annotations

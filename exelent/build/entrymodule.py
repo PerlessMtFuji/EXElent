@@ -1,13 +1,14 @@
-"""Kwalifikowana nazwa modułu wejściowego i korzenie importów.
+"""Qualified name of the entry module and import roots.
 
-Sama nazwa pliku nie określa modułu. `pkg/main.py` to moduł `pkg.main`, nie
-`main` — a launcher z `runpy.run_module("main")` daje EXE, które umiera na
-`ImportError: No module named main`. Nazwę liczymy względem KORZENIA IMPORTÓW
-(najwyższego katalogu, od którego w dół każdy folder jest pakietem), a ten
-korzeń trafia na `--paths`, żeby PyInstaller w ogóle znalazł kod.
+The filename alone does not determine the module. `pkg/main.py` is module
+`pkg.main`, not `main` — and a launcher with `runpy.run_module("main")` gives
+an EXE that dies with `ImportError: No module named main`. The name is computed
+relative to the IMPORT ROOT (the topmost directory from which every subfolder
+downward is a package), and that root goes onto `--paths` so that PyInstaller
+can find the code at all.
 
-Jedno miejsce, z którego bierze się i nazwa dla launchera, i argumenty
-PyInstallera — inaczej te dwie ścieżki rozjeżdżają się po cichu.
+A single place from which both the launcher name and PyInstaller arguments
+originate — otherwise the two paths silently diverge.
 """
 
 from __future__ import annotations
@@ -19,33 +20,34 @@ from pathlib import Path
 @dataclass(frozen=True)
 class EntrySpec:
     run_module: str
-    """Cel `runpy.run_module` w launcherze. Dla `python -m pkg` to `pkg`."""
+    """`runpy.run_module` target in the launcher. For `python -m pkg` this is `pkg`."""
     collect_module: str
-    """Cel `--hidden-import` — rzeczywisty plik .py, więc dla pakietu
-    uruchamianego przez `__main__.py` to `pkg.__main__`, nie `pkg`."""
+    """`--hidden-import` target — the actual .py file, so for a package
+    launched via `__main__.py` this is `pkg.__main__`, not `pkg`."""
     roots: tuple[Path, ...]
-    """Katalogi do dołożenia na `--paths`, żeby moduł dał się rozwiązać."""
+    """Directories to add to `--paths` so the module can be resolved."""
     alias: tuple[Path, Path] | None = None
-    """(źródło, cel) do skopiowania w workspace PRZED buildem, gdy nazwa modułu
-    wejściowego zderza się z launcherem. Dziś dotyczy tylko samotnego
-    `__main__.py` w korzeniu — patrz `resolve_entry`. `None`, gdy nic nie trzeba
-    kopiować. Kopiowanie wykonuje backend; kontrakt (co i pod jaką nazwą)
-    powstaje wyłącznie tutaj."""
+    """(source, dest) to copy in the workspace BEFORE the build, when the entry
+    module name collides with the launcher. Currently only applies to a lone
+    `__main__.py` in the root — see `resolve_entry`. `None` when nothing needs
+    to be copied. The copy is performed by the backend; the contract (what and
+    under what name) is defined exclusively here."""
 
 
 def resolve_entry(workspace: Path, entry_rel: Path) -> EntrySpec:
-    """Nazwa modułu wejściowego liczona względem korzenia importów w workspace.
+    """Entry module name computed relative to the import root in the workspace.
 
-    `entry_rel` jest względne do korzenia projektu (i tym samym do workspace,
-    który odtwarza tę samą strukturę). Korzeń importów wyznaczamy wspinaczką w
-    górę tak długo, jak każdy kolejny katalog jest pakietem (`__init__.py`),
-    najwyżej do samego workspace.
+    `entry_rel` is relative to the project root (and therefore to the workspace,
+    which reproduces the same structure). The import root is determined by
+    climbing upward as long as each successive directory is a package
+    (`__init__.py`), up to the workspace itself.
 
-    B03: folder BEZ `__init__.py` przerywa wspinaczkę — moduł jest rozwiązywany
-    względem tego katalogu (dodawanego na `--paths`). Namespace packages (PEP 420)
-    są obsługiwane w domknięciu importów skanera, nie tu: tam wystarczy znaleźć
-    plik, żeby dodać go do builda, a tutaj trzeba wyznaczyć poprawną nazwę
-    modułu dla `runpy.run_module`, która MUSI odpowiadać strukturze `sys.path`.
+    B03: a folder WITHOUT `__init__.py` stops the climb — the module is resolved
+    relative to that directory (which is added to `--paths`). Namespace packages
+    (PEP 420) are handled in the scanner's import closure, not here: there it
+    suffices to find the file to add it to the build, but here we need to
+    determine the correct module name for `runpy.run_module`, which MUST match
+    the `sys.path` structure.
     """
     entry_abs = workspace / entry_rel
     import_root = entry_abs.parent
@@ -54,18 +56,20 @@ def resolve_entry(workspace: Path, entry_rel: Path) -> EntrySpec:
 
     parts = list(entry_abs.relative_to(import_root).with_suffix("").parts)
 
-    # Samotny `__main__.py` w korzeniu (parts == ["__main__"]) NIE moze zostac
-    # sobą: w zamrozonym EXE modul `__main__` to LAUNCHER, a jego `__spec__`
-    # jest None. runpy.run_module("__main__") wola find_spec("__main__"), trafia
-    # na launcher i rzuca `ValueError: __main__.__spec__ is None` — build konczy
-    # sie kodem 0, a EXE umiera z kodem 1 (pozorny sukces). Kierujemy wiec
-    # zbieranie i uruchomienie na bezpieczny alias, a plik `__main__.py`
-    # kopiujemy pod te nazwe (kopiuje backend). Uruchomiony z run_name="__main__"
-    # alias zachowuje `__name__ == "__main__"`, ktorego skrypt oczekuje.
+    # A lone `__main__.py` in the root (parts == ["__main__"]) CANNOT remain
+    # as-is: in a frozen EXE the `__main__` module is the LAUNCHER, and its
+    # `__spec__` is None. runpy.run_module("__main__") calls
+    # find_spec("__main__"), hits the launcher and raises
+    # `ValueError: __main__.__spec__ is None` — the build finishes with exit
+    # code 0 but the EXE dies with code 1 (apparent success). So we direct
+    # collection and execution to a safe alias and copy the `__main__.py` file
+    # under that name (the backend performs the copy). Launched with
+    # run_name="__main__" the alias preserves `__name__ == "__main__"` that
+    # the script expects.
     #
-    # To NIE dotyczy `pkg/__main__.py` (parts == ["pkg","__main__"]): tam
-    # uruchamiamy `python -m pkg`, wiec runpy dostaje `pkg`, a do paczki wchodzi
-    # `pkg.__main__` — zaden z nich nie zderza sie z launcherem.
+    # This does NOT apply to `pkg/__main__.py` (parts == ["pkg","__main__"]):
+    # there we run `python -m pkg`, so runpy gets `pkg` and the package
+    # includes `pkg.__main__` — neither collides with the launcher.
     if parts == ["__main__"]:
         alias_name = "_exelent_main"
         return EntrySpec(

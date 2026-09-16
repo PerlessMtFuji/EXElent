@@ -1,11 +1,11 @@
-"""Ekran 3 — postęp budowania i wynik.
+"""Screen 3: build progress and result.
 
-Cztery stany w jednym widgecie: trwa, udało się, nie udało się, przerwane.
-Rozdzielenie przerwania od awarii nie jest kosmetyką: użytkownik, który sam
-nacisnął „Anuluj", nie ma być proszony o zgłoszenie własnej decyzji jako błędu.
+Four states in one widget: running, succeeded, failed, cancelled. Separating
+cancellation from failure is not cosmetic: a user who clicked "Cancel" should
+not be asked to report their own decision as a bug.
 
-Ostrzeżenie o antywirusach pokazujemy zawsze po sukcesie — użytkownik i tak je
-spotka, lepiej żeby usłyszał od nas.
+Always show the antivirus warning after success; the user will encounter the
+issue eventually and should hear about it from us first.
 """
 
 from __future__ import annotations
@@ -32,11 +32,11 @@ from exelent.i18n import describe, t
 from exelent.models import BuildPlan, BuildResult, Severity, VerificationStatus
 from exelent.ui.format import human_duration, human_size, human_speed
 
-# Ile ostatnich linii logu pokazujemy w oknie. Log PyInstallera bywa
-# wielomegabajtowy, a interesujący jest zawsze jego koniec.
+# Number of trailing log lines shown in the window. PyInstaller logs may be
+# several megabytes, while the interesting part is always at the end.
 LOG_TAIL_LINES = 200
 
-# Issue, które nie jest awarią, tylko decyzją użytkownika.
+# Issue representing a user decision rather than a failure.
 CANCELLED = "build_cancelled"
 
 
@@ -49,9 +49,8 @@ class BuildScreen(QWidget):
         self._result: BuildResult | None = None
         self._plan: BuildPlan | None = None
         self._log_open = False
-        # Klucz zdania, ktore stoi w naglowku. Sam napis nie wystarczy: po
-        # zmianie jezyka trzeba go zlozyc od nowa, a `t()` nie umie czytac
-        # w druga strone.
+        # Translation key for the heading sentence. Text alone is insufficient:
+        # it must be rebuilt after a language change, and `t()` is not reversible.
         self._phase_key = "build_start"
 
         self.phase_label = QLabel(t("build_start"), objectName="Title")
@@ -63,7 +62,7 @@ class BuildScreen(QWidget):
 
         self.summary_label = QLabel("")
         self.summary_label.setWordWrap(True)
-        # B13: ostrzeżenia analizy i backendu widoczne RÓWNIEŻ po sukcesie.
+        # B13: analysis and backend warnings remain visible after success too.
         self.issues_label = QLabel("")
         self.issues_label.setWordWrap(True)
         self.issues_label.setObjectName("Muted")
@@ -83,9 +82,9 @@ class BuildScreen(QWidget):
         self.back_button = QPushButton(t("build_back_to_review"))
         self.again_button = QPushButton(t("build_again"), objectName="Primary")
 
-        # Natychmiastowa reakcja na "Przerwij": samo anulowanie leci osobnym
-        # polaczeniem (w app.py), ale zanim watek zdazy zareagowac, przycisk ma
-        # od razu pokazać "Przerywanie…" i przestać przyjmować kliki.
+        # Respond to "Cancel" immediately. Cancellation travels through another
+        # connection (in app.py), but before the thread reacts the button should
+        # show "Cancelling..." and stop accepting clicks.
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
         self.again_button.clicked.connect(self.restart_requested)
         self.back_button.clicked.connect(self.back_to_review)
@@ -94,8 +93,8 @@ class BuildScreen(QWidget):
         self.report_button.clicked.connect(self._save_report)
         self.github_button.clicked.connect(self._open_github)
 
-        # Dwa krótkie rzędy mieszczą się przy dużym skalowaniu tekstu; jeden
-        # poziomy rząd siedmiu akcji wychodził poza małe okno.
+        # Two short rows fit with large text scaling; one horizontal row of seven
+        # actions overflowed a small window.
         actions = QGridLayout()
         actions.addWidget(self.back_button, 0, 0)
         actions.addWidget(self.cancel_button, 0, 1)
@@ -131,15 +130,15 @@ class BuildScreen(QWidget):
     # --- stany ---
 
     def _hide_all_actions(self) -> None:
-        """Czysty punkt wyjścia dla każdego stanu.
+        """Clean starting point for every state.
 
-        Stan ma określać CAŁY ekran, a nie dokładać się do poprzedniego:
-        bez tego przejście z porażki w przerwanie zostawiało na ekranie
-        „Zgłoś na GitHubie" z tamtej porażki — zmierzone na renderze.
+        A state should define the WHOLE screen rather than add to the previous
+        one. Without this, moving from failure to cancellation left "Report on
+        GitHub" from the failure visible, as observed in rendering.
 
-        Licznik megabajtów gaśnie tu razem z przyciskami: build przerwany w
-        połowie pobierania zostawiłby pod zdaniem o awarii licznik, który
-        nadal odlicza.
+        The megabyte counter disappears here with the buttons; otherwise a
+        build cancelled mid-download would leave a still-counting number below
+        the failure message.
         """
         self.antivirus_label.setVisible(False)
         self.issues_label.setVisible(False)
@@ -156,14 +155,14 @@ class BuildScreen(QWidget):
             button.setVisible(False)
 
     def retranslate(self) -> None:
-        """Przepisuje napisy po zmianie języka.
+        """Rewrite text after a language change.
 
-        Ekrany biorą teksty z `t()` w konstruktorze, więc bez tej metody
-        przełącznik języka działałby dopiero po restarcie programu.
+        Screens obtain text from `t()` in their constructors, so without this
+        method the language switch would take effect only after a restart.
 
-        Gdy build się już skończył, cały ekran składamy od nowa z wyniku:
-        zdania w podsumowaniu pochodzą z `describe()` i inaczej zostałyby w
-        poprzednim języku.
+        Once a build has finished, rebuild the full screen from its result:
+        summary sentences come from `describe()` and would otherwise remain in
+        the previous language.
         """
         self.antivirus_label.setText(t("antivirus_note"))
         self.cancel_button.setText(t("build_cancel"))
@@ -184,11 +183,11 @@ class BuildScreen(QWidget):
         self.phase_label.setText(t(key))
 
     def _on_cancel_clicked(self) -> None:
-        """Ekran natychmiast potwierdza przerwanie — nie czeka na watek.
+        """Acknowledge cancellation immediately without waiting for the thread.
 
-        Anulowanie procesu potrafi zajac chwile (ubicie drzewa uv/PyInstallera).
-        Przez ten czas przycisk musi mowic 'Przerywanie…' i nie dac sie klikac
-        drugi raz, zeby uzytkownik nie mial wrazenia, ze klik nie zadzialal."""
+        Process cancellation can take a moment while the uv/PyInstaller tree is
+        terminated. Meanwhile the button must say 'Cancelling...' and reject a
+        second click so the first one does not appear ineffective."""
         self.cancel_button.setEnabled(False)
         self.cancel_button.setText(t("build_cancelling"))
 
@@ -206,11 +205,11 @@ class BuildScreen(QWidget):
         self.cancel_button.setVisible(True)
 
     def start(self, plan: BuildPlan) -> None:
-        """Nowy build zaczyna się od czystego ekranu.
+        """Start every new build from a clean screen.
 
-        Bez tego drugi build biegnie z paskiem postępu i JEDNOCZEŚNIE ze
-        zdaniem o awarii poprzedniego, przyciskiem „Zapisz raport" i logiem
-        sprzed chwili — czyli pokazuje dwa różne budowania naraz.
+        Otherwise the second build runs with its progress bar AND the previous
+        build's failure sentence, "Save report" button, and log, displaying two
+        different builds at once.
         """
         self._plan = plan
         self._result = None
@@ -222,10 +221,10 @@ class BuildScreen(QWidget):
         self._show_bytes(update)
 
     def _show_bytes(self, update) -> None:
-        """Druga linijka tylko wtedy, gdy naprawdę coś się pobiera.
+        """Show the second line only while something is actually downloading.
 
-        Pusty licznik megabajtów pod paskiem przy pakowaniu byłby gorszy niż
-        jego brak, więc ekran poznaje to po `total_bytes == 0`.
+        An empty megabyte counter under the packaging bar would be worse than
+        no counter, so the screen detects this through `total_bytes == 0`.
         """
         if not update.total_bytes:
             self.bytes_label.setVisible(False)
@@ -276,8 +275,8 @@ class BuildScreen(QWidget):
         self.summary_label.setText(
             t(summary_key, name=artifact.name, size=human_size(result.size_bytes))
         )
-        # B13: ostrzeżenia analizy i backendu widoczne RÓWNIEŻ po sukcesie.
-        # Sam przycisk „Uruchom" nie jest dowodem poprawności aplikacji.
+        # B13: analysis and backend warnings remain visible after success too.
+        # A "Run" button alone does not prove the application is correct.
         if result.issues:
             self.issues_label.setText("\n".join(describe(i) for i in result.issues))
             self.issues_label.setVisible(True)
@@ -286,11 +285,11 @@ class BuildScreen(QWidget):
         self.run_button.setVisible(True)
 
     def _show_cancelled(self, result: BuildResult) -> None:
-        """Przerwanie to nie awaria — bez raportu i bez zgłoszenia.
+        """Cancellation is not a failure: no report and no bug submission.
 
-        Zdanie o samym przerwaniu jest nagłówkiem, a nie powtórzeniem w
-        podsumowaniu; zostaje tam tylko to, czego użytkownik jeszcze nie wie —
-        na przykład ostrzeżenie, że po anulowaniu coś mogło zostać uruchomione.
+        The cancellation sentence is the heading rather than a repetition in
+        the summary. Keep only information the user does not yet know, such as
+        a warning that something may have launched after cancellation.
         """
         self.bar.setVisible(False)
         self._set_phase(CANCELLED)
@@ -300,12 +299,12 @@ class BuildScreen(QWidget):
         self.back_button.setVisible(True)
 
     def _show_failure(self, result: BuildResult) -> None:
-        """Diagnozy tu NIE robimy.
+        """Do NOT diagnose here.
 
-        `run_build` przepuszcza cały log przez `explain_log` i to, co
-        rozpoznał, leży już w `result.issues`. Powtarzanie tego na ogonie logu
-        (jak chciał plan) mogło znaleźć wyłącznie podzbiór tego samego, za to
-        przenosiło wiedzę diagnostyczną do warstwy prezentacji.
+        `run_build` passes the full log through `explain_log`; recognized items
+        are already in `result.issues`. Repeating the process on the log tail,
+        as originally planned, could only find a subset while moving diagnostic
+        knowledge into the presentation layer.
         """
         self.bar.setVisible(False)
         self._set_phase("build_failed_title")
@@ -327,14 +326,14 @@ class BuildScreen(QWidget):
                     LOG_TAIL_LINES,
                 )
             except OSError:
-                # Ścieżka logu przychodzi z rdzenia, ale plik może już nie
-                # istnieć: build żyje w katalogu tymczasowym, który system
-                # sprząta. Brak logu nie jest powodem, żeby stracić wynik.
+                # The log path comes from the core, but the file may already be
+                # gone: builds live in a temporary directory the system cleans.
+                # A missing log is no reason to lose the result.
                 text = ""
         self.log_view.setPlainText(text)
-        # Kursor na koniec: log czyta się od końca, bo tam jest to, co
-        # przerwało build. Otwarty na pierwszej linii kazałby użytkownikowi
-        # przewinąć dwieście linii, zanim zobaczy powód.
+        # Put the cursor at the end because logs are read backward from the
+        # failure. Opening at line one would make users scroll two hundred lines
+        # before seeing the cause.
         self.log_view.moveCursor(QTextCursor.MoveOperation.End)
         self.log_toggle.setVisible(bool(text))
 
@@ -344,20 +343,19 @@ class BuildScreen(QWidget):
         self.log_toggle.setText(t("build_hide_log") if visible else t("build_show_log"))
 
     def _toggle_log(self) -> None:
-        # Stan trzymany osobno, a nie czytany z `isVisible()`: to ostatnie mówi
-        # o widoczności NA EKRANIE, więc dopóki okno nie jest pokazane, oddaje
-        # False także dla widgetu, który właśnie odsłoniliśmy.
+        # Store state separately rather than reading `isVisible()`, which reports
+        # ON-SCREEN visibility and returns False until the window is shown even
+        # for a widget just revealed.
         self._show_log(not self._log_open)
 
     # --- akcje ---
 
     def _open_folder(self) -> None:
-        """„Pokaż w folderze" ma POKAZAĆ plik EXE, nie tylko otworzyć katalog.
+        """"Show in folder" should SELECT the EXE, not merely open its directory.
 
-        Katalog wynikowy potrafi mieć kilkaset pozycji (ONEDIR), więc samo
-        otwarcie okna zostawia użytkownika ze szukaniem. `/select` otwiera
-        Eksploratora z zaznaczonym plikiem EXE — także w ONEDIR, gdzie EXE leży
-        wśród bibliotek.
+        An ONEDIR output can contain hundreds of entries, so merely opening the
+        window leaves users searching. `/select` opens Explorer with the EXE
+        selected, including in ONEDIR where it sits among libraries.
         """
         result = self._result
         if result is None or result.artifact is None:
@@ -374,12 +372,11 @@ class BuildScreen(QWidget):
             self._show_action_error("build_open_failed", exc)
 
     def _run_artifact(self) -> None:
-        """Uruchamia gotowy program. Działa w ONEFILE i ONEDIR.
+        """Launch the finished application in ONEFILE or ONEDIR mode.
 
-        Warunek `artifact.is_file()` byłby fałszem dla ONEDIR, którego
-        artefaktem jest katalog — przycisk „Uruchom" nic nie robił. Teraz
-        odpalamy `executable_path`, a `cwd` to katalog EXE, żeby program czytał
-        swoje zasoby leżące obok."""
+        `artifact.is_file()` is false for ONEDIR, whose artifact is a directory,
+        so the "Run" button did nothing. Launch `executable_path` instead and
+        use the EXE directory as `cwd` so the program can read adjacent assets."""
         exe = self._result.executable_path if self._result else None
         if exe is not None and exe.is_file():
             try:
@@ -398,11 +395,11 @@ class BuildScreen(QWidget):
         self._append_status(t(key, error=str(exc)))
 
     def _plan_summary(self) -> str:
-        """Kontekst zgłoszenia. Nazwa PROJEKTU, nie artefaktu.
+        """Issue context: the PROJECT name, not the artifact name.
 
-        Raport powstaje wyłącznie po nieudanym buildzie, a wtedy artefaktu z
-        definicji nie ma — wersja z planu opisywała więc każde zgłoszenie
-        słowem „build".
+        A report exists only after a failed build, when by definition there is
+        no artifact. The planned version therefore described every issue with
+        the word "build".
         """
         plan = self._plan
         if plan is None:

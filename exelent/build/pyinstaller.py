@@ -1,5 +1,5 @@
-"""Backend PyInstallera: składa argumenty, prowadzi podproces i tłumaczy
-jego log na fazy paska postępu."""
+"""PyInstaller backend: assembles arguments, drives the subprocess and maps
+its log to progress-bar phases."""
 
 from __future__ import annotations
 
@@ -64,31 +64,33 @@ _CANCEL_POLL_SECONDS = 0.2
 _CANCEL_KILL_WAIT_SECONDS = 3.0
 _CANCEL_READER_JOIN_SECONDS = 1.0
 
-# PyInstaller kompiluje kazdy zebrany modul dopiero przy skladaniu PYZ. Gdy
-# ktorys sie nie kompiluje, `PYZ.assemble` lapie `SyntaxError`, loguje TO
-# ostrzezenie, po czym robi `continue`: modul wypada z archiwum, a build
-# konczy sie kodem 0 i gotowym EXE. Dla cudzego modulu napisanego pod inna
-# wersje Pythona (komentarz w zrodle PyInstallera mowi wprost o tym
-# przypadku) to rozsadne zachowanie i nie mamy powodu psuc takiego builda.
+# PyInstaller compiles every collected module only when assembling the PYZ.
+# When one fails to compile, `PYZ.assemble` catches `SyntaxError`, logs THIS
+# warning, then does `continue`: the module is dropped from the archive and
+# the build finishes with exit code 0 and a ready EXE. For a third-party
+# module written for a different Python version (the PyInstaller source
+# comment says exactly this) that is reasonable behavior and we have no
+# reason to break such a build.
 #
-# Dla pliku z projektu uzytkownika rozsadne nie jest nigdy: EXE wyjezdza bez
-# jego kodu i umiera na starcie z "No module named <jego program>", a jedynym
-# sladem jest jedno WARNING w srodku logu, ktorego nikt nie czyta, bo build
-# przeciez "sie udal". Stad rozroznienie po sciezce w `dropped_project_modules`.
+# For a file from the user's project it is NEVER reasonable: the EXE ships
+# without their code and dies at startup with "No module named <their
+# program>", and the only trace is a single WARNING in the middle of a log
+# that nobody reads because the build "succeeded". Hence the path-based
+# distinction in `dropped_project_modules`.
 #
-# "Sytnax" to literowka w PyInstallerze 6.16.0 (building/utils.py). Wzorzec
-# przyjmuje obie pisownie, zeby ten straznik nie umarl po cichu w dniu, w
-# ktorym literowka zostanie poprawiona.
+# "Sytnax" is a typo in PyInstaller 6.16.0 (building/utils.py). The pattern
+# accepts both spellings so this guard does not silently die the day the
+# typo is fixed.
 _COMPILE_DROPPED = re.compile(r"S(?:yntax|ytnax) error while compiling (.+?)\s*$")
 
 
 def materialize_entry_alias(spec: EntrySpec) -> None:
-    """Kopiuje plik wejściowy pod bezpieczną nazwę, gdy kontrakt tego wymaga.
+    """Copies the entry file under a safe name when the contract requires it.
 
-    Dotyczy samotnego `__main__.py` w korzeniu: nie da się go zebrać ani
-    uruchomić jako modułu `__main__`, bo tę nazwę w zamrożonym EXE zajmuje
-    launcher (patrz `resolve_entry`). Kopiujemy bajtami, żeby zachować kodowanie
-    źródła. Zwykły skrypt lub pakiet nie ma aliasu i niczego nie kopiuje."""
+    Applies to a lone `__main__.py` in the root: it cannot be collected or run
+    as the `__main__` module because that name in a frozen EXE is taken by the
+    launcher (see `resolve_entry`). We copy as raw bytes to preserve the source
+    encoding. A regular script or package has no alias and nothing is copied."""
     if spec.alias is None:
         return
     src, dest = spec.alias
@@ -96,7 +98,7 @@ def materialize_entry_alias(spec: EntrySpec) -> None:
 
 
 def entry_rel(plan: BuildPlan) -> Path:
-    """Sciezka pliku glownego wzgledem korzenia projektu (i workspace)."""
+    """Entry file path relative to the project root (and workspace)."""
     try:
         return plan.entry.relative_to(plan.root)
     except ValueError:
@@ -119,9 +121,10 @@ def build_arguments(
         "--specpath",
         str(workspace),
     ]
-    # `--paths`: workspace jako baza plus korzenie importow pliku glownego.
-    # Dla ukladu `src/` bez tego PyInstaller nie znajdzie pakietu; dla folderu
-    # bez `__init__.py` to wlasnie ten katalog czyni `import main` mozliwym.
+    # `--paths`: workspace as the base plus import roots of the entry file.
+    # For a `src/` layout without this PyInstaller cannot find the package;
+    # for a folder without `__init__.py` this is exactly the directory that
+    # makes `import main` possible.
     seen: set[str] = set()
     for path in (workspace, *spec.roots):
         text = str(path)
@@ -133,17 +136,18 @@ def build_arguments(
     if plan.output_mode is OutputMode.ONEFILE:
         args.append("--onefile")
     else:
-        # `--contents-directory .` kladzie zasoby i biblioteki OBOK EXE, a nie w
-        # podkatalogu `_internal`. Launcher w ONEDIR robi `chdir` do katalogu
-        # EXE, wiec `open('config.json')` znajduje spakowany zasob, a trwale
-        # zapisy programu ladują tam, gdzie uzytkownik ich szuka — obok EXE
-        # Bez tego zasoby wpadały do `_internal` i były nieosiągalne.
+        # `--contents-directory .` places resources and libraries NEXT TO the
+        # EXE rather than in a `_internal` subdirectory. The ONEDIR launcher
+        # does `chdir` to the EXE directory, so `open('config.json')` finds
+        # the bundled resource, and persistent writes by the program land
+        # where the user expects them — next to the EXE.
+        # Without this, resources ended up in `_internal` and were unreachable.
         args += ["--onedir", "--contents-directory", "."]
     args.append("--windowed" if plan.app_kind is AppKind.WINDOWED else "--console")
 
-    # Kwalifikowana nazwa modulu (np. `pkg.main`), a nie sam `stem`: to ona
-    # decyduje, czy PyInstaller zbierze wlasciwy plik i czy launcher go
-    # uruchomi. Dla `python -m pkg` zbieramy `pkg.__main__`.
+    # Qualified module name (e.g. `pkg.main`), not just the `stem`: it
+    # determines whether PyInstaller collects the right file and whether the
+    # launcher can run it. For `python -m pkg` we collect `pkg.__main__`.
     for module in (spec.collect_module, *plan.hidden_imports):
         args += ["--hidden-import", module]
 
@@ -156,10 +160,10 @@ def build_arguments(
         # build never reads from (or writes into) the user's directory.
         rel = data.relative_to(plan.root)
         workspace_data = workspace / rel
-        # Cel w paczce zachowuje uklad wzgledny: `assets/nested.json` ma trafic
-        # do `assets/`, nie do korzenia. Wczesniej kazdy zasob dostawal cel `.`,
-        # wiec `open('assets/nested.json')` w EXE nie znajdowal pliku
-        # spłaszczonego do `nested.json`.
+        # The bundle destination preserves the relative layout: `assets/nested.json`
+        # must end up in `assets/`, not the root. Previously every resource got
+        # destination `.`, so `open('assets/nested.json')` in the EXE could not
+        # find the file flattened to `nested.json`.
         dest = rel.parent.as_posix()
         dest = "." if dest == "." or dest == "" else dest
         args += ["--add-data", f"{workspace_data}{_ADD_DATA_SEPARATOR}{dest}"]
@@ -172,11 +176,11 @@ def build_arguments(
 
 
 def dropped_project_modules(lines: Iterable[str], workspace: Path) -> tuple[str, ...]:
-    """Pliki Z PROJEKTU, ktore PyInstaller wyrzucil z paczki — patrz
-    `_COMPILE_DROPPED`. Zwraca nazwy plikow, w kolejnosci wystapienia w logu."""
-    # normcase po obu stronach: Windows nie rozroznia wielkosci liter w
-    # sciezkach, a niedopasowanie tutaj nie halasuje — po prostu wylacza tego
-    # straznika i wracamy do cichego, zepsutego EXE.
+    """Files FROM THE PROJECT that PyInstaller dropped from the bundle — see
+    `_COMPILE_DROPPED`. Returns filenames in order of appearance in the log."""
+    # normcase on both sides: Windows does not distinguish case in paths,
+    # and a mismatch here does not raise — it just silently disables this
+    # guard and we are back to a quietly broken EXE.
     prefix = os.path.normcase(str(workspace))
     dropped: list[str] = []
     for line in lines:
@@ -192,14 +196,14 @@ def dropped_project_modules(lines: Iterable[str], workspace: Path) -> tuple[str,
 
 
 def log_path_for(plan: BuildPlan) -> Path:
-    """Ścieżka logu tego builda — wyliczalna z planu, zanim build ruszy.
+    """Log path for this build — computable from the plan before the build starts.
 
-    Publiczna, bo usługa musi ją znać gdy backend nie zdążył oddać
-    ``BuildResult``. Jedno miejsce definiujące tę nazwę.
+    Public because the service needs it when the backend has not yet returned a
+    ``BuildResult``. A single place defining this name.
 
-    Składniki nazwy: hash projektu (izoluje różne projekty o tej samej nazwie
-    EXE), identyfikator sesji (izoluje równoległe instancje) i numer próby
-    builda (izoluje ponowione próby w tej samej sesji).
+    Name components: project hash (isolates different projects with the same EXE
+    name), session id (isolates parallel instances) and build attempt number
+    (isolates retries within the same session).
     """
     return logs_dir() / f"{plan.exe_name}-{path_hash(plan.root)}-{session_id()}.{build_seq()}.log"
 
@@ -216,9 +220,9 @@ class PyInstallerBackend:
         workspace = workspace_for(plan.root, plan.single_file)
 
         spec = resolve_entry(workspace, entry_rel(plan))
-        # Samotny `__main__.py` musi trafic do paczki pod bezpieczna nazwa,
-        # zanim PyInstaller ruszy — inaczej zbieralby modul `__main__`
-        # zderzajacy sie z launcherem (B03).
+        # A lone `__main__.py` must be placed in the bundle under a safe name
+        # before PyInstaller starts — otherwise it would collect the `__main__`
+        # module which collides with the launcher (B03).
         materialize_entry_alias(spec)
         launcher = workspace / LAUNCHER_FILENAME
         launcher.write_text(
@@ -332,8 +336,8 @@ class PyInstallerBackend:
 
         dropped = dropped_project_modules(lines, workspace)
         if dropped:
-            # Kod wyjscia 0 i EXE na dysku, ale bez kodu uzytkownika. To NIE
-            # jest udany build, choc PyInstaller tak twierdzi.
+            # Exit code 0 and an EXE on disk, but without user code. This is
+            # NOT a successful build, even though PyInstaller claims otherwise.
             return BuildResult(
                 ok=False,
                 log_path=log_path,
@@ -350,8 +354,9 @@ class PyInstallerBackend:
                 issues=issues,
             )
 
-        # ONEFILE: artefakt to sam plik EXE. ONEDIR: artefakt to KATALOG, a EXE
-        # leży w nim pod nazwą programu — to jego uruchamia przycisk „Uruchom".
+        # ONEFILE: the artifact is the EXE file itself. ONEDIR: the artifact is
+        # a DIRECTORY and the EXE sits inside it under the program name — that
+        # is what the "Run" button launches.
         if plan.output_mode is OutputMode.ONEDIR:
             executable = produced / f"{plan.exe_name}.exe"
         else:
@@ -370,12 +375,12 @@ class PyInstallerBackend:
     def _collect_artifact(
         self, plan: BuildPlan, workspace: Path, cancel: CancelToken | None = None
     ) -> tuple[Path | None, tuple[Issue, ...]]:
-        """Odbiera artefakt z `dist` i publikuje go w katalogu docelowym.
+        """Retrieves the artifact from `dist` and publishes it to the destination.
 
-        Publikacja NIGDY nie nadpisuje istniejącej wersji ani danych, które
-        uruchomiona aplikacja zapisała obok siebie — patrz `build/publish.py`.
-        B10: `cancel` przerywa kopiowanie do docelowego katalogu PRZED
-        finalizacją — staging jest sprzątany, poprzedni artefakt zostaje.
+        Publication NEVER overwrites an existing version or data that a running
+        application wrote next to itself — see `build/publish.py`.
+        B10: `cancel` interrupts copying to the destination directory BEFORE
+        finalization — staging is cleaned up, the previous artifact stays.
         """
         dist = workspace / "dist"
         is_onedir = plan.output_mode is OutputMode.ONEDIR
@@ -394,7 +399,7 @@ def _tree_size(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
-# PyInstaller uruchamia procesy potomne — bez /T zostają sierotami. Sama
-# funkcja mieszka w `runtime.procs`, bo tego samego zabijania potrzebują
-# jeszcze anulowany preflight i awaryjne zamknięcie okna.
+# PyInstaller spawns child processes — without /T they remain as orphans. The
+# function itself lives in `runtime.procs` because the same kill is needed by
+# the cancelled preflight and the emergency window close.
 _kill_tree = kill_tree

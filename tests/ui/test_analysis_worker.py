@@ -1,16 +1,16 @@
-"""Testy workera analizy w tle (B11).
+"""Tests for the background analysis worker (B11).
 
-Worker musi:
-  - dostarczać wynik w sygnale `finished`,
-  - odrzucać spóźniony wynik starego żądania,
-  - przeżywać wyjątek w analizie (np. brak katalogu).
+The worker must:
+  - deliver the result via the `finished` signal,
+  - discard a stale result from an old request,
+  - survive an exception in the analysis (e.g. missing directory).
 """
 
 from exelent.ui.analysis_worker import AnalysisWorker
 
 
 def test_worker_delivers_result(qtbot, tmp_path):
-    """Analiza prostego projektu daje wynik w sygnale `finished`."""
+    """Analysis of a simple project delivers a result via the `finished` signal."""
     (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
 
     worker = AnalysisWorker()
@@ -23,20 +23,20 @@ def test_worker_delivers_result(qtbot, tmp_path):
 
 
 def test_worker_survives_missing_folder(qtbot, tmp_path):
-    """Katalog, którego nie ma, nie powinien zabić wątku — wynik to
-    ProjectAnalysis z blokadą `unexpected_error`."""
+    """A non-existent directory should not kill the thread — the result is a
+    ProjectAnalysis with an `unexpected_error` blocker."""
     worker = AnalysisWorker()
     with qtbot.waitSignal(worker.finished, timeout=10_000) as blocker:
         worker.start(tmp_path / "nie-ma-takiego")
 
     result = blocker.args[0]
-    # Nie crash, a kontrolowany wynik:
+    # Not a crash, but a controlled result:
     assert result is not None
 
 
 def test_stale_result_is_discarded(qtbot, tmp_path):
-    """Gdy użytkownik wybierze nowy folder w trakcie analizy, stary wynik
-    jest odrzucany i nie emitowany do sygnału `finished`."""
+    """When the user selects a new folder during analysis, the old result is
+    discarded and not emitted to the `finished` signal."""
     folder_a = tmp_path / "a"
     folder_a.mkdir()
     (folder_a / "main.py").write_text("print('a')\n", encoding="utf-8")
@@ -47,36 +47,36 @@ def test_stale_result_is_discarded(qtbot, tmp_path):
 
     worker = AnalysisWorker()
 
-    # Emitujemy dwa starty pod rząd — wynik powinien przyjść tylko raz,
-    # z drugiego folderu (bo pierwszy jest anulowany/odrzucany).
+    # We emit two starts in a row — the result should arrive only once,
+    # from the second folder (because the first is cancelled/discarded).
     results = []
     worker.finished.connect(results.append)
 
-    # Start A, potem natychmiast start B — A powinien zostać odrzucony.
+    # Start A, then immediately start B — A should be discarded.
     worker.start(folder_a)
     with qtbot.waitSignal(worker.finished, timeout=10_000):
         worker.start(folder_b)
 
-    # Czekamy chwilę, żeby upewnić się, że nie przyszedł drugi wynik.
+    # Wait a moment to make sure no second result arrived.
     qtbot.wait(200)
     assert len(results) == 1
-    # Wynik powinien dotyczyć folderu B (nowego żądania).
+    # The result should come from folder B (the new request).
     assert results[0].root == folder_b
 
 
 def test_stop_returns_true_when_no_worker_running(qtbot):
-    """stop() bez trwającego workera nie krzyczy."""
+    """stop() without a running worker does not raise."""
     worker = AnalysisWorker()
     assert worker.stop() is True
 
 
 def test_is_running_reflects_state(qtbot, tmp_path):
-    """is_running() zwraca True w trakcie analizy."""
+    """is_running() returns True during analysis."""
     (tmp_path / "main.py").write_text("print('x')\n", encoding="utf-8")
     worker = AnalysisWorker()
     assert worker.is_running() is False
     with qtbot.waitSignal(worker.finished, timeout=10_000):
         worker.start(tmp_path)
-        # Między start() a finished wątek powinien być uruchomiony.
-        # (W praktyce analiza jest tak szybka, że może już być gotowa.)
+        # Between start() and finished the thread should be running.
+        # (In practice analysis is so fast it may already be done.)
     assert worker.is_running() is False

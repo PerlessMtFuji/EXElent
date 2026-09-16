@@ -1,6 +1,6 @@
-"""Od ProjectAnalysis (zgadywanie) do BuildPlan (decyzja).
+"""From ProjectAnalysis (guessing) to BuildPlan (decision).
 
-Wspólny punkt dla CLI i GUI. Build nigdy nie zgaduje — dostaje gotowy plan.
+Shared entry point for CLI and GUI. Build never guesses — it receives a ready plan.
 """
 
 from __future__ import annotations
@@ -31,18 +31,18 @@ from exelent.models import (
     should_exclude_resource,
 )
 
-# --- B05: zbieranie ścieżek manifestów i constraints z pliku requirements ---
+# --- B05: collecting manifest and constraint paths from requirements file ---
 
 
 def _collect_manifest_paths(
     requirements_path: Path | None,
     root: Path,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Zbiera ścieżki manifestów i constraints z drzewa `-r`/`-c` w requirements.
+    """Collects manifest and constraint paths from the `-r`/`-c` tree in requirements.
 
-    Zwraca (manifest_paths, constraint_paths) jako krotki ścieżek WZGLĘDNYCH
-    do korzenia projektu. Ścieżki są potrzebne do przekopiowania plików do
-    workspace i przekazania ich do uv z poprawnymi bazami ścieżek.
+    Returns (manifest_paths, constraint_paths) as tuples of paths RELATIVE
+    to the project root. The paths are needed to copy the files to the
+    workspace and pass them to uv with correct path bases.
     """
     if requirements_path is None:
         return (), ()
@@ -86,9 +86,9 @@ def _collect_manifest_paths(
 
 _ILLEGAL = re.compile(r'[/\\:*?"<>|]')
 
-# Delete-on-close: Windows usuwa plik w momencie zamknięcia ostatniego uchwytu,
-# także wtedy, gdy proces zostanie ubity między utworzeniem a sprzątaniem.
-# Poza Windows stała nie istnieje i zostaje zwykły `unlink` w `finally`.
+# Delete-on-close: Windows removes the file when the last handle is closed,
+# even if the process is killed between creation and cleanup.
+# Outside Windows the constant does not exist and a plain `unlink` in `finally` remains.
 _O_TEMPORARY = getattr(os, "O_TEMPORARY", 0)
 
 
@@ -98,17 +98,17 @@ def sanitize_exe_name(name: str) -> str:
 
 
 def onefile_limitation_issues(output_mode: OutputMode) -> tuple[Issue, ...]:
-    """Ostrzezenia zwiazane z RECZNYM wyborem trybu wyjscia (B01).
+    """Warnings related to MANUAL output mode selection (B01).
 
-    Zalecany tryb to ONEDIR — zasoby leza obok EXE i odczyt przez wzgledna
-    sciezke dziala, a zapis trafia obok EXE i zostaje. ONEFILE rozpakowuje
-    dolaczone pliki do katalogu tymczasowego (`_MEIPASS`), ktory znika przy
-    zakonczeniu; katalog roboczy programu jest zakotwiczony w trwalym katalogu
-    EXE, wiec ZAPIS nie ginie, ale ODCZYT zasobu przez `open('config.json')`
-    moze nie znalezc pliku. Nie da sie tego udowodnic z gory (nie wiemy, czy
-    program czyta zasoby), wiec kazdy reczny wybor ONEFILE dostaje widoczne
-    ograniczenie zamiast zapewnienia o bezpieczenstwie — zamiast go po cichu
-    ukrywac. Rdzen zwraca kod; tekst PL/EN sklada `i18n`.
+    The recommended mode is ONEDIR — resources sit next to the EXE and reading
+    via a relative path works, while writes land next to the EXE and persist.
+    ONEFILE unpacks bundled files to a temporary directory (`_MEIPASS`) which
+    vanishes on exit; the working directory is anchored to the persistent EXE
+    directory, so WRITES do not disappear, but READING a resource via
+    `open('config.json')` may fail to find the file. This cannot be proven
+    upfront (we don't know whether the program reads resources), so every
+    manual ONEFILE selection gets a visible limitation instead of a silent
+    safety guarantee. The core returns a code; PL/EN text is assembled by `i18n`.
     """
     if output_mode is OutputMode.ONEFILE:
         return (Issue("onefile_no_resource_guarantee", Severity.WARNING),)
@@ -116,27 +116,27 @@ def onefile_limitation_issues(output_mode: OutputMode) -> tuple[Issue, ...]:
 
 
 def _is_writable(path: Path) -> bool:
-    """Czy da się utworzyć plik w `path` — bez zostawiania po sobie śladu.
+    """Whether a file can be created in `path` — without leaving any trace.
 
-    Dlaczego w ogóle zapis, skoro §7 specyfikacji mówi o nienaruszalności
-    katalogu użytkownika: §7 chroni **katalog źródłowy**, a sondowane są
-    wyłącznie kandydaci z `_dest_candidates` — czyli katalogi, w których za
-    chwilę i tak powstanie folder `<Nazwa>-EXE`. Katalog źródłowy nie trafia
-    tam nigdy: gdy leży w korzeniu dysku i jest własnym rodzicem, `_dest_
-    candidates` pomija go w całości.
+    Why a write at all, given that spec section 7 speaks of source directory
+    immutability: section 7 protects the **source directory**, and we only
+    probe candidates from `_dest_candidates` — directories where a
+    `<Name>-EXE` folder is about to be created anyway. The source directory
+    never ends up there: when it sits at the drive root and is its own parent,
+    `_dest_candidates` skips it entirely.
 
-    Dlaczego nie `os.access(path, os.W_OK)`: na Windows odzwierciedla ono
-    jedynie atrybut „tylko do odczytu", którego katalogi praktycznie nie
-    używają, i całkowicie ignoruje listy ACL oraz blokady OneDrive. Zwróciłoby
-    „można pisać" dla katalogu, do którego zapis i tak padnie — a wtedy build
-    umiera po kilkunastu minutach pracy zamiast od razu wybrać Pulpit.
+    Why not `os.access(path, os.W_OK)`: on Windows it reflects only the
+    "read-only" attribute, which directories practically never use, and
+    completely ignores ACLs and OneDrive locks. It would return "writable"
+    for a directory where writing will fail anyway — and then the build dies
+    after several minutes of work instead of immediately choosing the Desktop.
 
-    Zapis jest tak zaprojektowany, żeby nie mógł zaszkodzić:
-    - nazwa jest losowa, a flaga `O_EXCL` gwarantuje, że sonda nigdy nie
-      nadpisze (ani nie skasuje) istniejącego pliku użytkownika,
-    - `O_TEMPORARY` każe systemowi skasować plik przy zamknięciu uchwytu, więc
-      nawet zabity w połowie proces nie zostawia śmiecia,
-    - `unlink` w `finally` sprząta tam, gdzie `O_TEMPORARY` nie istnieje.
+    The write is designed so it cannot cause harm:
+    - the name is random and the `O_EXCL` flag guarantees the probe never
+      overwrites (or deletes) an existing user file,
+    - `O_TEMPORARY` tells the OS to delete the file when the handle is closed,
+      so even a half-killed process leaves no garbage,
+    - `unlink` in `finally` cleans up where `O_TEMPORARY` does not exist.
     """
     probe = Path(path) / f".exelent-probe-{uuid.uuid4().hex}.tmp"
     try:
@@ -151,12 +151,11 @@ def _is_writable(path: Path) -> bool:
     return True
 
 
-# Katalogi, ktore sa lokalnym oknem na dysk w chmurze. Wrzucenie tam 40 MB
-# EXE uruchamia wysylke — a §7 specyfikacji wymienia "zsynchronizowana z
-# chmura" obok "tylko do odczytu" jako powod, dla ktorego dane miejsce nie
-# nadaje sie na wynik builda. Dopasowanie jest po CALEJ nazwie segmentu albo
-# po jej poczatku ZAKONCZONYM spacja ("OneDrive - Firma"): katalog projektu
-# nazwany "dropbox-klon" nie ma z Dropboxem nic wspolnego.
+# Directories that are local windows onto a cloud drive. Dropping a 40 MB EXE
+# there triggers an upload — and spec section 7 lists "cloud-synced" alongside
+# "read-only" as a reason a location is unsuitable for build output. Matching
+# is by FULL segment name or by its prefix ENDING with a space ("OneDrive - Corp"):
+# a project directory named "dropbox-clone" has nothing to do with Dropbox.
 _CLOUD_DIR_NAMES = (
     "onedrive",
     "dropbox",
@@ -166,13 +165,13 @@ _CLOUD_DIR_NAMES = (
     "creative cloud files",
 )
 
-# OneDrive publikuje swoja lokalizacje w srodowisku, wiec dziala takze wtedy,
-# gdy uzytkownik zmienil nazwe katalogu.
+# OneDrive publishes its location in the environment, so it works even when
+# the user has renamed the directory.
 _CLOUD_ENV_VARS = ("OneDrive", "OneDriveConsumer", "OneDriveCommercial")
 
-# Znane foldery Windows — GUID wg KNOWNFOLDERID. Uzywane do zapytania
-# SHGetKnownFolderPath zamiast zgadywania nazwy katalogu (patrz docstring
-# `_known_folder_desktop`).
+# Known Windows folders — GUIDs per KNOWNFOLDERID. Used to query
+# SHGetKnownFolderPath instead of guessing the directory name (see docstring
+# of `_known_folder_desktop`).
 _FOLDERID_DESKTOP = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"
 _FOLDERID_DOWNLOADS = "{374DE290-123F-4565-9164-39C4925E467B}"
 
@@ -182,16 +181,16 @@ def _home_dir() -> Path:
 
 
 def _known_folder(folderid: str) -> Path | None:
-    """Prawdziwa sciezka Known Folder prosto z Windows Shell API.
+    """Real Known Folder path straight from the Windows Shell API.
 
-    Zgadywanie nazwy nie dziala w obie strony. Na dysku pulpit nazywa sie
-    ZAWSZE `Desktop` — polskie „Pulpit" to nazwa wyswietlana z `desktop.ini`,
-    wiec ramie sprawdzajace `~/Pulpit` bylo martwym kodem. Odwrotnie przy
-    OneDrive Known Folder Move, wlaczanym domyslnie w polskim OOBE: pulpit
-    przenosi sie do `%USERPROFILE%\\OneDrive\\Pulpit`, a `~/Desktop` potrafi
-    zniknac. `_collect_artifact` robi `mkdir(parents=True)`, wiec zgadniety
-    katalog po prostu POWSTAJE, EXE laduje w miejscu, ktorego uzytkownik nie
-    oglada, a build melduje sukces. Znany folder zna obie sytuacje.
+    Guessing the name does not work both ways. On disk the desktop is ALWAYS
+    called `Desktop` — the Polish "Pulpit" is a display name from `desktop.ini`,
+    so a branch checking `~/Pulpit` was dead code. Conversely, with OneDrive
+    Known Folder Move (enabled by default in the Polish OOBE) the desktop
+    moves to `%USERPROFILE%\\OneDrive\\Pulpit`, and `~/Desktop` may vanish.
+    `_collect_artifact` calls `mkdir(parents=True)`, so a guessed directory
+    simply APPEARS, the EXE lands in a place the user never looks at, and the
+    build reports success. The Known Folder knows both situations.
     """
     if sys.platform != "win32":
         return None
@@ -228,12 +227,12 @@ def _known_folder(folderid: str) -> Path | None:
 
 
 def _known_folder_desktop() -> Path | None:
-    """Pulpit wg Windows Known Folder — cienka owijka dla kompatybilnosci."""
+    """Desktop via Windows Known Folder — thin wrapper for compatibility."""
     return _known_folder(_FOLDERID_DESKTOP)
 
 
 def _desktop_dir() -> Path | None:
-    """Pulpit, ale tylko jesli naprawde istnieje na dysku."""
+    """Desktop, but only if it actually exists on disk."""
     known = _known_folder_desktop()
     if known is not None and known.exists():
         return known
@@ -242,10 +241,10 @@ def _desktop_dir() -> Path | None:
 
 
 def _downloads_dir() -> Path | None:
-    """Pobrane, ale tylko jesli naprawde istnieje na dysku.
+    """Downloads, but only if it actually exists on disk.
 
-    Na Windows Pobrane moga byc przeniesione przez OneDrive KFM, wiec
-    najpierw pytamy Shell API, a dopiero potem probujemy ~/Downloads.
+    On Windows, Downloads may be relocated by OneDrive KFM, so we ask
+    the Shell API first and only then try ~/Downloads.
     """
     known = _known_folder(_FOLDERID_DOWNLOADS)
     if known is not None and known.exists():
@@ -255,11 +254,12 @@ def _downloads_dir() -> Path | None:
 
 
 def _is_home_or_above(path: Path) -> bool:
-    """Czy sciezka jest katalogiem domowym uzytkownika lub jego rodzicem.
+    """Whether the path is the user's home directory or its parent.
 
-    Katalog domowy (np. C:\\Users\\MeMeMe) nie jest miejscem, w ktorym laik
-    spodziewa sie znalezc wynik — widzi go dopiero po otwarciu Eksploratora
-    i recznym wejsciu w profil. Pulpit i Pobrane sa widoczne od razu.
+    The home directory (e.g. C:\\Users\\MeMeMe) is not a place where a
+    non-technical user expects to find the result — they only see it after
+    opening Explorer and manually navigating into the profile. Desktop and
+    Downloads are visible immediately.
     """
     return _home_dir().is_relative_to(path)
 
@@ -270,10 +270,10 @@ def _looks_like_cloud_name(name: str) -> bool:
 
 
 def is_cloud_synced(path: Path) -> bool:
-    """Czy sciezka lezy w katalogu synchronizowanym z chmura.
+    """Whether the path lies in a cloud-synced directory.
 
-    Publiczna, bo tego samego rozroznienia potrzebuje diagnostyka: WinError
-    1920 na pliku w OneDrive to plik trzymany w chmurze, a nie antywirus.
+    Public because the same distinction is needed by diagnostics: WinError
+    1920 on a file in OneDrive means a cloud-only file, not antivirus.
     """
     path = Path(path)
     if any(_looks_like_cloud_name(part) for part in path.parts):
@@ -289,24 +289,25 @@ def is_cloud_synced(path: Path) -> bool:
 
 
 def _dest_candidates(root: Path) -> tuple[tuple[Path, bool], ...]:
-    """Kandydaci na katalog wynikowy, od najlepszego. Flaga: „omijaj chmure".
+    """Candidates for the output directory, best first. Flag: "avoid cloud".
 
-    Rodzic katalogu zrodlowego jest pierwszy, bo wynik ma lezec obok projektu.
-    Odpada w dwoch sytuacjach:
+    The source directory's parent comes first because the result should sit
+    next to the project. It is excluded in two situations:
 
-    1. Projekt lezy w korzeniu dysku: `Path("F:/").parent` to znowu
-       `Path("F:/")`, wiec „obok" nie istnieje, a sonda zapisywalnosci
-       pisalaby wprost do katalogu zrodlowego — dokladnie tego, czego
-       zabrania §7.
+    1. The project sits at the drive root: `Path("F:/").parent` is again
+       `Path("F:/")`, so "next to" does not exist, and the writability probe
+       would write directly into the source directory — exactly what spec
+       section 7 forbids.
 
-    2. Rodzic jest katalogiem domowym uzytkownika lub wyzej (np. C:\\Users
-       lub C:\\Users\\MeMeMe): laik nie zaglada do profilu recznie i nie
-       znajdzie tam pliku EXE. Pulpit i Pobrane sa widoczne od razu.
+    2. The parent is the user's home directory or above (e.g. C:\\Users
+       or C:\\Users\\MeMeMe): a non-technical user does not look inside
+       the profile manually and would not find the EXE there. Desktop and
+       Downloads are visible immediately.
 
-    Chmury omijamy tylko przy rodzicu. Pulpit jest miejscem WYBRANYM przez
-    projekt, bo uzytkownik na niego patrzy; gdy Windows przeniosl go do
-    OneDrive, to nadal jest ten Pulpit i odsylanie kogos zamiast tego do
-    katalogu domowego byloby gorsza usluga niz wysylka do chmury.
+    Cloud directories are avoided only for the parent. Desktop is a location
+    CHOSEN by the project because the user looks at it; when Windows moved it
+    into OneDrive, it is still the Desktop and sending someone to the home
+    directory instead would be a worse service than an upload to the cloud.
     """
     root = Path(root)
     candidates: list[tuple[Path, bool]] = []
@@ -324,40 +325,39 @@ def _dest_candidates(root: Path) -> tuple[tuple[Path, bool], ...]:
 
 def default_dest_dir(root: Path, exe_name: str) -> Path:
     folder = f"{sanitize_exe_name(exe_name)}-EXE"
-    # Lista kandydatow powstaje RAZ. Kazde pytanie o Pulpit to wywolanie Win32
-    # `SHGetKnownFolderPath`, a kazdy sprawdzany kandydat to jeszcze sonda
-    # zapisywalnosci — czyli, gdy Pulpit lezy w OneDrive, zdarzenie
-    # synchronizacji. Sciezka awaryjna pytala o to samo po raz drugi.
+    # The candidate list is built ONCE. Every Desktop query is a Win32
+    # `SHGetKnownFolderPath` call, and every candidate check is also a
+    # writability probe — which, when Desktop is in OneDrive, is a sync
+    # event. The fallback path used to query the same thing a second time.
     candidates = _dest_candidates(root)
     cloudy: Path | None = None
 
     for candidate, avoid_cloud in candidates:
         if not candidate.exists():
             continue
-        # Pytanie o chmure idzie PRZED sonda zapisywalnosci, bo jest darmowe:
-        # czyta nazwe i zmienne srodowiskowe, nie dotyka dysku. Odwrotna
-        # kolejnosc oznaczala, ze dla projektu trzymanego w OneDrive kazdy
-        # podglad planu tworzyl i kasowal plik w katalogu synchronizowanym —
-        # czyli zdarzenie wysylki za kazdym razem, gdy uzytkownik tylko patrzy
-        # na ekran 2, w katalogu, ktory i tak zaraz odpadal.
+        # The cloud check goes BEFORE the writability probe because it is free:
+        # it reads names and environment variables, does not touch the disk.
+        # The reverse order meant that for a project kept in OneDrive, every
+        # plan preview created and deleted a file in a synced directory — a
+        # sync event every time the user just looked at screen 2, in a
+        # directory that would be rejected anyway.
         if avoid_cloud and is_cloud_synced(candidate):
-            # Chmura jest gorsza niz dysk lokalny, ale nieskonczenie lepsza
-            # niz brak miejsca docelowego — zapamietujemy ja na wypadek, gdyby
-            # zaden kandydat lokalny sie nie znalazl. Sonda poczeka do chwili,
-            # w ktorej ten wybor naprawde bedzie potrzebny.
+            # Cloud is worse than local disk but infinitely better than having
+            # no destination at all — we remember it in case no local candidate
+            # is found. The probe will wait until this choice actually matters.
             cloudy = cloudy or candidate
             continue
         if not _is_writable(candidate):
             continue
         return candidate / folder
 
-    # Zaden kandydat nie przeszedl sondy. Chmura bije brak miejsca; dalej
-    # pierwsze miejsce WYBRANE przez projekt (Pulpit, a gdy go nie ma —
-    # katalog domowy), nigdy katalog zrodlowy. `_dest_candidates` zawsze
-    # konczy sie katalogiem domowym, wiec ten wybor istnieje.
-    # Kandydat w chmurze nie byl dotad sondowany — tutaj po raz pierwszy ma
-    # znaczenie, czy da sie do niego pisac. Gdy nie da, zostaje pierwsze
-    # miejsce WYBRANE przez projekt: to samo, co przed odlozeniem sondy.
+    # No candidate passed the probe. Cloud beats no destination; then the first
+    # location CHOSEN by the project (Desktop, or when absent — home directory),
+    # never the source directory. `_dest_candidates` always ends with the home
+    # directory, so this choice exists.
+    # The cloud candidate was not probed before — here for the first time it
+    # matters whether we can write to it. If not, the first CHOSEN location
+    # by the project remains: the same as before deferring the probe.
     if cloudy is not None and _is_writable(cloudy):
         return cloudy / folder
 
@@ -366,7 +366,7 @@ def default_dest_dir(root: Path, exe_name: str) -> Path:
 
 
 def _dedup(items: Iterable[str]) -> tuple[str, ...]:
-    """Unikalne, z zachowaniem kolejności pierwszego wystąpienia."""
+    """Unique items, preserving first-occurrence order."""
     seen: set[str] = set()
     out: list[str] = []
     for item in items:
@@ -377,13 +377,13 @@ def _dedup(items: Iterable[str]) -> tuple[str, ...]:
 
 
 def _detect_asset_collisions(analysis: ProjectAnalysis, exe_name: str) -> list[Issue]:
-    """Wykrywa kolizje zasobów z wygenerowanymi plikami (B07).
+    """Detects asset collisions with generated files (B07).
 
-    Sprawdzenia (case-insensitive, bo Windows):
-    - zasób vs launcher (_exelent_launcher.py)
-    - zasób vs nazwa EXE (np. program.exe)
-    - zasób vs ikona w workspace (_exelent_icon.ico)
-    - duplikaty ścieżek zasobów (np. Data.json i data.json na Windows)
+    Checks (case-insensitive, because Windows):
+    - asset vs launcher (_exelent_launcher.py)
+    - asset vs EXE name (e.g. program.exe)
+    - asset vs icon in workspace (_exelent_icon.ico)
+    - duplicate asset paths (e.g. Data.json and data.json on Windows)
     """
     issues: list[Issue] = []
     root = analysis.root
@@ -401,7 +401,7 @@ def _detect_asset_collisions(analysis: ProjectAnalysis, exe_name: str) -> list[I
             continue
         key = rel.lower()
 
-        # Kolizja z plikami generowanymi przez build.
+        # Collision with files generated by the build.
         base_name = data_path.name.lower()
         if base_name in reserved and data_path.parent == root:
             issues.append(
@@ -412,7 +412,7 @@ def _detect_asset_collisions(analysis: ProjectAnalysis, exe_name: str) -> list[I
                 )
             )
 
-        # Duplikat ścieżki (case-insensitive).
+        # Duplicate path (case-insensitive).
         if key in seen:
             existing = seen[key].relative_to(root).as_posix()
             issues.append(
@@ -429,7 +429,7 @@ def _detect_asset_collisions(analysis: ProjectAnalysis, exe_name: str) -> list[I
 
 
 def _file_hash(path: Path) -> str:
-    """SHA-256 pliku — utrwala treść w momencie akceptacji (B08)."""
+    """SHA-256 of a file — captures content at acceptance time (B08)."""
     h = hashlib.sha256()
     try:
         with open(path, "rb") as f:
@@ -441,17 +441,17 @@ def _file_hash(path: Path) -> str:
 
 
 def _build_source_inventory(analysis: ProjectAnalysis) -> tuple[SourceEntry, ...]:
-    """Inwentarz plików zaakceptowanych przez analizę (B08).
+    """Inventory of files accepted by analysis (B08).
 
-    Zawiera źródła Pythona, zasoby, ikonę i manifesty — każdy z hashem.
-    Konwersje TXT nie są na dysku, więc nie mają wpisu — ich treść jest
-    utrwalona w `plan.converted`.
+    Contains Python sources, resources, icon, and manifests — each with a hash.
+    TXT conversions are not on disk, so they have no entry — their content is
+    captured in `plan.converted`.
     """
     root = analysis.root
     entries: list[SourceEntry] = []
     seen: set[str] = set()
 
-    # Źródła Pythona (bez konwersji — te istnieją tylko w pamięci).
+    # Python sources (excluding conversions — those exist only in memory).
     converted_paths = {root / rel for rel in analysis.converted}
     for path in analysis.scan.py_files:
         if path in converted_paths:
@@ -461,28 +461,28 @@ def _build_source_inventory(analysis: ProjectAnalysis) -> tuple[SourceEntry, ...
             seen.add(rel)
             entries.append(SourceEntry(rel_path=rel, sha256=_file_hash(path)))
 
-    # Dodatkowe źródła z domknięcia importów (tryb jednoplikowy).
+    # Additional sources from import closure (single-file mode).
     for path in analysis.extra_sources:
         rel = path.relative_to(root).as_posix()
         if rel not in seen:
             seen.add(rel)
             entries.append(SourceEntry(rel_path=rel, sha256=_file_hash(path)))
 
-    # Zasoby.
+    # Resources.
     for path in analysis.scan.data_files:
         rel = path.relative_to(root).as_posix()
         if rel not in seen:
             seen.add(rel)
             entries.append(SourceEntry(rel_path=rel, sha256=_file_hash(path)))
 
-    # Ikona.
+    # Icon.
     if analysis.suggested_icon is not None:
         rel = analysis.suggested_icon.relative_to(root).as_posix()
         if rel not in seen:
             seen.add(rel)
             entries.append(SourceEntry(rel_path=rel, sha256=_file_hash(analysis.suggested_icon)))
 
-    # Oryginalne TXT-y (źródło konwersji — potrzebne do ewentualnej weryfikacji).
+    # Original TXT files (conversion source — needed for eventual verification).
     for path in analysis.scan.text_candidates:
         rel = path.relative_to(root).as_posix()
         if rel not in seen:
@@ -493,11 +493,11 @@ def _build_source_inventory(analysis: ProjectAnalysis) -> tuple[SourceEntry, ...
 
 
 def _build_resource_inventory(analysis: ProjectAnalysis) -> tuple[ResourceEntry, ...]:
-    """Jawny inwentarz zasobów z wykluczeniami (B07).
+    """Explicit resource inventory with exclusions (B07).
 
-    Każdy plik z `scan.data_files` jest klasyfikowany, mierzony i filtrowany.
-    Pliki wykluczone (artefakty IDE, logi, pliki tymczasowe) dostają
-    `included=False` — GUI wyświetla je wyszarzone i pozwala przywrócić.
+    Every file from `scan.data_files` is classified, measured, and filtered.
+    Excluded files (IDE artifacts, logs, temporary files) get `included=False` —
+    the GUI displays them grayed out and allows restoring.
     """
     root = analysis.root
     entries: list[ResourceEntry] = []
@@ -535,9 +535,9 @@ def _build_resource_inventory(analysis: ProjectAnalysis) -> tuple[ResourceEntry,
 
 
 def _local_module_names(analysis: ProjectAnalysis) -> set[str]:
-    """Nazwy najwyższego poziomu modułów lokalnych — także tych skonwertowanych
-    z `.txt`, których nie ma na dysku. Chronią przed potraktowaniem ręcznie
-    dopisanego `mojpakiet.sub` jako brakującej paczki z PyPI."""
+    """Top-level names of local modules — including those converted from `.txt`
+    that do not exist on disk. Prevents treating a manually added `mypkg.sub`
+    as a missing package from PyPI."""
     paths = [*analysis.scan.py_files, *(analysis.root / rel for rel in analysis.converted)]
     return local_module_names(analysis.root, {p: "" for p in paths})
 
@@ -556,16 +556,16 @@ def make_plan(
 ) -> BuildPlan:
     chosen_entry = entry or analysis.entry
     if chosen_entry is None:
-        raise ValueError("brak pliku glownego — analiza nie znalazla kodu Pythona")
+        raise ValueError("no main file — analysis found no Python code")
 
     name = sanitize_exe_name(exe_name or analysis.suggested_name)
 
-    # B07: kolizje zasobów z plikami generowanymi przez build.
+    # B07: asset collisions with files generated by the build.
     plan_issues = _detect_asset_collisions(analysis, name)
 
-    # Moduły dopisane ręcznie na ekranie 2: przypadki, których statyczny skan nie
-    # widzi (import dynamiczny, wtyczka). Scalane z tym, co znalazła analiza —
-    # build wykonuje DOKŁADNIE plan, więc dopisania muszą być już w nim.
+    # Modules added manually on screen 2: cases that the static scan cannot
+    # see (dynamic import, plugin). Merged with what analysis found —
+    # build executes EXACTLY the plan, so additions must already be in it.
     extra_hidden, extra_deps = resolve_extra_modules(extra_modules, _local_module_names(analysis))
 
     # Packages whose internal submodules escape PyInstaller's default analysis
@@ -574,7 +574,7 @@ def make_plan(
     all_import_names = {d.import_name for d in analysis.dependencies} | set(extra_modules)
     collect_subs = package_submodule_collections(all_import_names)
 
-    # B05/B08: ścieżki manifestów i constraints do przekopiowania do workspace.
+    # B05/B08: manifest and constraint paths to copy to workspace.
     manifest_paths, constraint_paths = _collect_manifest_paths(
         analysis.scan.requirements, analysis.root
     )
@@ -596,26 +596,26 @@ def make_plan(
             + [d.package for d in extra_deps]
         ),
         data_files=analysis.scan.data_files,
-        # Policzone raz, w zadaniu 8, na prawdziwych treściach plików
-        # (łącznie z tymi skonwertowanymi z `.txt`, których nie ma na dysku),
-        # plus ręczne dopisania użytkownika.
+        # Computed once, in task 8, on real file contents (including those
+        # converted from `.txt` that do not exist on disk), plus manual
+        # additions by the user.
         hidden_imports=_dedup([*analysis.hidden_imports, *extra_hidden]),
         collect_submodules=collect_subs,
         single_file=analysis.single_file,
         extra_sources=analysis.extra_sources,
         total_download_bytes=total_download_bytes,
-        # Konwersje wędrują W PLANIE, żeby build dało się wykonać z samego
-        # planu, bez ponownej analizy źródeł.
+        # Conversions travel IN THE PLAN so the build can be executed from
+        # the plan alone, without re-analyzing the sources.
         converted=tuple(analysis.converted.items()),
-        # Inwentarz utrwala listę zaakceptowanych plików z hashami (B08).
-        # Materializacja kopiuje TYLKO te pliki i weryfikuje hash.
+        # The inventory captures the list of accepted files with hashes (B08).
+        # Materialization copies ONLY these files and verifies hashes.
         source_inventory=_build_source_inventory(analysis),
-        # B07: jawny inwentarz zasobów z klasyfikacją i wykluczeniami.
+        # B07: explicit resource inventory with classification and exclusions.
         resource_inventory=_build_resource_inventory(analysis),
         plan_issues=tuple(plan_issues),
-        # B08: unikalny identyfikator planu — łączy raport z planem.
+        # B08: unique plan identifier — links the report to the plan.
         plan_id=uuid.uuid4().hex,
-        # B05/B08: zachowane manifesty do przekazania uv.
+        # B05/B08: preserved manifests for passing to uv.
         manifest_paths=manifest_paths,
         constraint_paths=constraint_paths,
     )
