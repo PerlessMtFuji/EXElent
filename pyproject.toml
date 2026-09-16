@@ -1,6 +1,6 @@
 [project]
 name = "exelent"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Turn a folder of Python code into a Windows EXE — for people who do not use a terminal"
 requires-python = ">=3.12"
 license = { text = "MIT" }

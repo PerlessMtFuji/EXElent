@@ -8,16 +8,18 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .[dev] pyinstaller==6.16.0
+      - run: uv sync --frozen --dev
+      - run: uv pip install pyinstaller==6.16.0
       - name: Build EXElent.exe
-        run: python build_exelent.py
+        run: uv run python build_exelent.py
       - name: Frozen validator, cold bootstrap and repeat build
         env:
           EXELENT_TEST_EXE: ${{ github.workspace }}\dist\EXElent.exe
-        run: pytest tests/test_product_smoke.py -v -m slow --basetemp=build/product-smoke --junitxml=build/product-smoke.xml
+        run: uv run pytest tests/test_product_smoke.py -v -m slow --basetemp=build/product-smoke --junitxml=build/product-smoke.xml
       - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4

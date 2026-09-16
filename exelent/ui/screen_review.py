@@ -238,6 +238,9 @@ class ReviewScreen(QWidget):
         preview_layout.addWidget(self.preview_button)
         self.preview_box.setVisible(False)
 
+        self.trust_label = QLabel(t("review_trust_warning"), objectName="Muted")
+        self.trust_label.setWordWrap(True)
+
         self.back_button = QPushButton(t("review_back"), objectName="Link")
         self.back_button.clicked.connect(self.back_requested)
 
@@ -261,6 +264,7 @@ class ReviewScreen(QWidget):
         body_layout.addWidget(self.extra_box)
         body_layout.addWidget(self.warnings_label)
         body_layout.addWidget(self.notes_label)
+        body_layout.addWidget(self.trust_label)
         body_layout.addStretch(1)
 
         self.scroll_area = QScrollArea()
@@ -413,6 +417,7 @@ class ReviewScreen(QWidget):
         self.scope_title_label.setText(t("review_scope_title"))
         self.preview_button.setText(t("review_preview_button"))
         self.destination_button.setText(t("review_destination_change"))
+        self.trust_label.setText(t("review_trust_warning"))
         self.back_button.setText(t("review_back"))
         self.build_button.setText(t("review_build"))
         for row, key in (

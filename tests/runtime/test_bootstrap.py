@@ -84,10 +84,17 @@ def _fake_uv_zip_bytes(content: bytes = b"prawdziwa zawartosc uv.exe") -> bytes:
     return buffer.getvalue()
 
 
+def _patch_sha256_for_payload(monkeypatch, payload: bytes):
+    import hashlib
+
+    monkeypatch.setattr(bootstrap, "UV_ZIP_SHA256", hashlib.sha256(payload).hexdigest())
+
+
 def test_interrupted_download_leaves_no_partial_artifact(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     target = bootstrap.uv_path()
     payload = _fake_uv_zip_bytes()
+    _patch_sha256_for_payload(monkeypatch, payload)
     monkeypatch.setattr(bootstrap, "_download", lambda url, progress, cancel=None: payload)
 
     def failing_replace(_src, _dst):
@@ -121,6 +128,7 @@ def test_ensure_uv_retries_download_after_prior_interruption(monkeypatch, tmp_pa
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     target = bootstrap.uv_path()
     payload = _fake_uv_zip_bytes()
+    _patch_sha256_for_payload(monkeypatch, payload)
     calls = {"n": 0}
 
     def fake_download(url, progress, cancel=None):

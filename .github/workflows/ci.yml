@@ -6,22 +6,24 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .[dev]
-      - run: ruff check .
-      - run: ruff format --check .
+      - run: uv sync --frozen --dev
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
 
   test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .[dev]
-      - run: pytest -m "not slow" -v
+      - run: uv sync --frozen --dev
+      - run: uv run pytest -m "not slow" -v
 
   self-build:
     needs: [lint, test]

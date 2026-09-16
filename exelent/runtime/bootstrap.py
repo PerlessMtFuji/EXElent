@@ -4,6 +4,7 @@ pobrać przenośnego CPythona z tkinterem i pip-em oraz stworzyć izolowane
 
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import shutil
@@ -32,6 +33,7 @@ _CANCEL_CHECK_BYTES = 256 * 1024
 UV_URL = (
     f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-pc-windows-msvc.zip"
 )
+UV_ZIP_SHA256 = "0d051779fbcb173b183efeae1c3e96148764fd82709bbbf0966df3efe48b67c5"
 
 
 class UvDownloadError(IssueError):
@@ -132,6 +134,9 @@ def _atomic_write(dest: Path, data: bytes) -> None:
 
 def _download_and_extract_uv(url: str, dest: Path, progress: ProgressFn, cancel=None) -> None:
     payload = _download(url, progress, cancel=cancel)
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != UV_ZIP_SHA256:
+        raise UvDownloadError(Issue("uv_download_failed", Severity.BLOCKER))
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         for name in archive.namelist():
             if name.endswith("uv.exe"):

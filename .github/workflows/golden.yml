@@ -18,11 +18,12 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .[dev]
-      - run: pytest tests/test_golden_builds.py tests/test_local_resolver.py -v -m slow --basetemp=build/golden --junitxml=build/golden.xml
+      - run: uv sync --frozen --dev
+      - run: uv run pytest tests/test_golden_builds.py tests/test_local_resolver.py -v -m slow --basetemp=build/golden --junitxml=build/golden.xml
       - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
