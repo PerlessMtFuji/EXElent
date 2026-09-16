@@ -1,9 +1,8 @@
-"""Wiersz faktu: znacznik pewnosci, rekomendacja, link powrotu.
+"""Fact row: confidence indicator, recommendation, and restore link.
 
-Rekomendacja odpowiada na pytanie, ktore uzytkownik zadaje sobie pol godziny
-pozniej: "co program wybral sam, zanim to zmienilem". Wiersz porownuje NAPISY,
-bo to jedyne, co widzi niezaleznie od tego, czy edytorem jest lista, pole
-tekstowe czy przycisk.
+The recommendation answers the question a user may ask later: "what did the
+program choose before I changed it?" The row compares strings because that is
+the only representation shared by list, text-field, and button editors.
 """
 
 import pytest
@@ -49,53 +48,53 @@ def test_link_disappears_again_when_the_value_comes_back(combo_row):
 
 
 def test_clicking_the_link_asks_the_screen_instead_of_setting_the_value(qtbot, combo_row):
-    """Wiersz nie umie ustawic wartosci w dowolnym edytorze — ma o to poprosic.
+    """The row asks the screen to set a value in an arbitrary editor.
 
-    Gdyby probowal sam, musialby znac QComboBox, QLineEdit i QPushButton, czyli
-    dokladnie te wiedze, ktorej `value_text()` celowo unika.
+    Doing it directly would require knowledge of QComboBox, QLineEdit, and
+    QPushButton, exactly the coupling that `value_text()` deliberately avoids.
     """
     row, combo = combo_row
     row.set_recommended("Program w oknie (zalecane)")
     combo.setCurrentIndex(1)
     with qtbot.waitSignal(row.restore_requested, timeout=1000):
         row.restore_button().click()
-    assert combo.currentIndex() == 1  # wiersz NIE ustawil nic sam
+    assert combo.currentIndex() == 1  # the row did not set anything itself
 
 
 def test_button_editor_raises_type_error_on_set_recommended(qtbot):
-    """Edytor bez sygnalow zmian powinien rzucic blad, nie milczec.
+    """An editor without change signals should raise instead of failing silently.
 
-    QPushButton nie emituje `currentIndexChanged` ani `textChanged`, wiec
-    wiersz nie mogl by nigdy pokazac linku powrotu. To gorsze niz brak API.
+    QPushButton emits neither `currentIndexChanged` nor `textChanged`, so the
+    row could never reveal the restore link. That is worse than rejecting it.
     """
-    button = QPushButton("Wybierz ikone")
-    row = FactRow("Ikona", button)
+    button = QPushButton("Choose icon")
+    row = FactRow("Icon", button)
     qtbot.addWidget(row)
     with pytest.raises(TypeError, match="does not emit change signals"):
-        row.set_recommended("jakas-rekomendacja")
+        row.set_recommended("some-recommendation")
 
 
 @pytest.fixture
 def line_edit_row(qtbot):
     line_edit = QLineEdit()
-    line_edit.setText("domyslna nazwa")
-    row = FactRow("Nazwa pliku", line_edit)
+    line_edit.setText("default name")
+    row = FactRow("Filename", line_edit)
     qtbot.addWidget(row)
     return row, line_edit
 
 
 def test_line_edit_editor_tracks_text_changes(line_edit_row):
-    """QLineEdit emituje textChanged, wiec restore link powinien dzialac.
+    """QLineEdit emits textChanged, so the restore link should work.
 
-    Weryfikujemy pelny cykl: ustaw rekomendacje, zmien tekst (link sie pojawi),
-    przywroc oryginal (link sie schowa).
+    Exercise the whole cycle: set a recommendation, change the text so the
+    link appears, and restore the original so the link disappears.
     """
     row, line_edit = line_edit_row
-    row.set_recommended("domyslna nazwa")
+    row.set_recommended("default name")
     assert row.restore_visible() is False
 
-    line_edit.setText("nowa nazwa")
+    line_edit.setText("new name")
     assert row.restore_visible() is True
 
-    line_edit.setText("domyslna nazwa")
+    line_edit.setText("default name")
     assert row.restore_visible() is False

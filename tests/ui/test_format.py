@@ -1,7 +1,7 @@
-"""Jedno zrodlo formatowania rozmiarow i czasu.
+"""One source for formatting sizes and durations.
 
-Cztery niezalezne implementacje "ile to megabajtow" rozjada sie co do
-zaokraglenia, a uzytkownik zobaczy 26,0 MB w oknie i 26 MB na ekranie obok.
+Four independent implementations of byte formatting will eventually disagree
+on rounding, showing 26.0 MB in one window and 26 MB on the next screen.
 """
 
 import pytest

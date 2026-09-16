@@ -1,7 +1,7 @@
-"""Izolowane środowisko, w którym uruchamiany jest PyInstaller.
+"""Isolated environment in which PyInstaller runs.
 
-uv robi trzy rzeczy: sprowadza przenośnego CPythona (z tkinterem — czego
-oficjalny embeddable Python nie ma), tworzy venv i instaluje paczki.
+uv does three things: fetches a portable CPython (with tkinter — which the
+official embeddable Python lacks), creates a venv and installs packages.
 """
 
 from __future__ import annotations
@@ -26,24 +26,25 @@ from exelent.runtime.paths import work_dir_for
 from exelent.runtime.procs import CREATE_NO_WINDOW, kill_tree
 from exelent.runtime.uvlog import DOWNLOAD_DONE, DOWNLOAD_START, PREPARED, parse_line
 
-# Jak często sprawdzamy token przy anulowalnym wywołaniu uv. Wystarczająco
-# gęsto, żeby zamykane okno nie czekało zauważalnie, i wystarczająco rzadko,
-# żeby nie kręcić procesorem przez całą kilkuminutową instalację.
+# How often we check the token during a cancellable uv call. Frequent enough
+# that closing the window does not wait noticeably, and rare enough not to
+# spin the CPU for the entire multi-minute installation.
 _CANCEL_POLL_SECONDS = 0.1
 
-# Ile czekamy na zakończenie procesu po `kill_tree` i na dołączenie wątku
-# czytającego (B10). Te same wartości co w `pyinstaller.py` — kontrakt
-# ograniczonego czasu anulowania jest wspólny dla obu backendów.
+# How long we wait for the process to exit after `kill_tree` and for the
+# reader thread to join (B10). Same values as in `pyinstaller.py` — the
+# bounded-cancellation-time contract is shared by both backends.
 _KILL_WAIT_SECONDS = 3.0
 _READER_JOIN_SECONDS = 1.0
 
 
 class BuildEnvError(IssueError):
-    """Srodowisko builda nie powstalo.
+    """The build environment could not be created.
 
-    Bez tego wyjatku `create_build_env` oddawalo `BuildEnv` wygladajace na
-    zdrowe, a awaria wychodzila cztery ramki dalej jako `FileNotFoundError
-    [WinError 2]` z `Popen` — czyli w miejscu, ktore o przyczynie nie wie nic.
+    Without this exception, `create_build_env` returned a seemingly healthy
+    `BuildEnv`, and the failure surfaced four stack frames later as
+    `FileNotFoundError [WinError 2]` from `Popen` — at a point that knows
+    nothing about the cause.
     """
 
 
@@ -53,23 +54,23 @@ class BuildEnv:
     venv: Path
     python: Path
     failed_packages: tuple[str, ...] = field(default_factory=tuple)
-    # B06: rozstrzygnięte wersje zainstalowanych paczek (nazwa, wersja).
-    # Umożliwia odtworzenie problemu; zapisywane w raporcie builda.
+    # B06: resolved versions of installed packages (name, version).
+    # Enables reproduction of the problem; stored in the build report.
     resolved_versions: tuple[tuple[str, str], ...] = ()
-    # B06: ostrzeżenia o niezgodności zadeklarowanych i zainstalowanych wersji.
+    # B06: warnings about declared and installed version mismatches.
     version_issues: tuple[Issue, ...] = ()
 
 
 def run_uv(
     uv: Path, args: Sequence[str], *, cwd: Path | None = None, cancel=None
 ) -> subprocess.CompletedProcess[str]:
-    """Uruchamia uv i czeka na wynik.
+    """Run uv and wait for the result.
 
-    `cancel` (cokolwiek z własnością `cancelled`) czyni to czekanie
-    przerywalnym. Bez tego preflight liczący rozmiar pobierania nie ma jak
-    zareagować na zamknięcie okna: `subprocess.run` wraca dopiero z uv, a Qt
-    po swoim limicie niszczy wtedy działający wątek — czyli `abort()`
-    i proces, który zostaje w systemie.
+    `cancel` (anything with a `cancelled` property) makes the wait
+    interruptible. Without it, the preflight calculating download size cannot
+    react when the window closes: `subprocess.run` returns only after uv, while
+    Qt destroys the running thread after its deadline — calling `abort()` and
+    leaving the process behind in the system.
     """
     if cancel is None:
         return subprocess.run(
@@ -105,13 +106,13 @@ def _run_uv_cancellable(
         except subprocess.TimeoutExpired:
             if not cancel.cancelled:
                 continue
-            # uv sam uruchamia procesy potomne (pobieranie, rozpakowywanie),
-            # więc samo `kill()` na nim zostawiłoby je osierocone.
+            # uv spawns child processes itself (download, extraction), so
+            # calling `kill()` on uv alone would leave them orphaned.
             kill_tree(process.pid)
-            # B10: po kill_tree potok zamyka się normalnie w ułamku sekundy,
-            # ale gdy ubicie zawiodło, `communicate()` bez limitu czeka do
-            # końca życia procesu. Ograniczamy to, żeby anulowanie zawsze
-            # kończyło się w skończonym czasie.
+            # B10: after kill_tree the pipe normally closes in a fraction of a
+            # second, but if termination fails, an unbounded `communicate()`
+            # waits for the process lifetime. Bound it so cancellation always
+            # completes in finite time.
             try:
                 stdout, stderr = process.communicate(timeout=_KILL_WAIT_SECONDS)
             except subprocess.TimeoutExpired:
@@ -128,27 +129,28 @@ def _stream_uv(
     cwd: Path | None = None,
     cancel=None,
 ) -> tuple[int, str]:
-    """Uruchamia uv i oddaje jego stderr linia po linii, na żywo.
+    """Run uv and stream its stderr line by line in real time.
 
-    `subprocess.run(capture_output=True)` buforuje całe wyjście do zakończenia
-    procesu — przy instalacji trwającej minuty oznaczało to pasek postępu,
-    który stoi, a potem skacze na koniec.
+    `subprocess.run(capture_output=True)` buffers all output until the process
+    exits — for an installation lasting minutes, that meant a progress bar
+    that stayed still and then jumped to the end.
 
-    Pełny tekst i tak zbieramy: `explain_log` potrzebuje go w całości, bo błąd
-    potrafi paść wcześnie i tylko odbić się echem na końcu.
+    We still collect the full text: `explain_log` needs all of it because an
+    error may occur early and only be echoed at the end.
 
-    `cancel` (cokolwiek z własnością `cancelled`) czyni to czekanie
-    przerywalnym: stderr czytamy na osobnym wątku, a pętla główna odpytuje
-    token na krótkim timerze i — gdy anulowano — ubija całe drzewo procesów uv
-    (pobieranie/rozpakowywanie to jego procesy potomne). Bez tego kilkuminutowe
-    pobranie `torch` nie da się przerwać, a zamykane okno czeka aż do końca.
+    `cancel` (anything with a `cancelled` property) makes the wait
+    interruptible: stderr is read on a separate thread, while the main loop
+    polls the token on a short timer and — when cancelled — terminates uv's
+    entire process tree (download/extraction are child processes). Without
+    this, a multi-minute `torch` download cannot be interrupted and a closing
+    window waits until it finishes.
 
-    `--color never` to tania polisa. Zmierzone wyjście na potoku nie zawierało
-    sekwencji ANSI, ale regex, który się o nie przewróci, psuje pasek w sposób
-    trudny do zauważenia.
+    `--color never` is cheap insurance. The measured piped output contained no
+    ANSI sequences, but a regex tripped up by them would break the progress
+    bar in a way that is hard to notice.
 
-    `CREATE_NO_WINDOW` zostaje: bez niej użytkownikowi GUI mignie czarne okno
-    konsoli przy każdym wywołaniu uv.
+    `CREATE_NO_WINDOW` stays: without it, a black console window flashes for
+    GUI users on every uv invocation.
     """
     collected: list[str] = []
     process = subprocess.Popen(
@@ -177,7 +179,7 @@ def _stream_uv(
             for line in stderr:  # type: ignore[attr-defined]
                 output_queue.put(line)
         finally:
-            output_queue.put(None)  # znacznik: stderr został zamknięty
+            output_queue.put(None)  # sentinel: stderr closed
 
     reader = threading.Thread(target=_pump, args=(process.stderr,), daemon=True)
     reader.start()
@@ -195,9 +197,9 @@ def _stream_uv(
         collected.append(line.rstrip("\n"))
         on_line(line)
 
-    # B10: po EOF lub kill_tree — skończony czas oczekiwania. Bez limitu
-    # `wait` wisząc na procesie, którego nie udało się ubić, blokowałby
-    # powrót z anulowania w nieskończoność.
+    # B10: after EOF or kill_tree — a finite wait. Without a timeout, `wait`
+    # on a process that could not be terminated would block cancellation
+    # forever.
     try:
         process.wait(timeout=_KILL_WAIT_SECONDS)
     except subprocess.TimeoutExpired:
@@ -207,18 +209,18 @@ def _stream_uv(
 
 
 class _DownloadTally:
-    """Ile już pobrano, jak szybko i ile zostało.
+    """How much has been downloaded, how fast, and how much remains.
 
-    uv na potoku raportuje ZAKOŃCZENIE pobrania, nie bajty w locie, więc
-    licznik rósłby skokami — przy paczce wielkości `torch` byłby to jeden skok
-    po kilkunastu minutach stania. Dlatego w obrębie paczek trwających
-    interpolujemy po zaobserwowanej prędkości, z przycięciem na 95% ich
-    rozmiaru: pasek, który dobił do końca i stoi, kłamie bardziej niż pasek
-    stojący w 95%.
+    On a pipe, uv reports download COMPLETION rather than bytes in flight, so
+    the counter would grow in jumps — for a package the size of `torch`, that
+    would be one jump after many minutes of no movement. For active packages
+    we therefore interpolate using the observed speed, capped at 95% of their
+    size: a bar that reaches the end and stalls is more misleading than one
+    that stalls at 95%.
 
-    Suma pochodzi z PyPI, a nie z linii uv — ZMIERZONE: uv nie drukuje
-    `Downloading` dla małych paczek, więc suma z linii byłaby zaniżona i pasek
-    nigdy nie dobiłby do końca.
+    The total comes from PyPI rather than uv output — MEASURED: uv does not
+    print `Downloading` for small packages, so a line-derived total would be
+    understated and the bar would never reach the end.
     """
 
     _INFLIGHT_CAP = 0.95
@@ -233,11 +235,11 @@ class _DownloadTally:
         self._started = time.monotonic()
 
     def reset(self, total_bytes: int) -> None:
-        """Nowa suma dla nowego pobrania.
+        """Set a new total for a new download.
 
-        Instalacja interpretera poznaje swoj rozmiar dopiero z linii uv, wiec
-        licznik musi umiec przyjac sume PO utworzeniu. Wolanie `__init__`
-        wprost byloby tym samym, tylko bez nazwy.
+        The interpreter installation learns its size only from a uv line, so
+        the counter must accept a total AFTER construction. Calling `__init__`
+        directly would do the same thing without conveying the intent.
         """
         self._total = total_bytes
         self._done = 0
@@ -256,8 +258,8 @@ class _DownloadTally:
         self._tick()
 
     def complete(self) -> None:
-        """`Prepared N packages` — wszystkie pobrania skończone, cokolwiek
-        naliczyliśmy po drodze."""
+        """`Prepared N packages` — all downloads are complete, regardless of
+        what was counted along the way."""
         self._done = self._total
         self._inflight.clear()
 
@@ -266,8 +268,8 @@ class _DownloadTally:
         if elapsed <= 0:
             return
         instant = self._done / elapsed
-        # Srednia wykladnicza: zerwane lacze ma byc widac jako spadek, a nie
-        # jako stala sprzed minuty.
+        # Exponential average: a broken connection should show as a drop,
+        # rather than a constant value from a minute ago.
         self._speed = (
             instant
             if self._speed == 0.0
@@ -290,11 +292,11 @@ def _check_version_consistency(
     resolved: tuple[tuple[str, str], ...],
     packages: Sequence[str],
 ) -> tuple[Issue, ...]:
-    """B06: sprawdza, czy zainstalowane wersje zgadzają się z deklarowanymi.
+    """B06: check whether installed versions match their declarations.
 
-    Nie blokuje builda — to ostrzeżenie. Jeśli uv zainstalowało wersję spoza
-    zadeklarowanego zakresu (bo np. constraint ją ograniczył, a deklaracja nie
-    została zaktualizowana), użytkownik powinien o tym wiedzieć.
+    This does not block the build — it is a warning. If uv installed a version
+    outside the declared range (for example because a constraint narrowed it
+    while the declaration was not updated), the user should know.
     """
     installed = {canonicalize_name(name): ver for name, ver in resolved}
     issues: list[Issue] = []
@@ -319,10 +321,11 @@ def _check_version_consistency(
 
 
 def _raise_if_cancelled(cancel) -> None:
-    """Anulowanie na etapie srodowiska konczy build jako PRZERWANY, nie blad.
+    """Cancellation during environment setup ends the build as CANCELLED, not failed.
 
-    Rzucamy IssueError z `build_cancelled` — granica wyjatkow w `execute_build`
-    zamienia go na wynik anulowania, dokladnie jak przerwanie w PyInstallerze."""
+    Raise IssueError with `build_cancelled` — the exception boundary in
+    `execute_build` converts it into a cancellation result, just like an
+    interruption in PyInstaller."""
     if cancel is not None and cancel.cancelled:
         raise IssueError(Issue("build_cancelled", Severity.INFO))
 
@@ -333,11 +336,11 @@ def _freeze_versions(
     *,
     cancel=None,
 ) -> tuple[tuple[str, str], ...]:
-    """B06: odczytuje zainstalowane wersje paczek z venv.
+    """B06: read installed package versions from the venv.
 
-    `uv pip freeze` drukuje linie `name==version`. Parsujemy je do par
-    (nazwa, wersja) i sortujemy alfabetycznie. Błąd freeze nie blokuje
-    builda — zwracamy pustą krotkę.
+    `uv pip freeze` prints `name==version` lines. Parse them into (name,
+    version) pairs and sort them alphabetically. A freeze failure does not
+    block the build — return an empty tuple.
     """
     result = run_uv(uv, ["pip", "freeze", "--python", str(python)], cancel=cancel)
     if result.returncode != 0:
@@ -379,8 +382,8 @@ def create_build_env(
         if event is None:
             return
         if event.kind == DOWNLOAD_START:
-            # Interpreter jest jednym pobraniem i uv podaje jego rozmiar
-            # wprost — suma bierze się więc z tej linii, nie z PyPI.
+            # The interpreter is one download and uv reports its size directly,
+            # so the total comes from this line rather than PyPI.
             python_tally.reset(event.size_bytes)
             python_tally.start(event.name, event.size_bytes)
         elif event.kind == DOWNLOAD_DONE:
@@ -412,17 +415,18 @@ def create_build_env(
     python = venv / "Scripts" / "python.exe"
 
     progress(Progress(phase="install_packages", fraction=0.5))
-    # B05: gdy mamy zachowane manifesty, przekazujemy je do uv przez `-r`,
-    # dzięki czemu uv samodzielnie obsługuje pełną semantykę (hashowanie,
-    # ścieżki `-r`/`-c`, indeks). PyInstaller jest ZAWSZE potrzebny i nie
-    # leży w manifeście, więc dochodzi jako oddzielny spec. Importy wykryte
-    # poza manifestem też dochodzą jawnie. Gdy manifestu nie ma, wracamy do
-    # pełnej listy specyfikacji z analizy.
+    # B05: when preserved manifests are available, pass them to uv via `-r`,
+    # letting uv handle their full semantics itself (hashes, `-r`/`-c` paths,
+    # indexes). PyInstaller is ALWAYS required and is not in the manifest, so
+    # it is added as a separate spec. Imports detected outside the manifest are
+    # also added explicitly. Without a manifest, fall back to the full list of
+    # specifications from analysis.
     wanted = [PYINSTALLER_SPEC, *packages]
     install_args: list[str] = ["pip", "install", "--python", str(python)]
     if manifest_paths and workspace is not None:
-        # Manifest + constraint zachowują semantykę źródła wymagań, a importy
-        # pominięte w manifeście nadal uczestniczą w tym samym rozwiązaniu.
+        # The manifest and constraints preserve the requirement source's
+        # semantics, while imports omitted from the manifest still participate
+        # in the same resolution.
         install_args.extend((PYINSTALLER_SPEC, *supplemental_packages))
         for rel in manifest_paths:
             install_args += ["-r", str(workspace / rel)]
@@ -460,22 +464,23 @@ def create_build_env(
 
     failed: list[str] = []
     if returncode != 0:
-        # Instalacja HURTOWA padła. Próba pojedyncza jest tu wyłącznie
-        # DIAGNOSTYKĄ — wskazuje paczki, których w ogóle nie da się zainstalować
-        # (zła nazwa, brak artefaktu). Jej powodzenie NIE jest dowodem
-        # gotowości: gdy każda paczka instaluje się osobno, a cały zestaw nie,
-        # to KONFLIKT — pojedyncze instalacje tylko nadpisują nawzajem swoje
-        # wersje i zostawiają środowisko niespójne. Taki fallback blokujemy
-        # niżej, niosąc pierwotny błąd rozwiązania (B06).
+        # The BULK installation failed. Individual attempts are DIAGNOSTIC only
+        # — they identify packages that cannot be installed at all (wrong name,
+        # missing artifact). Their success does NOT prove readiness: when every
+        # package installs alone but the full set does not, that is a CONFLICT
+        # — individual installations merely overwrite one another's versions
+        # and leave the environment inconsistent. The fallback is blocked
+        # below while preserving the original resolution error (B06).
         for spec in wanted:
             _raise_if_cancelled(cancel)
             single = run_uv(uv, ["pip", "install", "--python", str(python), spec], cancel=cancel)
             if single.returncode != 0:
                 failed.append(spec)
         if not failed:
-            # Zestaw nie ma wspólnego rozwiązania, choć każda paczka wchodzi
-            # osobno. Środowisko po pojedynczych instalacjach jest niespójne —
-            # nie budujemy z niego EXE. Zatrzymujemy się z pierwotnym błędem.
+            # The set has no common solution even though every package installs
+            # separately. The environment after individual installs is
+            # inconsistent, so do not build an EXE from it. Stop with the
+            # original error.
             raise _requirements_conflict(bulk_text)
 
     done, total, speed, _eta = tally.snapshot()
@@ -489,12 +494,12 @@ def create_build_env(
         )
     )
 
-    # B06: utrwalenie rozstrzygniętych wersji. `uv pip freeze` drukuje
-    # zainstalowane paczki w formacie `name==version` — zbieramy je, żeby
-    # raport builda pozwalał odtworzyć środowisko i wyjaśnić problem.
+    # B06: record resolved versions. `uv pip freeze` prints installed packages
+    # as `name==version`; collect them so the build report can reproduce the
+    # environment and explain the problem.
     resolved = _freeze_versions(uv, python, cancel=cancel)
 
-    # B06: sprawdzenie spójności zadeklarowanych i zainstalowanych wersji.
+    # B06: verify consistency between declared and installed versions.
     version_issues = _check_version_consistency(resolved, packages)
 
     return BuildEnv(
@@ -508,14 +513,15 @@ def create_build_env(
 
 
 def _requirements_conflict(bulk_text: str) -> BuildEnvError:
-    """Cały zestaw wymagań nie da się rozwiązać razem (sprzeczne piny lub
-    zależności przechodnie), choć każda paczka wchodzi osobno. Powstałe po
-    pojedynczych instalacjach środowisko jest niespójne i nie jest dowodem
-    gotowości — blokujemy build, niosąc pierwotny błąd resolvera przez
-    `explain_log`, tak jak przy awarii środowiska (B06)."""
+    """The complete requirement set cannot be resolved together (conflicting
+    pins or transitive dependencies), even though every package installs on
+    its own. The environment produced by individual installations is
+    inconsistent and does not prove readiness — block the build and carry the
+    resolver's original error through `explain_log`, just like an environment
+    setup failure (B06)."""
     return BuildEnvError(
         Issue("requirements_conflict", Severity.BLOCKER),
-        RuntimeError("uv nie rozwiazalo pelnego zestawu wymagan"),
+        RuntimeError("uv could not resolve the complete requirement set"),
         extra=explain_log(bulk_text),
     )
 
@@ -525,26 +531,26 @@ def _env_failure(
     installed_text: str,
     created: subprocess.CompletedProcess[str],
 ) -> BuildEnvError:
-    """Zamienia porazke uv w Issue — z winnym krokiem i rozpoznana przyczyna.
+    """Convert a uv failure into an Issue with the failed step and known cause.
 
-    Winny jest krok PIERWSZY z tych, ktore padly: gdy interpreter nie zjechal
-    na dysk, venv nie mial z czego powstac, a wskazanie "tworzenie srodowiska"
-    wyslaloby uzytkownika w zla strone.
+    The culprit is the FIRST failed step: if the interpreter was not downloaded,
+    the venv had nothing to build from, and blaming "environment creation"
+    would send the user in the wrong direction.
 
-    Niezerowy kod z samego `uv python install` NIE jest tu powodem do
-    przerwania — uv zwraca go takze wtedy, gdy zgodny Python juz jest w
-    systemie, a venv powstaje wtedy bez problemu.
+    A non-zero code from `uv python install` alone is NOT a reason to stop — uv
+    also returns it when a compatible Python is already available, in which
+    case the venv is created successfully.
 
-    Strumien bledow uv przechodzi przez `explain_log`, bo dokladnie te
-    przyczyny z sekcji 8 specyfikacji (proxy z podmienionym certyfikatem,
-    zapelniony dysk) sa tam nazwane wprost. Sam tekst uv nigdy nie trafia do
-    uzytkownika: jest po angielsku i w zargonie narzedzia.
+    uv's error stream passes through `explain_log` because the exact causes
+    from specification section 8 (a proxy replacing certificates, a full disk)
+    are named there explicitly. Raw uv text is never shown to the user: it is
+    in English and uses tool-specific jargon.
     """
     step = "install_python" if installed_code != 0 else "create_env"
     stderr = (created.stderr or "") + "\n" + (installed_text or "")
     cause = explain_log(stderr)
     return BuildEnvError(
         Issue("env_setup_failed", Severity.BLOCKER, {"step": step}),
-        RuntimeError(f"uv zwrocilo {created.returncode}"),
+        RuntimeError(f"uv returned {created.returncode}"),
         extra=cause,
     )

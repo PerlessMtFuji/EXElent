@@ -125,9 +125,10 @@ def test_failed_required_package_stops_the_build(tmp_path, monkeypatch, stub_bui
 
 
 def test_target_syntax_error_stops_before_the_backend(tmp_path, monkeypatch, stub_build):
-    """A08: źródło niezgodne z docelowym Pythonem zatrzymuje build ZANIM
-    PyInstaller po cichu wyrzuci moduł i skończy z kodem 0. Backend nie rusza,
-    a analiza deweloperska (ast.parse 3.13) tej niezgodności by nie złapała."""
+    """A08: source incompatible with the target Python stops the build BEFORE
+    PyInstaller silently drops the module and exits with code 0. The backend
+    never runs, and the developer's analysis (ast.parse 3.13) would not have
+    caught this incompatibility."""
     root = _project(tmp_path, {"main.py": "print(1)\n"})
     issue = Issue(
         "target_syntax_error",
@@ -188,7 +189,7 @@ def test_required_package_failure_carries_analysis_warnings(tmp_path, monkeypatc
         ),
     )
 
-    # `sk-...` wyglada na klucz API -> analiza dokłada ostrzezenie.
+    # `sk-...` looks like an API key -> analysis adds a warning.
     code = "import requests\nKEY = 'sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD'\n"
     result = cli.run_build(_project(tmp_path, {"main.py": code}), noop_progress)
 
@@ -628,8 +629,8 @@ def test_main_does_not_call_a_result_that_says_ok_a_failure(tmp_path, monkeypatc
 
     err = capsys.readouterr().err
     assert code == 1
-    assert "nie powiodl" not in err.lower(), "komunikat przeczy fladze ok=True"
-    assert "bez pliku wynikowego" in err.lower()
+    assert "failed" not in err.lower(), "the message contradicts the ok=True flag"
+    assert "without an output file" in err.lower()
 
 
 # --- Critical C4: etap analizy nie dostaje diagnoz z tabeli pisanej na logi ---
@@ -948,11 +949,11 @@ def test_failed_build_is_still_diagnosed_from_its_log(tmp_path, monkeypatch, stu
     assert "module_not_found" in [i.code for i in result.issues]
 
 
-# --- B06: rozstrzygnięte wersje w raporcie ---
+# --- B06: resolved versions in the report ---
 
 
 def test_resolved_versions_are_included_in_json_report(tmp_path, monkeypatch, stub_build):
-    """B06: raport JSON zawiera rozstrzygnięte wersje paczek."""
+    """B06: JSON report contains resolved package versions."""
     import json
 
     monkeypatch.setattr(

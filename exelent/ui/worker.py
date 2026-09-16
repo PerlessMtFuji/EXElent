@@ -1,10 +1,10 @@
-"""Most między wątkiem budującym a GUI. Jedyne miejsce styku wątków.
+"""Bridge between the build thread and GUI. The only thread boundary.
 
-Build trwa od minuty do kilku i nie może zamrozić okna. Cała komunikacja idzie
-sygnałami: `_Job` żyje w `QThread`, `BuildWorker` w wątku okna, więc połączenia
-są kolejkowane i żadna struktura nie jest dotykana z dwóch stron naraz.
-Jedynym obiektem współdzielonym jest `CancelToken` — a on jest do tego
-zbudowany (`threading.Event` w środku).
+A build takes one to several minutes and must not freeze the window. All
+communication uses signals: `_Job` lives in `QThread`, `BuildWorker` in the
+window thread, so connections are queued and no structure is touched from both
+sides at once. The only shared object is `CancelToken`, designed for this with
+an internal `threading.Event`.
 """
 
 from __future__ import annotations
@@ -17,14 +17,14 @@ from exelent.build.backend import CancelToken
 from exelent.build.service import execute_build
 from exelent.models import BuildPlan, BuildResult, Issue, Severity
 
-# Ile czekamy na zamknięcie wątku po zakończeniu budowania. Wątek w tym
-# momencie ma już tylko wyjść z pętli zdarzeń, więc czekanie jest chwilowe;
-# limit istnieje po to, żeby okno nie zawisło na zawsze, gdyby nie wyszedł.
+# How long to wait for the thread to close after a build. At that point it only
+# needs to leave the event loop, so the wait is brief; the limit prevents the
+# window from hanging forever if it does not exit.
 _THREAD_QUIT_TIMEOUT_MS = 5000
 
 
 class _Job(QObject):
-    """Właściwa robota, wykonywana w wątku roboczym."""
+    """The actual work, executed on the worker thread."""
 
     progress = Signal(object)
     finished = Signal(object)
@@ -37,21 +37,20 @@ class _Job(QObject):
 
     def run(self) -> None:
         try:
-            # Build DOKŁADNIE tego planu, który zaakceptował użytkownik na
-            # ekranie 2 — bez ponownej analizy folderu. Wcześniej worker
-            # wołał `run_build(plan.root, ...)`, co analizowało katalog od nowa
-            # i gubiło wybór pojedynczego pliku: budowanie `Pobrane/x.py`
-            # pakowało całe Pobrane. `carried` niesie ostrzeżenia analizy z
-            # ekranu 2, żeby dotarły też na ekran wyniku.
+            # Build EXACTLY the plan accepted on screen 2 without reanalyzing
+            # the folder. Previously the worker called `run_build(plan.root,
+            # ...)`, which rescanned the directory and lost single-file mode:
+            # building `Downloads/x.py` packaged all of Downloads. `carried`
+            # brings analysis warnings from screen 2 to the result screen.
             result = execute_build(
                 self._plan, self.progress.emit, self._cancel, carried=self._carried
             )
-        except Exception as exc:  # noqa: BLE001 - GUI nie moze umrzec przez build
-            # `run_build` ma własną granicę wyjątków, więc tu trafia tylko to,
-            # co ją ominęło. Kod i klucz danych są TE SAME co w rdzeniu
-            # (`cli._unexpected_issues`): katalog opisuje `unexpected_error`
-            # parametrem `{error}`, a Issue z innym kluczem nie wywala `t()` —
-            # pokazuje laikowi nawias klamrowy w środku zdania.
+        except Exception as exc:  # noqa: BLE001 - a build must not kill the GUI
+            # `run_build` has its own exception boundary, so only escapes reach
+            # this point. The code and data key match the core exactly
+            # (`cli._unexpected_issues`): the catalog describes
+            # `unexpected_error` with `{error}`; another key would make `t()`
+            # show a non-technical user a brace inside the sentence.
             result = BuildResult(
                 ok=False,
                 issues=(
@@ -75,18 +74,17 @@ class BuildWorker(QObject):
         return self._thread is not None
 
     def start(self, plan: BuildPlan, carried: Sequence[Issue] = ()) -> None:
-        """Rusza build w osobnym wątku.
+        """Start a build on a separate thread.
 
-        Token powstaje TUTAJ, nie raz na życie workera: jeden token na zawsze
-        znaczyłby, że po pierwszym anulowaniu każdy kolejny build startuje już
-        anulowany i kończy się natychmiast, a nikt nie umiałby powiedzieć
-        dlaczego.
+        Create the token HERE rather than once for the worker lifetime. A single
+        permanent token would make every build after the first cancellation
+        start already cancelled and finish immediately without explanation.
 
-        Drugi build w trakcie pierwszego jest odrzucany — spec §3 dopuszcza
-        jeden naraz, bo oba korzystają z tego samego cache'u środowisk.
+        Reject a second build while one is running. Specification §3 permits
+        one at a time because both use the same environment cache.
 
-        `carried` to ostrzeżenia analizy z ekranu 2 (np. sekret w kodzie,
-        ciężka paczka), które mają dotrzeć na ekran wyniku razem z buildem.
+        `carried` contains analysis warnings from screen 2 (for example a secret
+        in code or a heavy package) that must reach the result screen.
         """
         if self.is_running():
             return
@@ -104,13 +102,12 @@ class BuildWorker(QObject):
             self._token.cancel()
 
     def shutdown(self, timeout_ms: int = _THREAD_QUIT_TIMEOUT_MS) -> bool:
-        """Zatrzymuje trwający build i CZEKA na wątek. Do zamykania okna.
+        """Stop a running build and WAIT for its thread when closing the window.
 
-        Zwykłe `cancel()` nie wystarcza: zwraca sterowanie natychmiast, a Qt
-        niszczy wtedy działający `QThread` (abort) i zostawia proces
-        PyInstallera jako sierotę. Referencje kasujemy tylko wtedy, gdy wątek
-        NAPRAWDĘ wyszedł — porzucenie działającego wątku byłoby tą samą awarią,
-        przed którą ta metoda broni.
+        Plain `cancel()` is insufficient: it returns immediately, after which
+        Qt destroys the running `QThread` (abort) and leaves PyInstaller
+        orphaned. Clear references only after the thread REALLY exits; dropping
+        a running thread would recreate the failure this method prevents.
         """
         thread = self._thread
         if thread is None:
@@ -124,14 +121,14 @@ class BuildWorker(QObject):
         return True
 
     def _on_done(self, result: BuildResult) -> None:
-        """Sprzątanie wątku, potem sygnał w górę.
+        """Clean up the thread, then emit the result upward.
 
-        Kolejność ma znaczenie w obie strony: `_thread` znika PRZED czekaniem,
-        żeby `is_running()` mówiło prawdę już w slocie `finished` (okno wraca
-        wtedy na ekran 1 i wolno mu zacząć następny build), a referencja na
-        `_Job` znika DOPIERO po `wait()` — dopóki wątek nie wyszedł z pętli,
-        emisja `finished` wciąż jest na jego stosie i skasowanie obiektu w
-        środku tej emisji to sięganie po zwolnioną pamięć.
+        Order matters both ways: `_thread` disappears BEFORE waiting so
+        `is_running()` is already accurate in the `finished` slot (the window
+        returns to screen 1 and may start another build), while the `_Job`
+        reference disappears only AFTER `wait()`. Until the thread leaves its
+        loop, emitting `finished` remains on its stack, and deleting the object
+        mid-emission accesses freed memory.
         """
         thread = self._thread
         self._thread = None

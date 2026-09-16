@@ -1,4 +1,4 @@
-"""Spakowany produkt buduje i waliduje następny EXE na izolowanym Pythonie 3.12."""
+"""The packaged product builds and validates another EXE on an isolated Python 3.12."""
 
 import json
 import os
@@ -15,7 +15,7 @@ pytestmark = pytest.mark.slow
 def test_frozen_product_cold_bootstrap_validation_and_rebuild(tmp_path, monkeypatch):
     configured = os.environ.get("EXELENT_TEST_EXE")
     if not configured:
-        pytest.skip("EXELENT_TEST_EXE musi wskazywać zbudowany produkt")
+        pytest.skip("EXELENT_TEST_EXE must point to the built product")
     product = Path(configured).resolve()
     assert product.is_file(), product
 
@@ -72,7 +72,7 @@ def test_frozen_product_cold_bootstrap_validation_and_rebuild(tmp_path, monkeypa
     run, first = build("cold")
     assert run.returncode == 0 and first["ok"], first
     exe = Path(first["executable_path"])
-    assert not (exe.parent / "proof.txt").exists(), "build wykonał kod wejściowy"
+    assert not (exe.parent / "proof.txt").exists(), "build executed the entry code"
     child = run_bounded([exe], timeout=120, cwd=tmp_path)
     assert child.returncode == 0, (child.stdout, child.stderr)
     proof = (exe.parent / "proof.txt").read_bytes()
@@ -81,8 +81,8 @@ def test_frozen_product_cold_bootstrap_validation_and_rebuild(tmp_path, monkeypa
     assert (tmp_path / "uv-cache").is_dir()
     previous_exe = exe.read_bytes()
 
-    # ast.parse przepuszcza return poza funkcją; ma go zatrzymać walidator
-    # z zamrożonego produktu, zanim uruchomi się PyInstaller.
+    # ast.parse lets `return` outside a function through; the validator from
+    # the frozen product must catch it before PyInstaller runs.
     (source / "bad.py").write_text("return 1\n", encoding="utf-8")
     (source / "main.py").write_text("import bad\n" + original, encoding="utf-8")
     run, invalid = build("invalid")

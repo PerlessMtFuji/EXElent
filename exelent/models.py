@@ -1,7 +1,7 @@
-"""Struktury danych przepływające między warstwami. Wszystkie niemutowalne.
+"""Data structures flowing between layers. All immutable.
 
-Rdzeń nigdy nie zwraca tekstu dla użytkownika — zwraca Issue z kodem,
-który warstwa prezentacji tłumaczy przez exelent.i18n.
+The core never returns user-facing text — it returns an Issue with a code,
+which the presentation layer translates via exelent.i18n.
 """
 
 from __future__ import annotations
@@ -30,20 +30,20 @@ class Severity(str, Enum):
 
 
 class VerificationStatus(str, Enum):
-    """Czy gotowy artefakt został faktycznie uruchomiony i sprawdzony."""
+    """Whether the finished artifact was actually launched and checked."""
 
     NOT_RUN = "not_run"
     PASSED = "passed"
 
 
 def _freeze_data(data: Mapping[str, str]) -> MappingProxyType[str, str]:
-    """Zamraża ``data`` Issue, żeby ``frozen=True`` nie kłamało.
+    """Freezes Issue ``data`` so that ``frozen=True`` does not lie.
 
-    ``frozen=True`` na dataclasie blokuje przypisanie do atrybutu, ale NIE
-    chroni modyfikowalnego obiektu wewnątrz: ``issue.data["key"] = "val"``
-    przechodzi, gdy ``data`` jest zwykłym ``dict``. ``MappingProxyType`` jest
-    widokiem tylko-do-odczytu na istniejącym ``dict`` — podnosi ``TypeError``
-    przy próbie zmiany i kosztuje jedno opakowanie, nie kopię."""
+    ``frozen=True`` on a dataclass blocks attribute assignment but does NOT
+    protect a mutable object inside: ``issue.data["key"] = "val"`` succeeds
+    when ``data`` is a plain ``dict``. ``MappingProxyType`` is a read-only
+    view over an existing ``dict`` — it raises ``TypeError`` on mutation
+    and costs one wrapper, not a copy."""
     if isinstance(data, MappingProxyType):
         return data
     return MappingProxyType(dict(data))
@@ -56,23 +56,23 @@ class Issue:
     data: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
-        # frozen=True → object.__setattr__. Zamrażamy `data` przy tworzeniu,
-        # niezależnie od tego, co wołający przekazał.
+        # frozen=True -> object.__setattr__. We freeze `data` at creation,
+        # regardless of what the caller passed.
         if not isinstance(self.data, MappingProxyType):
             object.__setattr__(self, "data", _freeze_data(self.data))
 
 
 class IssueError(RuntimeError):
-    """Wyjatek, ktory niesie gotowe `Issue` — nigdy surowego tekstu.
+    """Exception that carries ready-made `Issue` objects — never raw text.
 
-    Istnieje po to, zeby `run_build` mialo JEDNA lapke na wszystkie awarie,
-    ktore warstwa nizej potrafi juz nazwac. Trzy waskie handlery na trzy typy
-    wymyslone z nazwy to wzorzec, o ktorego rozszerzeniu nastepny wspolpracownik
-    zapomni — i wtedy laik dostaje traceback zamiast zdania.
+    Exists so that `run_build` has ONE catch for all failures that the layer
+    below can already name. Three narrow handlers for three types invented
+    by name is a pattern the next contributor will forget to extend — and
+    then the end user gets a traceback instead of a sentence.
 
-    `issues` moze byc dluzsze niz jeden element: warstwa rzucajaca czesto zna
-    zarowno fakt ("srodowisko builda nie powstalo"), jak i przyczyne rozpoznana
-    ze strumienia bledow narzedzia ("certyfikat nie przeszedl weryfikacji").
+    `issues` may be longer than one element: the throwing layer often knows
+    both the fact ("build environment was not created") and the cause
+    recognized from the tool's error stream ("certificate verification failed").
     """
 
     def __init__(
@@ -100,8 +100,8 @@ class Dependency:
     package: str
     optional: bool = False
     heavy: bool = False
-    # Skąd pochodzi ta zależność: "manifest", "import", "dynamic", "user".
-    # Pusty string = nieznane (starszy kod).
+    # Where this dependency comes from: "manifest", "import", "dynamic", "user".
+    # Empty string = unknown (legacy code).
     origin: str = ""
 
 
@@ -122,11 +122,11 @@ class ScanResult:
 
 @dataclass(frozen=True)
 class CodeBlockSpan:
-    """Granice jednego bloku kodu w oryginalnym TXT (1-based, inclusive).
+    """Boundaries of a single code block in the original TXT (1-based, inclusive).
 
-    Uzywane, gdy konwersja TXT wyciela wiele bloków ogrodzonych (```python)
-    i laczy je w jeden plik PY. Pokazuje uzytkownikowi, skad pochodza
-    poszczegolne czesci wyniku i jak zostaly polaczone (B02)."""
+    Used when TXT conversion extracts multiple fenced blocks (```python)
+    and merges them into one PY file. Shows the user where each part of
+    the result originates and how they were combined (B02)."""
 
     start_line: int
     end_line: int
@@ -140,14 +140,14 @@ class ConversionResult:
     steps: tuple[str, ...] = ()
     error_line: int | None = None
     error_text: str | None = None
-    # Dla linii wyniku k (0-based) — numer linii w ORYGINALNYM TXT (1-based).
-    # Zdejmowanie otoczki (ogrodzenia, etykieta, puste linie na brzegach)
-    # przesuwa numeracje, wiec `error_line` bez tej mapy wskazywalby linie w
-    # wycietym kodzie, ktorej uzytkownik nie znajdzie w swoim pliku.
+    # For output line k (0-based) — line number in the ORIGINAL TXT (1-based).
+    # Stripping the wrapper (fences, label, empty lines at edges) shifts
+    # numbering, so `error_line` without this map would point at a line in
+    # the extracted code that the user cannot find in their file.
     line_map: tuple[int, ...] = ()
-    # Granice bloków kodu wyciętych z TXT (B02). Puste, gdy wejście nie miało
-    # ogrodzeń lub zawierało tylko jeden blok. Gdy jest więcej niż jeden —
-    # warstwa prezentacji pokazuje ich granice i wyjaśnia sposób połączenia.
+    # Boundaries of code blocks extracted from TXT (B02). Empty when the input
+    # had no fences or contained only one block. When there is more than one —
+    # the presentation layer shows their boundaries and explains how they were combined.
     code_blocks: tuple[CodeBlockSpan, ...] = ()
 
 
@@ -159,10 +159,10 @@ class ProjectAnalysis:
     entry_certain: bool = True
     app_kind: AppKind = AppKind.CONSOLE
     app_kind_certain: bool = True
-    # ONEDIR jest zachowawczym domyslnym trybem (B01): zasoby leza obok EXE
-    # (odczyt przez wzgledna sciezke dziala), a zapis trafia obok EXE i zostaje.
-    # ONEFILE to swiadomy reczny wybor obarczony ograniczeniem odczytu zasobow —
-    # patrz `planning.onefile_limitation_issues`.
+    # ONEDIR is the conservative default mode (B01): resources sit next to the EXE
+    # (reading via relative path works), and writes land next to the EXE and persist.
+    # ONEFILE is a deliberate manual choice burdened with a resource-read limitation —
+    # see `planning.onefile_limitation_issues`.
     output_mode: OutputMode = OutputMode.ONEDIR
     dependencies: tuple[Dependency, ...] = ()
     hidden_imports: tuple[str, ...] = ()
@@ -180,18 +180,18 @@ class ProjectAnalysis:
 
 @dataclass(frozen=True)
 class SourceEntry:
-    """Plik zaakceptowany przez analizę (B08).
+    """File accepted by analysis (B08).
 
-    Hash utrwala treść w momencie akceptacji; weryfikacja przed buildem łapie
-    zmiany po analizie. `rel_path` jest znormalizowany do `/` — ścieżka
-    względna do korzenia projektu."""
+    The hash captures content at acceptance time; verification before build
+    catches changes after analysis. `rel_path` is normalized to `/` — a path
+    relative to the project root."""
 
     rel_path: str
     sha256: str
 
 
 class ResourceKind(str, Enum):
-    """Rodzaj zasobu wykrytego przez skaner (B07)."""
+    """Kind of resource detected by the scanner (B07)."""
 
     DATA = "data"
     IMAGE = "image"
@@ -199,8 +199,8 @@ class ResourceKind(str, Enum):
     DATABASE = "database"
 
 
-# Pliki, które wyglądają jak zasoby, ale prawie na pewno NIE powinny trafić
-# do paczki: pliki testowe, generowane, IDE, build artifacts. Case-insensitive.
+# Files that look like resources but almost certainly should NOT go into the
+# package: test files, generated files, IDE files, build artifacts. Case-insensitive.
 _RESOURCE_EXCLUDE_NAMES = frozenset(
     {
         "thumbs.db",
@@ -227,7 +227,7 @@ _RESOURCE_EXCLUDE_SUFFIXES = frozenset(
 
 
 def _classify_resource(suffix: str) -> ResourceKind:
-    """Rodzaj zasobu po sufiksie pliku."""
+    """Resource kind by file suffix."""
     if suffix in {".db", ".sqlite", ".sqlite3"}:
         return ResourceKind.DATABASE
     if suffix in {".json", ".ini", ".cfg", ".yaml", ".yml", ".toml", ".xml"}:
@@ -239,13 +239,13 @@ def _classify_resource(suffix: str) -> ResourceKind:
 
 @dataclass(frozen=True)
 class ResourceEntry:
-    """Zasób kandydujący do dołączenia do paczki (B07).
+    """Resource candidate for inclusion in the package (B07).
 
-    `rel_path` jest ścieżką względną do korzenia projektu, znormalizowaną
-    do `/`. `size_bytes` pozwala oszacować wpływ na rozmiar EXE. `kind`
-    rozróżnia konfigurację od bazy danych od obrazu — użytkownik może
-    zdecydować, że bazy danych nie powinny trafić do EXE. `included` to
-    domyślna decyzja analizy; GUI pozwala ją zmienić.
+    `rel_path` is a path relative to the project root, normalized to `/`.
+    `size_bytes` allows estimating the impact on EXE size. `kind` distinguishes
+    config from database from image — the user may decide that databases should
+    not go into the EXE. `included` is the default decision from analysis;
+    the GUI allows changing it.
     """
 
     rel_path: str
@@ -255,7 +255,7 @@ class ResourceEntry:
 
 
 def should_exclude_resource(name: str, suffix: str) -> bool:
-    """Czy plik o danej nazwie i sufiksie powinien być domyślnie wykluczony (B07)."""
+    """Whether a file with the given name and suffix should be excluded by default (B07)."""
     if name.lower() in _RESOURCE_EXCLUDE_NAMES:
         return True
     return suffix.lower() in _RESOURCE_EXCLUDE_SUFFIXES
@@ -281,33 +281,33 @@ class BuildPlan:
     single_file: Path | None = None
     extra_sources: tuple[Path, ...] = ()
     total_download_bytes: int = 0
-    # Konwersje TXT -> PY jako niemutowalne pary (nazwa_pliku, kod). Build
-    # wykonuje DOKŁADNIE zaakceptowany plan. Krotka par zamiast dict, bo
-    # ``frozen=True`` nie chroni modyfikowalnego słownika w środku.
+    # TXT -> PY conversions as immutable pairs (filename, code). Build executes
+    # EXACTLY the accepted plan. Tuple of pairs instead of dict because
+    # ``frozen=True`` does not protect a mutable dict inside.
     converted: tuple[tuple[str, str], ...] = ()
-    # Inwentarz zaakceptowanych plików źródłowych i zasobów (B08). Materialization
-    # kopiuje TYLKO te pliki i weryfikuje hash; nowe pliki dodane po analizie
-    # nie wchodzą do builda bez ponownej analizy.
+    # Inventory of accepted source files and resources (B08). Materialization
+    # copies ONLY these files and verifies hashes; new files added after analysis
+    # do not enter the build without re-analysis.
     source_inventory: tuple[SourceEntry, ...] = ()
-    # B07: inwentarz zasobów kandydujących do dołączenia do paczki. Każdy
-    # wpis ma klasyfikację (obraz, baza, konfiguracja), rozmiar i domyślną
-    # decyzję; GUI pozwala zmienić `included` przed buildem.
+    # B07: resource inventory with candidates for package inclusion. Each entry
+    # has a classification (image, database, config), size, and a default
+    # decision; the GUI allows changing `included` before the build.
     resource_inventory: tuple[ResourceEntry, ...] = ()
-    # Uwagi wykryte przy budowaniu planu (B07: kolizje zasobów, B05: niezgodności).
-    # Rozdzielone od `BuildResult.issues` — te powstają PRZED startem builda.
+    # Issues detected while building the plan (B07: asset collisions, B05: incompatibilities).
+    # Separate from `BuildResult.issues` — these arise BEFORE the build starts.
     plan_issues: tuple[Issue, ...] = ()
-    # B08: identyfikator planu — UUID4 wygenerowany w `make_plan`. Łączy
-    # raport, log i artefakt z DOKŁADNIE tym planem, który je stworzył.
-    # Pusty string = starszy plan bez identyfikatora.
+    # B08: plan identifier — UUID4 generated in `make_plan`. Links the report,
+    # log, and artifact to EXACTLY the plan that created them.
+    # Empty string = legacy plan without an identifier.
     plan_id: str = ""
-    # B08: ścieżki manifestów zachowane z analizy. Kopiowane do workspace
-    # i przekazywane do uv z poprawnymi bazami ścieżek (B05).
+    # B08: manifest paths preserved from analysis. Copied to workspace and
+    # passed to uv with correct path bases (B05).
     manifest_paths: tuple[str, ...] = ()
-    # B08: ścieżki plików constraints zachowane z analizy (B05).
+    # B08: constraint file paths preserved from analysis (B05).
     constraint_paths: tuple[str, ...] = ()
-    # Paczki wykryte w kodzie lub dopisane ręcznie, których nie deklaruje
-    # manifest. Gdy uv dostaje `-r`, te specyfikacje nadal muszą trafić do
-    # wspólnej instalacji, inaczej gotowy EXE nie zawiera importowanego modułu.
+    # Packages detected in code or added manually that the manifest does not
+    # declare. When uv receives `-r`, these specs must still go into the joint
+    # install, otherwise the finished EXE is missing an imported module.
     supplemental_packages: tuple[str, ...] = ()
 
 
@@ -315,20 +315,20 @@ class BuildPlan:
 class BuildResult:
     ok: bool
     artifact: Path | None = None
-    # Plik EXE do URUCHOMIENIA. Dla ONEFILE to to samo co ``artifact``; dla
-    # ONEDIR ``artifact`` jest KATALOGIEM, a EXE leży w środku.
+    # EXE file to LAUNCH. For ONEFILE this is the same as ``artifact``; for
+    # ONEDIR ``artifact`` is a DIRECTORY and the EXE sits inside.
     executable_path: Path | None = None
     size_bytes: int = 0
     duration_s: float = 0.0
     log_path: Path | None = None
     issues: tuple[Issue, ...] = ()
-    # B06: rozstrzygnięte wersje paczek zainstalowanych w środowisku builda
-    # (nazwa, wersja). Umożliwiają odtworzenie problemu i weryfikację
-    # zgodności. Zapisywane w raporcie JSON.
+    # B06: resolved versions of packages installed in the build environment
+    # (name, version). Enable problem reproduction and compatibility
+    # verification. Saved in the JSON report.
     resolved_versions: tuple[tuple[str, str], ...] = ()
-    # B08: identyfikator planu, który stworzył ten wynik.
+    # B08: identifier of the plan that created this result.
     plan_id: str = ""
-    # Sam sukces PyInstallera oznacza utworzenie artefaktu. Tylko kontrolowany
-    # test zachowania może ustawić PASSED; kliknięcie „Uruchom” w GUI nie zna
-    # kodu wyjścia aplikacji użytkownika i nie podnosi tego statusu.
+    # PyInstaller success alone means the artifact was created. Only a controlled
+    # behavior test can set PASSED; clicking "Run" in the GUI does not know the
+    # user application's exit code and does not elevate this status.
     verification: VerificationStatus = VerificationStatus.NOT_RUN

@@ -1,11 +1,11 @@
-"""Ekran 2 — co EXElent zrozumiał z katalogu.
+"""Screen 2: what EXElent understood from the directory.
 
-Tu leży różnica między „działa" a „użytkownik utknął": każde zgadnięcie
-jest widoczne przed pięciominutowym buildem i poprawialne jednym kliknięciem.
+This is the difference between "works" and "the user is stuck": every guess is
+visible before a five-minute build and correctable with one click.
 
-Ekran nie analizuje i nie buduje — dostaje `ProjectAnalysis`, pokazuje ją,
-a to, co użytkownik poprawi, oddaje jako `BuildPlan`. Cała wiedza o tym, co
-znaczą te dane, została w rdzeniu; tutaj jest wyłącznie ich prezentacja.
+The screen neither analyzes nor builds. It receives and displays
+`ProjectAnalysis`, then returns user corrections as `BuildPlan`. All knowledge
+of what the data means stays in the core; this layer only presents it.
 """
 
 from __future__ import annotations
@@ -43,11 +43,11 @@ from exelent.ui.rows import FactRow
 
 
 def _mark_recommended(combo: QComboBox, index: int) -> None:
-    """Dopisuje „(zalecane)" do etykiety pozycji, NIE ruszając jej danych.
+    """Append "(recommended)" to an item label WITHOUT changing its data.
 
-    `setItemText` zmienia wyłącznie napis; `itemData` zostaje tym, czym było.
-    To rozróżnienie jest jedyną rzeczą, która dzieli ten ekran od regresji, w
-    której `currentData()` oddaje napis i program konsolowy udaje okienkowy.
+    `setItemText` changes only the label; `itemData` remains unchanged. This
+    distinction prevents a regression where `currentData()` returns text and a
+    console program masquerades as a windowed one.
     """
     if index < 0:
         return
@@ -55,7 +55,7 @@ def _mark_recommended(combo: QComboBox, index: int) -> None:
 
 
 class TextPreviewDialog(QDialog):
-    """Oryginał, wynik i rzeczywista różnica jednej konwersji TXT."""
+    """Original, result, and actual diff for one TXT conversion."""
 
     def __init__(self, name: str, original: str, converted: str, parent=None) -> None:
         super().__init__(parent)
@@ -102,9 +102,9 @@ class ReviewScreen(QWidget):
         self._icon: Path | None = None
         self._dest_dir: Path | None = None
         self._custom_dest = False
-        # Ostatni wynik preflightu. Trzymany, bo `retranslate` przechodzi przez
-        # `load`, a ono zaczyna od „sprawdzam rozmiar…" — bez tego zmiana
-        # języka kasowałaby policzoną liczbę, której nikt już nie policzy.
+        # Last preflight result. Preserve it because `retranslate` passes through
+        # `load`, which starts with "checking size...". Otherwise a language
+        # change would erase a calculated number that nobody recalculates.
         self._download_plan = None
 
         self.headline = QLabel(t("review_headline"), objectName="Title")
@@ -136,8 +136,8 @@ class ReviewScreen(QWidget):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem(t("mode_onefile"), OutputMode.ONEFILE)
         self.mode_combo.addItem(t("mode_onedir"), OutputMode.ONEDIR)
-        # Reczny wybor ONEFILE niesie widoczne ograniczenie (B01). Ostrzezenia
-        # sa wiec przeliczane przy KAZDEJ zmianie trybu, nie tylko przy `load`.
+        # A manual ONEFILE choice carries a visible limitation (B01), so warnings
+        # are recalculated on EVERY mode change, not only during `load`.
         self.mode_combo.currentIndexChanged.connect(lambda *_: self._update_issue_labels())
 
         self.row_entry = FactRow(t("review_entry"), self.entry_combo)
@@ -190,9 +190,9 @@ class ReviewScreen(QWidget):
         deps_layout.addWidget(self.deps_size_label)
         self.deps_box.setVisible(False)
 
-        # Ręczne dopisanie modułów, których statyczny skan nie widzi (import
-        # dynamiczny, wtyczka). Zawsze widoczne, niezależnie od `deps_box`:
-        # projekt bez wykrytych zależności też może potrzebować tego pola.
+        # Manually add modules invisible to static scanning (dynamic import,
+        # plugin). Always visible regardless of `deps_box`: a project with no
+        # detected dependencies may still need this field.
         self.extra_box = QFrame(objectName="Card")
         extra_layout = QVBoxLayout(self.extra_box)
         extra_layout.setContentsMargins(24, 18, 24, 18)
@@ -209,9 +209,9 @@ class ReviewScreen(QWidget):
         self.warnings_label.setWordWrap(True)
         self.warnings_label.setVisible(False)
 
-        # Informacja ma WŁASNĄ etykietę, a nie miejsce w ostrzeżeniach:
-        # zdanie „program zajmie 26–45 MB" nie jest ostrzeżeniem i nie ma
-        # wyglądać jak ostrzeżenie.
+        # Information has its OWN label rather than a place among warnings: the
+        # sentence "the program will take 26–45 MB" is not a warning and should
+        # not look like one.
         self.notes_label = QLabel("", objectName="Muted")
         self.notes_label.setWordWrap(True)
         self.notes_label.setVisible(False)
@@ -292,17 +292,17 @@ class ReviewScreen(QWidget):
         self._update_accessible_names()
 
     def load(self, analysis: ProjectAnalysis) -> None:
-        """Pokazuje wynik analizy. Wołane też przy DRUGIM projekcie w tej samej
-        sesji, więc każde pole jest ustawiane bezwarunkowo — pozostałość po
-        poprzednim katalogu byłaby zdaniem o pliku, którego już nie ma."""
+        """Display analysis results. Also called for a SECOND project in the same
+        session, so set every field unconditionally; leftovers from the previous
+        directory would describe a file that no longer exists."""
         self._analysis = analysis
         self._icon = analysis.suggested_icon
         self._custom_dest = False
         self._dest_dir = None
 
-        # Etykiety list o stalej zawartosci wracaja do postaci bazowej, bo
-        # `_mark_recommended` DOPISUJE sufiks — drugi projekt w tej samej
-        # sesji dostawalby "Program w oknie (zalecane) (zalecane)".
+        # Reset labels of fixed-content lists because `_mark_recommended`
+        # APPENDS a suffix; otherwise the second project in a session would get
+        # "Windowed program (recommended) (recommended)".
         self.kind_combo.setItemText(0, t("kind_windowed"))
         self.kind_combo.setItemText(1, t("kind_console"))
         self.mode_combo.setItemText(0, t("mode_onefile"))
@@ -314,10 +314,10 @@ class ReviewScreen(QWidget):
         _mark_recommended(self.entry_combo, 0)
         self.entry_combo.setCurrentIndex(0 if analysis.entry_candidates else -1)
         self.row_entry.set_recommended(self.entry_combo.currentText())
-        # Pewność wymaga wartości. `entry_is_certain(())` to prawda w sensie
-        # rdzenia („nie ma dwóch kandydatów remisujących"), ale wiersz jest
-        # wtedy PUSTY, a `✓` przy pustym polu to fałszywa pewność — dokładnie
-        # to, przeciwko czemu ten ekran istnieje.
+        # Confidence requires a value. `entry_is_certain(())` is true to the core
+        # ("there are not two tied candidates"), but the row is EMPTY and a `✓`
+        # beside an empty field is false confidence — exactly what this screen
+        # exists to prevent.
         self.row_entry.set_certain(analysis.entry_certain and bool(analysis.entry_candidates))
 
         kind_index = max(self.kind_combo.findData(analysis.app_kind), 0)
@@ -341,8 +341,8 @@ class ReviewScreen(QWidget):
         self.deps_box.setVisible(bool(packages))
         self.deps_size_label.setText(t("download_checking") if packages else "")
 
-        # Bezwarunkowo, jak każde pole: moduł dopisany dla poprzedniego projektu
-        # nie może przeciec do następnego builda.
+        # Unconditional like every field: a module added for the previous project
+        # must not leak into the next build.
         self.extra_edit.clear()
 
         source = analysis.single_file or analysis.root
@@ -370,22 +370,23 @@ class ReviewScreen(QWidget):
         self._update_issue_labels()
 
     def _mode_issues(self) -> tuple[Issue, ...]:
-        """Ostrzezenia wynikajace z AKTUALNIE wybranego trybu wyjscia (B01).
+        """Warnings produced by the CURRENTLY selected output mode (B01).
 
-        Qt oddaje dane pozycji jako goly napis, wiec tryb odtwarzamy przez
-        `OutputMode(...)` — tak samo jak `_emit_plan`, zeby porownanie `is` w
-        rdzeniu widzialo enum, a nie string."""
+        Qt returns item data as a plain string, so reconstruct the mode through
+        `OutputMode(...)`, just like `_emit_plan`, allowing core `is`
+        comparisons to see an enum rather than a string.
+        """
         data = self.mode_combo.currentData()
         if data is None:
             return ()
         return onefile_limitation_issues(OutputMode(data))
 
     def _update_issue_labels(self) -> None:
-        """Sklada ostrzezenia i notatki z analizy ORAZ z wyboru trybu.
+        """Assemble warnings and notes from analysis AND the selected mode.
 
-        Wolane z `load` i przy kazdej zmianie trybu, wiec przelaczenie na
-        „Jeden plik EXE" natychmiast pokazuje jego ograniczenie, a powrot na
-        „Folder z programem" je chowa."""
+        Called from `load` and on every mode change, so selecting "One EXE file"
+        immediately shows its limitation and returning to "Application folder"
+        hides it."""
         if self._analysis is None:
             return
         issues = (*self._analysis.issues, *self._mode_issues())
@@ -400,14 +401,14 @@ class ReviewScreen(QWidget):
         self.build_button.setEnabled(not blocked)
 
     def retranslate(self) -> None:
-        """Przepisuje napisy po zmianie języka.
+        """Rewrite text after a language change.
 
-        Ekrany biorą teksty z `t()` w konstruktorze, więc bez tej metody
-        przełącznik języka działałby dopiero po restarcie programu.
+        Screens obtain text from `t()` in their constructors, so without this
+        method the language switch would take effect only after a restart.
 
-        Po podpisach idzie ponowne `load`: pozycje list, dopiski „(zalecane)"
-        i zdania z `describe()` też są tekstem, a jedynym miejscem, które umie
-        je złożyć, jest `load`.
+        Run `load` again after captions: list items, "(recommended)" suffixes,
+        and `describe()` sentences are text too, and `load` is the only place
+        that can assemble them.
         """
         self.headline.setText(t("review_headline"))
         self.deps_title_label.setText(t("review_deps_title"))
@@ -468,7 +469,7 @@ class ReviewScreen(QWidget):
             self.show_download_plan(self._download_plan)
 
     def show_download_plan(self, plan) -> None:
-        """B12: trzy osobne wielkości i jawne składniki przygotowania."""
+        """B12: three separate sizes and explicit preparation components."""
         self._download_plan = plan
         if plan.status == "pending":
             self.deps_size_label.setText(t("download_checking"))
@@ -548,7 +549,7 @@ class ReviewScreen(QWidget):
             self.destination_label.setText(chosen)
 
     def _update_accessible_names(self) -> None:
-        """Nadaje kontrolkom przetłumaczone nazwy dla czytników ekranu."""
+        """Assign translated accessible names to controls for screen readers."""
         for control, key in (
             (self.entry_combo, "review_entry"),
             (self.kind_combo, "review_kind"),
@@ -581,10 +582,10 @@ class ReviewScreen(QWidget):
         dialog.exec()
 
     def _emit_plan(self) -> None:
-        """Bez wczytanej analizy nie ma czego budować.
+        """There is nothing to build without loaded analysis.
 
-        Ekran powstaje razem z oknem, na długo przed wskazaniem folderu, więc
-        ten stan jest prawdziwy — a nie teoretyczny.
+        The screen is created with the window long before a folder is selected,
+        so this state is real rather than theoretical.
         """
         if self._analysis is None:
             return
@@ -594,12 +595,12 @@ class ReviewScreen(QWidget):
             exe_name=self.name_edit.text(),
             icon=self._icon,
             dest_dir=self._dest_dir,
-            # Qt przechowuje dane pozycji jako QVariant i oddaje `AppKind`
-            # z powrotem jako GOŁY napis. Rdzeń porównuje te pola przez `is`
-            # (`plan.app_kind is AppKind.WINDOWED` w `pyinstaller.py`), więc
-            # napis przechodzi cicho i daje program konsolowy tam, gdzie
-            # użytkownik wybrał okno — czyli czarną konsolę za każdym GUI.
-            # Typ odtwarzamy tu, na granicy z Qt.
+            # Qt stores item data as QVariant and returns `AppKind` as a BARE
+            # string. The core compares these fields with `is`
+            # (`plan.app_kind is AppKind.WINDOWED` in `pyinstaller.py`), so the
+            # string passes silently and produces a console app where the user
+            # selected a window, adding a black console to every GUI. Restore
+            # the type here at the Qt boundary.
             app_kind=AppKind(self.kind_combo.currentData()),
             output_mode=OutputMode(self.mode_combo.currentData()),
             extra_modules=_parse_modules(self.extra_edit.text()),
@@ -608,17 +609,17 @@ class ReviewScreen(QWidget):
 
 
 def _parse_modules(text: str) -> list[str]:
-    """Wpisane moduły -> lista nazw. Przecinki i spacje rozdzielają, puste
-    fragmenty odpadają — `resolve_extra_modules` i tak filtruje białe znaki."""
+    """Entered modules -> list of names. Commas and spaces separate entries;
+    empty fragments are removed, as `resolve_extra_modules` filters whitespace."""
     return [token for token in re.split(r"[,\s]+", text.strip()) if token]
 
 
 def _label_for(root: Path, path: Path) -> str:
-    """Jak nazwać kandydata na liście.
+    """How to label a candidate in the list.
 
-    Sama nazwa pliku nie wystarcza: `main.py` w korzeniu i `pkg/main.py` dają
-    dwie identyczne pozycje, więc użytkownik nie ma jak wybrać właściwej ani
-    odczytać, która jest zaznaczona. Ścieżka względem katalogu projektu jest
-    dla plików w korzeniu dokładnie tą samą nazwą, a głębiej mówi prawdę.
+    A filename alone is insufficient: root `main.py` and `pkg/main.py` produce
+    identical entries, so the user cannot choose or identify the right one. A
+    path relative to the project directory is the same short name for root files
+    and tells the truth for deeper ones.
     """
     return path.relative_to(root).as_posix()

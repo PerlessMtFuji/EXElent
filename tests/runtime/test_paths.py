@@ -38,8 +38,10 @@ def test_work_dir_is_short_and_ascii(monkeypatch, tmp_path):
 
 
 def test_two_files_in_one_folder_get_different_work_dirs(tmp_path, monkeypatch):
-    """Bez tego drugi build kasuje srodowisko pierwszego — `path_hash` jest
-    jedyna rzecza, ktora te przebiegi rozdziela."""
+    """Without this, the second build deletes the first build's environment.
+
+    `path_hash` is the only value that separates these runs.
+    """
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     a = work_dir_for(tmp_path, single_file=tmp_path / "a.py")
     b = work_dir_for(tmp_path, single_file=tmp_path / "b.py")
@@ -52,9 +54,11 @@ def test_directory_work_dir_is_unchanged(tmp_path, monkeypatch):
 
 
 def test_two_sessions_of_the_same_project_get_different_work_dirs(tmp_path, monkeypatch):
-    """A13: dwie instancje EXElenta budujace TEN SAM projekt nie moga dzielic
-    katalogu roboczego — inaczej `materialize_workspace` jednej kasuje kopie
-    kodu drugiej w polowie builda."""
+    """A13: two EXElent instances building the same project need separate work dirs.
+
+    Otherwise one instance's `materialize_workspace` deletes the other one's
+    source copy in the middle of its build.
+    """
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(paths, "_SESSION_ID", "aaaaaaaa")
     first = work_dir_for(tmp_path)
@@ -65,8 +69,11 @@ def test_two_sessions_of_the_same_project_get_different_work_dirs(tmp_path, monk
 
 
 def test_clean_current_session_removes_only_this_session(tmp_path, monkeypatch):
-    """`clean_current_session` sprzata WYLACZNIE katalogi tej sesji — katalog
-    drugiej, moze wciaz budujacej instancji ma zostac nietkniety (A09/A13)."""
+    """`clean_current_session` removes only directories from this session.
+
+    Another instance may still be building, so its directory must remain
+    untouched (A09/A13).
+    """
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr(paths, "_SESSION_ID", "bbbbbbbb")
     other = work_dir_for(tmp_path)
@@ -80,7 +87,7 @@ def test_clean_current_session_removes_only_this_session(tmp_path, monkeypatch):
     clean_current_session()
 
     assert not mine.exists()
-    assert other.exists()  # cudza sesja nietknieta
+    assert other.exists()  # another session remains untouched
 
 
 def test_session_id_is_short_ascii():

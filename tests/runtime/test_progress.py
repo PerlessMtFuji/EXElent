@@ -1,8 +1,8 @@
-"""Postep jako jeden obiekt.
+"""Represent progress as one object.
 
-Para (faza, ulamek) nie miala gdzie zmiescic bajtow ani predkosci, a dolozenie
-pieciu argumentow opcjonalnych dalo by sygnature, ktorej nikt nie umie wypelnic
-w polowie. Jeden obiekt jest uczciwszy.
+A (phase, fraction) pair had nowhere to carry byte counts or speed. Five
+optional arguments would create a signature that callers could only partially
+populate, so a single object expresses the data more honestly.
 """
 
 from dataclasses import FrozenInstanceError
@@ -20,8 +20,11 @@ def test_progress_is_immutable():
 
 
 def test_byte_fields_default_to_zero_for_phases_that_download_nothing():
-    """Pakowanie PyInstallerem nic nie pobiera. Pusty licznik bajtow pod
-    paskiem bylby gorszy niz jego brak, wiec ekran pozna to po zerze."""
+    """PyInstaller packaging downloads nothing.
+
+    An empty byte counter below the progress bar is worse than no counter, so
+    the screen recognizes this state by its zero values.
+    """
     update = Progress(phase="package", fraction=0.5)
     assert update.total_bytes == 0
     assert update.done_bytes == 0

@@ -41,7 +41,7 @@ def test_non_square_image_is_padded_not_stretched(tmp_path):
 
 
 def test_broken_file_raises_value_error(tmp_path):
-    src = tmp_path / "nie-obrazek.png"
-    src.write_bytes(b"to nie jest obrazek")
+    src = tmp_path / "not-an-image.png"
+    src.write_bytes(b"this is not an image")
     with pytest.raises(ValueError):
         ensure_ico(src, tmp_path / "out.ico")

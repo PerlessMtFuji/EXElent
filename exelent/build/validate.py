@@ -1,16 +1,17 @@
-"""Walidacja przygotowanych źródeł DOCELOWYM interpreterem przed PyInstallerem.
+"""Validation of prepared sources with the TARGET interpreter before PyInstaller.
 
-Analiza sprawdza składnię `ast.parse`-em interpretera DEWELOPERSKIEGO — a to
-mija się z prawdą dwukrotnie: parser (nie kompilator) przepuszcza część reguł
-języka (`return` poza funkcją, źle umieszczony `from __future__`), a wersja
-deweloperska (3.13) nie jest wersją, pod którą powstaje EXE (3.12). Kod poprawny
-u dewelopera, lecz niezgodny z docelowym Pythonem, przechodził więc cały potok:
-PyInstaller kompilował go dopiero przy składaniu PYZ, łapał `SyntaxError`,
-WYRZUCAŁ moduł i kończył kodem 0 — a użytkownik dostawał EXE witające go
-„No module named <jego program>".
+The analysis checks syntax with `ast.parse` using the DEVELOPER's interpreter —
+and that is wrong in two ways: the parser (not the compiler) lets through some
+language rules (`return` outside a function, misplaced `from __future__`), and
+the developer version (3.13) is not the version the EXE is built for (3.12).
+Code valid on the developer's machine but incompatible with the target Python
+thus passed through the entire pipeline: PyInstaller compiled it only when
+assembling the PYZ, caught `SyntaxError`, DROPPED the module and finished with
+exit code 0 — and the user got an EXE greeting them with
+"No module named <their program>".
 
-Tu kompilujemy źródła docelowym interpreterem z venva builda, przed
-PyInstallerem. Kompilacja, nie uruchomienie — nie wykonujemy kodu użytkownika.
+Here we compile sources with the target interpreter from the build venv, before
+PyInstaller. Compilation, not execution — we do not run the user's code.
 """
 
 from __future__ import annotations
@@ -22,33 +23,33 @@ from pathlib import Path
 from exelent.models import Issue, Severity
 from exelent.runtime.procs import CREATE_NO_WINDOW, kill_tree
 
-# Marker protokołu wypisywany przez checker przy błędzie składni. Jawny prefiks
-# zastępuje dawną heurystykę „pierwsza linia z tabulatorem" (B09): dowolny tab w
-# wyjściu mógł zostać wzięty za błąd, a brak tabu — za sukces. Teraz błąd
-# rozpoznajemy WYŁĄCZNIE po tej linii, a jej brak przy niezerowym kodzie znaczy
-# „walidacja niewykonana", nie „brak błędu".
+# Protocol marker printed by the checker on a syntax error. An explicit prefix
+# replaces the old "first line with a tab" heuristic (B09): any tab in the
+# output could be mistaken for an error, and absence of a tab for success. Now
+# we recognize an error ONLY by this line, and its absence with a non-zero exit
+# code means "validation did not execute", not "no error".
 _ERROR_MARKER = "EXELENT_SYNTAX_ERROR"
 
-# B10: walidacja nie ma prawa wisieć w nieskończoność. Duży projekt kompiluje się
-# poniżej sekundy; 30 s to hojny margines, po którym uznajemy, że interpreter
-# się zawiesił (np. czeka na stdin po błędzie konfiguracji).
+# B10: validation must not hang indefinitely. A large project compiles in under
+# a second; 30 s is a generous margin after which we conclude the interpreter is
+# stuck (e.g. waiting on stdin after a configuration error).
 _VALIDATE_TIMEOUT_SECONDS = 30
 
-# Ile czekamy na domknięcie potoków po kill_tree.
+# How long we wait for pipes to close after kill_tree.
 _KILL_WAIT_SECONDS = 3.0
 
-# Kod checkera jest OSADZONY tutaj i przekazywany docelowemu interpreterowi
-# przez `-c`, a nie czytany z pliku `_targetcheck.py` obok modułu. W zamrożonym
-# EXElent.exe takiego pliku obok modułu NIE MA (PyInstaller zbiera tylko to, co
-# jest importowane — nie ścieżki czytane z dysku), więc walidacja po cichu się
-# nie wykonywała i `None` czytano jako sukces (B09). Jako stała w importowanym
-# module źródło jest w paczce zawsze.
+# The checker code is EMBEDDED here and passed to the target interpreter via
+# `-c`, not read from a file `_targetcheck.py` next to the module. In a frozen
+# EXElent.exe such a file next to the module does NOT EXIST (PyInstaller only
+# collects what is imported — not paths read from disk), so validation silently
+# did not execute and `None` was read as success (B09). As a constant in an
+# imported module the source is always in the bundle.
 #
-# Checker KOMPILUJE każde źródło (nie uruchamia), bajtami, żeby
-# `compile` uszanował deklarację kodowania (PEP 263) dokładnie tak jak import w
-# gotowym EXE. Pierwszy plik, który się nie kompiluje, wypisuje
-# `<marker>\t<ścieżka względna>\t<linia>\t<komunikat>` i kończy kodem 1; gdy
-# wszystko się kompiluje — kod 0. Musi być samowystarczalny (tylko stdlib).
+# The checker COMPILES each source (does not run it), reading bytes so that
+# `compile` honors the encoding declaration (PEP 263) exactly as an import in
+# the finished EXE would. The first file that fails to compile prints
+# `<marker>\t<relative path>\t<line>\t<message>` and exits with code 1; when
+# everything compiles — code 0. Must be self-contained (stdlib only).
 _CHECK_SOURCE = f"""\
 import os
 import sys
@@ -81,10 +82,11 @@ sys.exit(main())
 
 
 def _validation_failed(python_version: str, detail: str) -> Issue:
-    """Walidacja się NIE WYKONAŁA (interpreter nie wystartował, checker padł lub
-    złamał protokół). To awaria kontroli, nie potwierdzenie poprawności — dlatego
-    BLOCKER, a nie ciche `None` czytane jako sukces (B09). Strażnik
-    `dropped_project_modules` zostaje jako DODATKOWA ochrona, nie zastępstwo."""
+    """Validation DID NOT EXECUTE (the interpreter did not start, the checker
+    crashed or broke the protocol). This is a control failure, not confirmation
+    of correctness — hence BLOCKER, not a silent `None` read as success (B09).
+    The `dropped_project_modules` guard remains as ADDITIONAL protection, not
+    a substitute."""
     return Issue(
         "validation_failed",
         Severity.BLOCKER,
@@ -99,15 +101,15 @@ def validate_target_syntax(
     python_version: str,
     cancel=None,
 ) -> Issue | None:
-    """Cztery rozłączne wyniki (B09): `None` — składnia poprawna;
-    `target_syntax_error` (BLOCKER) — pierwsze źródło, które nie kompiluje się
-    docelowym `python`; `validation_failed` (BLOCKER) — kontrola się nie
-    wykonała lub złamała protokół; `None` również po anulowaniu (build kończy
-    się wtedy jako przerwany na dalszym etapie).
+    """Four disjoint outcomes (B09): `None` — syntax correct;
+    `target_syntax_error` (BLOCKER) — first source that does not compile with
+    the target `python`; `validation_failed` (BLOCKER) — the check did not
+    execute or broke the protocol; `None` also after cancellation (the build
+    then ends as interrupted at a later stage).
 
-    Niewykonana kontrola NIE jest już traktowana jak brak błędu: fałszywy sukces
-    z własnej infrastruktury dawał EXE bez kodu użytkownika, kończące się
-    „No module named ...".
+    A check that did not execute is NO LONGER treated as absence of error: a
+    false success from our own infrastructure produced an EXE without the user's
+    code, ending with "No module named ...".
     """
     if cancel is not None and cancel.cancelled:
         return None
@@ -123,13 +125,13 @@ def validate_target_syntax(
             creationflags=CREATE_NO_WINDOW,
         )
     except OSError as exc:
-        # Docelowy interpreter w ogóle nie wystartował — kontrola się nie odbyła.
+        # The target interpreter did not start at all — the check did not happen.
         return _validation_failed(python_version, str(exc))
 
-    # B10: pętla sprawdzająca cancel token i timeout jednocześnie.
-    # Walidacja to kompilacja (nie uruchomienie) źródeł — szybka operacja.
-    # Timeout chroni przed zawieszonym interpreterem; cancel reaguje na
-    # zamknięcie okna lub przycisk „Przerwij".
+    # B10: loop checking cancel token and timeout simultaneously.
+    # Validation is compilation (not execution) of sources — a fast operation.
+    # Timeout guards against a stuck interpreter; cancel reacts to window close
+    # or the "Cancel" button.
     deadline = time.monotonic() + _VALIDATE_TIMEOUT_SECONDS
     while True:
         try:
@@ -142,7 +144,7 @@ def validate_target_syntax(
                     process.communicate(timeout=_KILL_WAIT_SECONDS)
                 except subprocess.TimeoutExpired:
                     pass
-                return None  # anulowano — build kończy się jako przerwany dalej
+                return None  # cancelled — the build ends as interrupted later
             if time.monotonic() > deadline:
                 kill_tree(process.pid)
                 try:
@@ -157,8 +159,8 @@ def validate_target_syntax(
     prefix = _ERROR_MARKER + "\t"
     line = next((ln for ln in stdout.splitlines() if ln.startswith(prefix)), None)
     if line is None:
-        # Niezerowy kod bez markera protokołu: checker nie doszedł do kontroli
-        # albo się wywrócił. To awaria walidacji, nie „brak błędu".
+        # Non-zero exit code without the protocol marker: the checker did not
+        # reach the check or crashed. This is a validation failure, not "no error".
         detail = (stderr or stdout or "").strip().replace("\n", " ")
         return _validation_failed(python_version, detail)
 

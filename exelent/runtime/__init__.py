@@ -3,7 +3,7 @@ from collections.abc import Callable
 from exelent.runtime.progress import Progress
 
 ProgressFn = Callable[[Progress], None]
-"""Wywoływane z jednym `Progress`. Kod fazy tłumaczy warstwa UI."""
+"""Called with one `Progress`. The UI layer translates the phase code."""
 
 
 def noop_progress(update: Progress) -> None:

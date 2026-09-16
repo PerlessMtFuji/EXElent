@@ -1,8 +1,8 @@
-"""Zgoda na pobranie — z prawdziwą liczbą megabajtów.
+"""Download consent with a real megabyte count.
 
-Okno nie pojawia się, gdy nie ma czego pobierać. Pytanie o zgodę na pobranie
-zera megabajtów uczy użytkownika klikać „OK" bez czytania, a wtedy przestaje
-działać także wtedy, gdy naprawdę ma coś do powiedzenia.
+The dialog does not appear when there is nothing to download. Asking permission
+to download zero megabytes teaches users to click "OK" without reading, making
+the prompt ineffective when it actually has something to say.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ from exelent.i18n import t
 from exelent.settings import Settings
 from exelent.ui.format import human_size
 
-# Ile pozycji wymieniamy z nazwy. Pelna lista czternastu paczek to sciana
-# tekstu, ktorej nikt nie czyta.
+# Number of items named explicitly. A full list of fourteen packages is a wall
+# of text nobody reads.
 _NAMED = 3
 
 
@@ -36,16 +36,16 @@ def should_ask(plan: DownloadPlan, settings: Settings) -> bool:
 
 
 def should_ask_offline(plan: DownloadPlan, settings: Settings, estimate_high_mb: int) -> bool:
-    """Preflight nie zdążył albo odpadł — pytamy na podstawie tabeli.
+    """Preflight timed out or failed; ask based on the estimate table.
 
-    Specyfikacja §9.2 wymaga tego wprost: po upływie limitu okno pokazuje
-    szacunek z tabeli §7.2. Bez tej gałęzi wolne łącze dawałoby dokładnie to,
-    przed czym broni zgłoszenie 4 — build startujący bez pytania i ściągający
-    setki megabajtów w tle.
+    Specification §9.2 requires this explicitly: after the deadline, show the
+    estimate from table §7.2. Without this branch, a slow connection would
+    reproduce issue 4: a build starting without consent and downloading
+    hundreds of megabytes in the background.
 
-    Pusty `specs` to jedyna rzecz, która odróżnia „preflight nie ma odpowiedzi"
-    od „preflight policzył i nie ma czego pobierać": w tym drugim przypadku
-    lista rozwiązanych wersji jest niepusta, a pytanie byłoby o zero.
+    Empty `specs` is the only distinction between "preflight has no answer" and
+    "preflight calculated that nothing must be downloaded": in the latter case
+    the resolved-version list is non-empty and the question would be about zero.
     """
     unresolved_components = plan.status in {"pending", "offline", "error", "partial", "missing_uv"}
     return settings.ask_before_download and (

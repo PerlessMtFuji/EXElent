@@ -1,6 +1,6 @@
-"""Sprowadzenie uv na dysk użytkownika. Jeden statyczny plik, który potrafi
-pobrać przenośnego CPythona z tkinterem i pip-em oraz stworzyć izolowane
-środowisko — czyli całą brudną robotę bootstrapu."""
+"""Bootstrap uv onto the user's disk. A single static file that can download
+a portable CPython with tkinter and pip and create an isolated environment
+— i.e. all the dirty work of bootstrapping."""
 
 from __future__ import annotations
 
@@ -22,12 +22,12 @@ from exelent.models import Issue, IssueError, Severity
 from exelent.runtime import Progress, ProgressFn
 from exelent.runtime.paths import state_dir, tools_dir
 
-# Timeout na odczyt pojedynczej porcji danych z serwera. Cała operacja może
-# trwać dłużej (wiele porcji), ale ŻADNA porcja nie ma prawa wisieć w
-# nieskończoność — inaczej zamknięcie okna czeka, aż serwer łaskawie odpowie.
+# Timeout for reading a single chunk from the server. The whole operation may
+# take longer (many chunks), but NO single chunk may hang forever — otherwise
+# closing the window waits until the server deigns to respond.
 _DOWNLOAD_READ_TIMEOUT = 30
 
-# Jak często sprawdzamy token anulowania w trakcie pobierania.
+# How often we check the cancellation token during download.
 _CANCEL_CHECK_BYTES = 256 * 1024
 
 UV_URL = (
@@ -37,8 +37,8 @@ UV_ZIP_SHA256 = "0d051779fbcb173b183efeae1c3e96148764fd82709bbbf0966df3efe48b67c
 
 
 class UvDownloadError(IssueError):
-    """Nie udało się sprowadzić uv. Niesie ze sobą `Issue` dla warstwy
-    prezentacji — nigdy surowego tekstu do pokazania użytkownikowi."""
+    """Failed to download uv. Carries an `Issue` for the presentation layer
+    — never raw text to show the user."""
 
 
 def uv_path() -> Path:
@@ -80,10 +80,10 @@ def check_preconditions(*, need_network: bool) -> tuple[Issue, ...]:
 
 
 def _download(url: str, progress: ProgressFn, cancel=None) -> bytes:
-    """Pobiera ``url`` w całości, meldując po każdej porcji.
+    """Download ``url`` in full, reporting progress after each chunk.
 
-    ``cancel`` przerywa pobranie między porcjami. Timeout na pojedynczym
-    ``read`` chroni przed wisząca sesją.
+    ``cancel`` aborts the download between chunks. A timeout on each
+    ``read`` prevents a hanging session.
     """
     buffer = io.BytesIO()
     started = time.monotonic()
@@ -116,9 +116,9 @@ def _download(url: str, progress: ProgressFn, cancel=None) -> bytes:
 
 
 def _atomic_write(dest: Path, data: bytes) -> None:
-    """Zapisuje ``data`` pod ``dest`` atomowo (tmpfile + ``os.replace``).
+    """Write ``data`` to ``dest`` atomically (tmpfile + ``os.replace``).
 
-    Przerwany proces nigdy nie zostawia obciętego pliku pod finalną ścieżką.
+    An interrupted process never leaves a truncated file at the final path.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=".uv-download-", suffix=".tmp")
@@ -143,17 +143,17 @@ def _download_and_extract_uv(url: str, dest: Path, progress: ProgressFn, cancel=
                 data = archive.read(name)
                 break
         else:
-            raise FileNotFoundError("archiwum uv nie zawiera uv.exe")
+            raise FileNotFoundError("uv archive does not contain uv.exe")
     _atomic_write(dest, data)
 
 
-# uv.exe to ~30 MB; plik mniejszy niż 1 MB jest uszkodzony (obcięty zapis,
-# interwencja antywirusa). Nagłówek PE („MZ") potwierdza binarny format.
+# uv.exe is ~30 MB; a file smaller than 1 MB is corrupted (truncated write,
+# antivirus intervention). The PE header ("MZ") confirms binary format.
 _UV_MIN_SIZE = 1024 * 1024
 
 
 def _is_valid_uv(path: Path) -> bool:
-    """Czy plik wygląda na poprawny plik wykonywalny uv."""
+    """Whether the file looks like a valid uv executable."""
     try:
         size = path.stat().st_size
         if size < _UV_MIN_SIZE:
@@ -165,11 +165,11 @@ def _is_valid_uv(path: Path) -> bool:
 
 
 def ensure_uv(progress: ProgressFn, cancel=None) -> Path:
-    """Zapewnia uv na dysku. Weryfikuje integralność istniejącego pliku.
+    """Ensure uv is on disk. Verifies integrity of an existing file.
 
-    Anulowany token przed startem nie uruchamia pobierania. Współdzielony
-    cache jest bezpieczny: zapis jest atomowy (``_atomic_write``), a uv
-    zarządza własnym cache paczek bez potrzeby dodatkowych blokad.
+    A cancelled token before start prevents the download. The shared cache
+    is safe: writes are atomic (``_atomic_write``), and uv manages its own
+    package cache without needing additional locks.
     """
     if cancel is not None and cancel.cancelled:
         raise IssueError(Issue("build_cancelled", Severity.INFO))
@@ -177,7 +177,7 @@ def ensure_uv(progress: ProgressFn, cancel=None) -> Path:
     if target.exists():
         if _is_valid_uv(target):
             return target
-        # Uszkodzony plik — usuń i pobierz ponownie.
+        # Corrupted file — delete and re-download.
         with suppress(OSError):
             target.unlink(missing_ok=True)
     try:

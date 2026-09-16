@@ -1,8 +1,8 @@
-"""Polskie zdania dla kodów rdzenia.
+"""Polish sentences for core issue codes.
 
-Tekst pisany do osoby nietechnicznej: bez żargonu, każdy komunikat mówi co się
-stało i co z tym zrobić. Klucze pochodzą z kodu — test kompletności liczy je
-z `exelent/`, więc nowy kod Issue bez zdania zapala się na czerwono.
+Written for a non-technical reader: no jargon, every message says what happened
+and what to do about it. Keys come from code — the completeness test counts them
+from `exelent/`, so a new Issue code without a sentence turns red immediately.
 """
 
 CATALOG: dict[str, str] = {
@@ -55,7 +55,7 @@ CATALOG: dict[str, str] = {
         "Nie wiem, od którego pliku zaczyna się Twój program. "
         "Wskaż ten, który normalnie uruchamiasz."
     ),
-    # ostrzeżenia o kodzie
+    # code warnings
     "server_app": (
         "To jest serwer ({framework}). Po uruchomieniu okno będzie wyglądać na bezczynne "
         "— program czeka na połączenia."
@@ -85,7 +85,7 @@ CATALOG: dict[str, str] = {
         "Gotowy program zajmie około {low}–{high} MB, a budowanie potrwa dłużej niż zwykle. "
         "Najwięcej miejsca zajmą: {packages}."
     ),
-    # manifesty zależności
+    # dependency manifests
     "requirements_missing": (
         "Lista wymagań wskazuje na plik {file}, którego nie ma — lista dodatkowych "
         "bibliotek może być niepełna."
@@ -139,7 +139,7 @@ CATALOG: dict[str, str] = {
         "W systemie Windows nazwy różniące się tylko wielkością liter oznaczają ten sam plik "
         "— zmień nazwę jednego z nich."
     ),
-    # środowisko
+    # environment
     "no_network": (
         "Brak połączenia z internetem. Pierwsze budowanie wymaga pobrania narzędzi "
         "— połącz się i spróbuj ponownie."
@@ -246,7 +246,7 @@ CATALOG: dict[str, str] = {
         "Coś poszło nie tak i nie umiem tego nazwać ({error}). "
         "Dołącz raport do zgłoszenia — z nim da się to naprawić."
     ),
-    # fazy postępu
+    # progress phases
     "download_uv": "Pobieram narzędzia…",
     "install_python": "Przygotowuję Pythona…",
     "create_env": "Tworzę środowisko…",

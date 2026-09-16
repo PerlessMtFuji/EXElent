@@ -1,4 +1,4 @@
-"""Konflikty rzeczywistego uv na kontrolowanych wheelach, bez indeksu paczek."""
+"""Exercise real uv conflicts with controlled wheels and no package index."""
 
 import base64
 import csv
@@ -54,8 +54,8 @@ def test_local_resolution_controls_whether_backend_can_run(tmp_path, monkeypatch
     _wheel(wheels, "exelent-test-beta", "1.0", ["exelent-test-core==2.0"])
     monkeypatch.setenv("UV_NO_INDEX", "1")
     monkeypatch.setenv("UV_FIND_LINKS", str(wheels))
-    # Narzędzie pakowania zastępuje lokalny wheel; instalacja i resolver uv
-    # są prawdziwe. Ten test sprawdza bramkę środowiska, a nie PyInstaller.
+    # The packaging tool is replaced by a local wheel; uv installation and
+    # resolver are real. This test checks the environment gate, not PyInstaller.
     monkeypatch.setattr(env, "PYINSTALLER_SPEC", "exelent-test-tool==1.0")
     requirements = {
         "pins": "exelent-test-core==1.0\nexelent-test-core==2.0\n",
@@ -94,4 +94,4 @@ def test_local_resolution_controls_whether_backend_can_run(tmp_path, monkeypatch
     else:
         assert not result.ok
         assert "requirements_conflict" in {issue.code for issue in result.issues}, result.issues
-        assert seen == [], "backend nie może użyć środowiska po konflikcie resolvera"
+        assert seen == [], "backend must not use the environment after a resolver conflict"

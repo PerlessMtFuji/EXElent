@@ -1,8 +1,8 @@
-"""Most miedzy watkiem budujacym a GUI — jedyne miejsce styku watkow.
+"""Bridge between the build thread and GUI, the sole thread boundary.
 
-Testy pilnuja trzech rzeczy, ktorych nie widac po samych sygnalach: ze build
-NIE dzieje sie w watku okna, ze anulowanie dociera do JUZ TRWAJACEGO builda,
-i ze awaria po tamtej stronie wraca jako wynik, a nie jako smierc programu.
+These tests cover three facts that signals alone cannot show: the build does
+not run on the GUI thread, cancellation reaches an active build, and a worker
+failure returns as a result instead of terminating the program.
 """
 
 import threading
@@ -38,59 +38,61 @@ def worker(qtbot):
 
 @pytest.fixture
 def blocking_build(monkeypatch):
-    """Fabryka udawanego `execute_build`, ktory stoi, dopoki mu nie pozwolimy isc."""
-    zwolnij = threading.Event()
-    wystartowal = threading.Event()
-    widziane = {"wywolania": 0}
+    """Create a fake `execute_build` that waits until the test releases it."""
+    release = threading.Event()
+    started = threading.Event()
+    observed = {"calls": 0}
 
     def make(result=None, wait_for_cancel=False):
         def fake(plan, progress, cancel, *, carried=()):
-            widziane["wywolania"] += 1
-            widziane["watek"] = threading.get_ident()
-            widziane["plan"] = plan
-            widziane["carried"] = tuple(carried)
-            wystartowal.set()
+            observed["calls"] += 1
+            observed["thread"] = threading.get_ident()
+            observed["plan"] = plan
+            observed["carried"] = tuple(carried)
+            started.set()
             if wait_for_cancel:
                 for _ in range(1000):
                     if cancel.cancelled:
                         break
                     threading.Event().wait(0.005)
             else:
-                zwolnij.wait(timeout=5)
-            widziane["anulowany"] = cancel.cancelled
+                release.wait(timeout=5)
+            observed["cancelled"] = cancel.cancelled
             return result or BuildResult(ok=False)
 
         monkeypatch.setattr(worker_module, "execute_build", fake)
-        return widziane
+        return observed
 
-    make.zwolnij = zwolnij
-    make.wystartowal = wystartowal
+    make.release = release
+    make.started = started
     return make
 
 
-# --- watek ---
+# --- thread ---
 
 
 def test_the_build_does_not_run_in_the_gui_thread(worker, qtbot, blocking_build, tmp_path):
-    """Cala racja bytu tego modulu. Bez watku okno stoi zamrozone przez
-    kilka minut i Windows oznacza je jako "nie odpowiada" — a zaden test
-    sygnalow tego nie widzi, bo sygnaly docieraja tak samo."""
-    widziane = blocking_build(BuildResult(ok=True))
-    blocking_build.zwolnij.set()
+    """The module exists to keep lengthy builds off the GUI thread.
+
+    Otherwise the window freezes for minutes and Windows marks it as not
+    responding, while signal-only tests still appear to pass.
+    """
+    observed = blocking_build(BuildResult(ok=True))
+    blocking_build.release.set()
     with qtbot.waitSignal(worker.finished, timeout=5000):
         worker.start(_plan(tmp_path))
-    assert widziane["watek"] != threading.main_thread().ident
+    assert observed["thread"] != threading.main_thread().ident
 
 
 def test_nothing_is_left_running_after_the_build(worker, qtbot, blocking_build, tmp_path):
     blocking_build(BuildResult(ok=True))
-    blocking_build.zwolnij.set()
+    blocking_build.release.set()
     with qtbot.waitSignal(worker.finished, timeout=5000):
         worker.start(_plan(tmp_path))
     assert worker.is_running() is False
 
 
-# --- sygnaly ---
+# --- signals ---
 
 
 def test_progress_signals_reach_the_gui(worker, qtbot, monkeypatch, tmp_path):
@@ -119,41 +121,44 @@ def test_finished_carries_build_result(worker, qtbot, monkeypatch, tmp_path):
     assert blocker.args[0].size_bytes == 42
 
 
-# --- co worker przekazuje rdzeniowi ---
+# --- values passed from the worker to the core ---
 
 
 def test_the_ready_plan_is_built_verbatim(worker, qtbot, blocking_build, tmp_path):
-    """Ekran 2 istnieje po to, zeby uzytkownik poprawil zgadniecia analizy.
-    Worker buduje DOKLADNIE ten plan — nie analizuje folderu od nowa. Wersja
-    z `run_build(plan.root, ...)` analizowala katalog na nowo i gubila wybor
-    pojedynczego pliku: budowanie `Pobrane/x.py` pakowalo cale Pobrane."""
-    widziane = blocking_build(BuildResult(ok=True))
-    blocking_build.zwolnij.set()
+    """The worker builds the exact plan that the user reviewed on screen 2.
+
+    Calling `run_build(plan.root, ...)` would analyze the directory again and
+    lose single-file selection, packaging all of Downloads for `Downloads/x.py`.
+    """
+    observed = blocking_build(BuildResult(ok=True))
+    blocking_build.release.set()
     plan = _plan(tmp_path)
     with qtbot.waitSignal(worker.finished, timeout=5000):
         worker.start(plan)
-    assert widziane["plan"] is plan  # ten sam plan, nie odtworzony z analizy
+    assert observed["plan"] is plan  # same plan, not reconstructed from analysis
 
 
 def test_analysis_warnings_are_carried_to_the_build(worker, qtbot, blocking_build, tmp_path):
-    """Ostrzezenia analizy z ekranu 2 (sekret w kodzie, ciezka paczka) maja
-    dotrzec na ekran wyniku — worker musi je przekazac do `execute_build`."""
+    """Analysis warnings from screen 2 must reach the result screen.
+
+    The worker therefore passes them through to `execute_build`.
+    """
     from exelent.models import Issue, Severity
 
-    widziane = blocking_build(BuildResult(ok=True))
-    blocking_build.zwolnij.set()
+    observed = blocking_build(BuildResult(ok=True))
+    blocking_build.release.set()
     carried = (Issue("secret_in_code", Severity.WARNING),)
     with qtbot.waitSignal(worker.finished, timeout=5000):
         worker.start(_plan(tmp_path), carried)
-    assert widziane["carried"] == carried
+    assert observed["carried"] == carried
 
 
-# --- awaria ---
+# --- failure ---
 
 
 def test_exception_becomes_failed_result_not_a_crash(worker, qtbot, monkeypatch, tmp_path):
     def boom(plan, progress, cancel, **kwargs):
-        raise RuntimeError("cos poszlo nie tak")
+        raise RuntimeError("something went wrong")
 
     monkeypatch.setattr(worker_module, "execute_build", boom)
     with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
@@ -163,81 +168,85 @@ def test_exception_becomes_failed_result_not_a_crash(worker, qtbot, monkeypatch,
 
 
 def test_the_failure_is_a_sentence_not_a_template(worker, qtbot, monkeypatch, tmp_path):
-    """`unexpected_error` istnieje w katalogu od zadania 16 i prosi o `{error}`.
-    Issue z innym kluczem danych nie wywala `t()` — pokazuje laikowi nawias
-    klamrowy w zdaniu. Cichy blad, wiec pilnowany maszynowo."""
+    """`unexpected_error` expects an `{error}` value in the catalog.
+
+    An Issue using a different data key leaves braces in the user-facing
+    sentence instead of breaking `t()`, so a test guards this quiet failure.
+    """
 
     def boom(plan, progress, cancel, **kwargs):
-        raise RuntimeError("cos poszlo nie tak")
+        raise RuntimeError("something went wrong")
 
     monkeypatch.setattr(worker_module, "execute_build", boom)
     with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
         worker.start(_plan(tmp_path))
-    zdanie = describe(blocker.args[0].issues[0])
-    assert "{" not in zdanie and "}" not in zdanie
+    sentence = describe(blocker.args[0].issues[0])
+    assert "{" not in sentence and "}" not in sentence
 
 
-# --- anulowanie ---
+# --- cancellation ---
 
 
 def test_cancel_reaches_a_build_that_is_already_running(worker, qtbot, blocking_build, tmp_path):
-    """Prawdziwy scenariusz: przycisk "Anuluj" istnieje dopiero PO starcie.
-    Wersja z planu anulowala przed startem, wiec nie sprawdzala niczego poza
-    tym, ze token jest przekazany — a token wspoldzielony z trwajacym watkiem
-    to jedyne, co tu naprawde dziala."""
-    widziane = blocking_build(BuildResult(ok=False), wait_for_cancel=True)
+    """The Cancel button exists only after the build has started.
+
+    Cancelling before start would prove only that a token is passed. This test
+    proves the active thread shares and observes that token.
+    """
+    observed = blocking_build(BuildResult(ok=False), wait_for_cancel=True)
     with qtbot.waitSignal(worker.finished, timeout=10000):
         worker.start(_plan(tmp_path))
-        assert blocking_build.wystartowal.wait(timeout=5)
+        assert blocking_build.started.wait(timeout=5)
         worker.cancel()
-    assert widziane["anulowany"] is True
+    assert observed["cancelled"] is True
 
 
 def test_a_worker_builds_again_after_a_cancelled_build(worker, qtbot, blocking_build, tmp_path):
-    """Jeden token na cale zycie workera oznaczalby, ze po anulowaniu KAZDY
-    kolejny build startuje juz anulowany — i nikt by tego nie zauwazyl,
-    bo build po prostu konczylby sie od razu."""
-    widziane = blocking_build(BuildResult(ok=False), wait_for_cancel=True)
+    """A worker-lifetime token would start every later build as cancelled."""
+    observed = blocking_build(BuildResult(ok=False), wait_for_cancel=True)
     with qtbot.waitSignal(worker.finished, timeout=10000):
         worker.start(_plan(tmp_path))
-        assert blocking_build.wystartowal.wait(timeout=5)
+        assert blocking_build.started.wait(timeout=5)
         worker.cancel()
 
-    blocking_build.wystartowal.clear()
-    blocking_build.zwolnij.set()
-    widziane = blocking_build(BuildResult(ok=True))
+    blocking_build.started.clear()
+    blocking_build.release.set()
+    observed = blocking_build(BuildResult(ok=True))
     with qtbot.waitSignal(worker.finished, timeout=5000):
         worker.start(_plan(tmp_path))
-    assert widziane["anulowany"] is False
+    assert observed["cancelled"] is False
 
 
 def test_a_second_build_is_refused_while_one_runs(worker, qtbot, blocking_build, tmp_path):
-    """Spec 3: jednoczesnie moze trwac tylko jeden build — chroni to wspolny
-    cache srodowisk. Drugi start podmienilby watek w locie i pierwszy build
-    zostalby bez wlasciciela."""
-    widziane = blocking_build(BuildResult(ok=True))
+    """Spec 3 permits only one active build to protect the shared env cache.
+
+    A second start would replace the live thread and orphan the first build.
+    """
+    observed = blocking_build(BuildResult(ok=True))
     worker.start(_plan(tmp_path))
-    assert blocking_build.wystartowal.wait(timeout=5)
+    assert blocking_build.started.wait(timeout=5)
 
     worker.start(_plan(tmp_path))
 
     with qtbot.waitSignal(worker.finished, timeout=5000):
-        blocking_build.zwolnij.set()
-    assert widziane["wywolania"] == 1
+        blocking_build.release.set()
+    assert observed["calls"] == 1
 
 
 def test_shutdown_reports_failure_when_the_build_ignores_cancel(
     qtbot, worker, blocking_build, tmp_path
 ):
-    """`closeEvent` opiera na tej odpowiedzi decyzje o twardym zakonczeniu
-    programu, wiec porazka musi byc widoczna, a watek — nieporzucony."""
+    """`closeEvent` uses this answer to decide whether to terminate forcefully.
+
+    Failure must remain visible and the thread must remain owned.
+    """
     blocking_build()
     worker.start(_plan(tmp_path))
-    assert blocking_build.wystartowal.wait(timeout=5)
+    assert blocking_build.started.wait(timeout=5)
 
     try:
         assert worker.shutdown(timeout_ms=300) is False
         assert worker.is_running() is True
     finally:
-        blocking_build.zwolnij.set()
+        blocking_build.release.set()
         qtbot.waitUntil(lambda: not worker.is_running(), timeout=15000)

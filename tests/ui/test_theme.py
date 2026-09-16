@@ -1,9 +1,8 @@
-"""Motyw: jedna paleta tokenow, z niej arkusz QSS.
+"""Theme: one token palette used to generate the QSS stylesheet.
 
-Wersja z planu miala tu test `test_stylesheet_contains_no_unresolved_tokens`
-konczacy sie `or True`, czyli przechodzacy zawsze — ta sama klasa, ktora
-recenzje rundy 2 i 3 wylapaly jako M9/M16. Zamiast niego sa dwa testy, ktore
-naprawde moga zgasnac.
+The planned version had a `test_stylesheet_contains_no_unresolved_tokens` test
+ending in `or True`, so it always passed—the same class of issue found as
+M9/M16 in review rounds 2 and 3. Two tests that can actually fail replace it.
 """
 
 import re
@@ -31,11 +30,13 @@ def test_required_tokens_exist():
 
 
 def test_no_token_placeholder_survives_formatting():
-    """Podwojony nawias (`{{bg}}`) zostawia w arkuszu goly `{bg}`, ktorego Qt
-    nie rozumie i po cichu ignoruje cala regule."""
+    """A doubled brace (`{{bg}}`) leaves a raw `{bg}` in the stylesheet.
+
+    Qt does not understand it and silently ignores the entire rule.
+    """
     for dark in (True, False):
         leftovers = re.findall(r"\{[a-z_]+\}", build_stylesheet(dark))
-        assert leftovers == [], f"nierozwiniete tokeny: {leftovers}"
+        assert leftovers == [], f"unexpanded tokens: {leftovers}"
 
 
 def test_the_sheet_uses_the_palette_it_was_asked_for():

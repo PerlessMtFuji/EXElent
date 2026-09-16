@@ -1,7 +1,7 @@
-"""Watek liczacy rozmiar pobierania dla ekranu 2.
+"""Worker that calculates download size for screen 2.
 
-Ekran nie moze sie zaciac na zapytaniu sieciowym, a jego porazka nie moze
-zatrzymac budowania — to tylko liczba dla uzytkownika.
+The screen must not freeze on a network request, and its failure must not
+block the build — it is only a number for the user.
 """
 
 from pathlib import Path
@@ -33,10 +33,10 @@ def test_no_project_dependencies_still_checks_the_build_tool(qtbot, worker, monk
 
 
 def test_missing_uv_degrades_quietly(qtbot, worker, monkeypatch):
-    """Preflight NIE pobiera uv — to praca fazy budowania, z wlasnym paskiem."""
+    """Preflight does NOT download uv — that is the build phase's job, with its own progress bar."""
     import exelent.ui.preflight as preflight_module
 
-    monkeypatch.setattr(preflight_module, "uv_path", lambda: Path("nie-ma-mnie.exe"))
+    monkeypatch.setattr(preflight_module, "uv_path", lambda: Path("missing.exe"))
     with qtbot.waitSignal(worker.finished, timeout=5000) as blocker:
         worker.start(["scipy"])
     plan = blocker.args[0]
@@ -61,8 +61,8 @@ def test_result_reaches_the_signal(qtbot, worker, monkeypatch):
 
 
 def test_waiting_for_the_plan_has_a_deadline(qtbot, worker, monkeypatch):
-    """Spec 9.2: klikniecie "Stworz EXE" ma chwile POCZEKAC na wynik, a nie
-    zawiesic okno na zapytaniu sieciowym."""
+    """Spec 9.2: clicking "Create EXE" should briefly WAIT for the result, not
+    freeze the window on a network request."""
     import threading
     import time
 
@@ -80,8 +80,8 @@ def test_waiting_for_the_plan_has_a_deadline(qtbot, worker, monkeypatch):
     elapsed = time.monotonic() - started
     release.set()
 
-    assert elapsed < 3.0, "oczekiwanie przekroczylo swoj limit"
-    # B12: plan w trakcie liczenia ma status "pending", nie "empty".
+    assert elapsed < 3.0, "wait exceeded its bound"
+    # B12: a plan being calculated has status "pending", not "empty".
     assert plan.would_download == 0
 
 
@@ -123,7 +123,7 @@ def test_new_request_waits_for_an_old_thread_that_did_not_stop(qtbot, worker, mo
     worker.start(["old"])
     qtbot.waitUntil(lambda: calls == [("old",)], timeout=5000)
 
-    # Skrócony timeout wymusza kolejkę zamiast porzucenia referencji do QThread.
+    # Shortened timeout forces queuing instead of dropping the QThread reference.
     original_stop = worker.stop
     monkeypatch.setattr(worker, "stop", lambda: original_stop(timeout_ms=20))
     worker.start(["new"])
@@ -137,7 +137,7 @@ def test_new_request_waits_for_an_old_thread_that_did_not_stop(qtbot, worker, mo
 
 
 def test_stop_cancels_a_resolve_that_watches_the_token(qtbot, worker, monkeypatch):
-    """Wolne liczenie ma sie przerwac, a nie dosiedziec do konca limitu."""
+    """Slow computation should be interrupted, not left to run until the deadline."""
     import threading
     import time
 
@@ -161,12 +161,12 @@ def test_stop_cancels_a_resolve_that_watches_the_token(qtbot, worker, monkeypatc
 
     assert stopped is True
     assert worker.is_running() is False
-    assert elapsed < 3.0, "anulowanie nie doszlo do liczenia"
+    assert elapsed < 3.0, "cancellation did not reach calculation"
 
 
 def test_stop_does_not_abandon_a_thread_that_ignores_the_token(qtbot, worker, monkeypatch):
-    """Porzucony watek to `QThread: Destroyed while thread is still running`,
-    czyli abort() przy wychodzeniu i proces, ktory zostaje w systemie."""
+    """An abandoned thread causes `QThread: Destroyed while thread is still running`,
+    i.e. abort() on exit and a process left behind in the system."""
     import threading
 
     release = threading.Event()
@@ -187,7 +187,7 @@ def test_stop_does_not_abandon_a_thread_that_ignores_the_token(qtbot, worker, mo
 
 
 def test_stop_releases_whoever_waits_for_the_plan(qtbot, worker, monkeypatch):
-    """`plan(wait_ms)` nie moze dosiedziec do konca limitu po anulowaniu."""
+    """`plan(wait_ms)` must not sit until the deadline after cancellation."""
     import threading
     import time
 
@@ -202,6 +202,6 @@ def test_stop_releases_whoever_waits_for_the_plan(qtbot, worker, monkeypatch):
 
     release.set()
     qtbot.waitUntil(lambda: not worker.is_running(), timeout=15000)
-    # B12: po stop() plan ma status "pending" (nie zdążył się policzyć).
+    # B12: after stop() the plan has status "pending" (it didn't finish computing).
     assert plan.would_download == 0
     assert elapsed < 2.0

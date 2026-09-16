@@ -1,5 +1,5 @@
-"""TXT → PY. Plik tekstowy z okna czatu jest z definicji zanieczyszczony,
-więc ta ścieżka jest bardziej podejrzliwa niż reszta analizy."""
+"""TXT -> PY. Text copied from a chat window is contaminated by definition,
+so this path is more suspicious than the rest of the analysis."""
 
 from __future__ import annotations
 
@@ -33,29 +33,28 @@ _REPLACEMENTS = {
 _FENCE = re.compile(
     r"```[ \t]*(?:python|py|python3)?[ \t]*\n(.*?)(?:\n)?```", re.DOTALL | re.IGNORECASE
 )
-# Sama ETYKIETA ogrodzenia, bez backtickow. Czesc okien czatu kopiuje ja
-# razem z kodem, a samych backtickow juz nie — zostaje gola linia "python"
-# na gorze. Parser ja przyjmuje (to zwykle wyrazenie-nazwa), wiec plik
-# wyglada na dobry az do chwili, w ktorej kompilator odrzuca to, co ta linia
-# zepchnela w dol — najczesciej `from __future__ import`, ktory musi stac
-# jako pierwszy. Wymagany znak nowej linii na koncu: bez niego w pliku nie
-# ma nic poza sama etykieta.
+# A bare fence LABEL without backticks. Some chat windows copy it with the
+# code but omit the backticks, leaving a bare "python" line at the top. The
+# parser accepts it (usually as a name expression), so the file looks valid
+# until the compiler rejects what that line pushed down — most often a
+# `from __future__ import`, which must come first. A trailing newline is
+# required: without it the file contains nothing beyond the label itself.
 _FENCE_LABEL = re.compile(r"^[ \t]*(?:python3?|py)[ \t]*\n", re.IGNORECASE)
-# Numer linii: opcjonalne wciecie, cyfry, opcjonalny separator, a potem
-# odstep i kod. Grupa 1 to WLASNIE ten pelny odstep — z jego najmniejszej
-# szerokosci w calym pliku wyliczamy separator, zeby nie zjesc wciecia kodu
-# . Bez chciwego `[ \t]*` przed separatorem, inaczej odstep uciekalby do
-# niego i grupa mierzylaby zawsze 1.
+# Line number: optional indentation, digits, an optional separator, then
+# whitespace and code. Group 1 is EXACTLY that full whitespace — use its
+# smallest width across the file as the separator so code indentation is not
+# consumed. There is no greedy `[ \t]*` before the separator; otherwise the
+# whitespace would escape into it and the group would always measure 1.
 _LINE_NUMBER = re.compile(r"^[ \t]*\d+[:|.]?([ \t]+)(?=\S)")
 _PROMPT = re.compile(r"^(?:>>>|\.\.\.) ?")
 
-# Marker zwracany, gdy po zdjeciu otoczki nie zostaje zaden kod. Osobny od
-# bledu skladni: to nie "popraw linie X", tylko "wklej program".
+# Marker returned when removing the wrapper leaves no code. Separate from a
+# syntax error: the instruction is "paste a program", not "fix line X".
 NO_CODE = "__no_code__"
 
 
 def decode_bytes(raw: bytes) -> tuple[str, str]:
-    """Zwraca (tekst, nazwa_kodowania). BOM ma pierwszeństwo nad zgadywaniem."""
+    """Return (text, encoding_name). A BOM takes precedence over guessing."""
     if raw.startswith(b"\xef\xbb\xbf"):
         return raw.decode("utf-8-sig"), "utf-8-sig"
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
@@ -69,8 +68,7 @@ def decode_bytes(raw: bytes) -> tuple[str, str]:
 
 
 def _line_starts(text: str) -> list[int]:
-    """Offsety (w znakach) poczatku kazdej linii — do przeliczenia pozycji
-    dopasowania regexa na numer linii przy budowaniu mapy linii."""
+    """Character offsets for line starts, used to map regex matches to lines."""
     starts = [0]
     for i, ch in enumerate(text):
         if ch == "\n":
@@ -81,14 +79,14 @@ def _line_starts(text: str) -> list[int]:
 def _strip_fences(
     text: str, origins: list[int]
 ) -> tuple[str, list[int], bool, list[CodeBlockSpan]]:
-    """Wycina bloki kodu z ogrodzen i laczy je. Poza tekstem prowadzi `origins`:
-    dla kazdej linii wyniku numer jej linii w oryginale. To najwazniejszy krok
-    dla mapy linii — bloki stoja w rozproszeniu miedzy proza czatu, wiec ich
-    numeracja skacze i bez mapy blad wskazywalby nieistniejaca linie.
+    """Extract fenced code blocks and join them. Alongside the text, maintain
+    `origins`: for every output line, its line number in the original. This is
+    the key line-map step — blocks are scattered between chat prose, so their
+    numbering jumps and an error would otherwise point to a nonexistent line.
 
-    Zwraca rowniez granice kazdego bloku (B02) — pary (start, end) w numeracji
-    oryginalnego TXT. Gdy blokow jest wiecej niz jeden, warstwa prezentacji
-    pokazuje ich granice i wyjasnia, ze zostaly polaczone w podanej kolejnosci.
+    Also return the bounds of each block (B02) as (start, end) pairs in the
+    original TXT numbering. When there is more than one block, the presentation
+    layer shows their bounds and explains that they were joined in that order.
     """
     matches = list(_FENCE.finditer(text))
     if not matches:
@@ -116,12 +114,12 @@ def _strip_fences(
 
 
 def _strip_fence_label(text: str, origins: list[int]) -> tuple[str, list[int], bool]:
-    """Zdejmuje osamotniona etykiete ogrodzenia z pierwszej linii.
+    """Remove a lone fence label from the first line.
 
-    Tylko gdy stoi SAMA na linii — `python = 3` to prawdziwy kod i zostaje.
-    Tylko gdy cos po niej zostaje: plik zlozony z samego slowa "python" nie
-    jest kodem, ktoremu ta funkcja ma pomoc, a pusty wynik zbudowalby EXE,
-    ktory nic nie robi.
+    Only when it stands ALONE on the line — `python = 3` is real code and stays.
+    Only when content remains after it: a file containing only the word
+    "python" is not code this function should help, and an empty result would
+    build an EXE that does nothing.
     """
     lead = len(text) - len(text.lstrip("\n"))
     body = text[lead:]
@@ -131,7 +129,7 @@ def _strip_fence_label(text: str, origins: list[int]) -> tuple[str, list[int], b
     rest = body[match.end() :]
     if not rest.strip():
         return text, origins, False
-    # Zdjeto `lead` pustych linii z gory oraz 1 linie etykiety.
+    # Removed `lead` blank lines from the top plus one label line.
     return rest, origins[lead + 1 :], True
 
 
@@ -145,10 +143,10 @@ def _strip_line_numbers(text: str) -> tuple[str, bool]:
     if len(hits) / len(meaningful) < 0.7:
         return text, False
 
-    # Separator = NAJMNIEJSZY odstep miedzy numerem a kodem w calym pliku.
-    # `1 def f():` (odstep 1) i `2     return 1` (odstep 5) daja separator 1,
-    # wiec z linii 2 zdejmujemy jeden znak, a cztery spacje wciecia zostaja.
-    # Wczesniej `[ \t]{1,4}` zjadalo wciecie i `return` ladowalo w kolumnie 0.
+    # Separator = the SMALLEST gap between the number and code in the file.
+    # `1 def f():` (gap 1) and `2     return 1` (gap 5) yield separator 1, so
+    # line 2 loses one character while its four indentation spaces remain.
+    # Previously `[ \t]{1,4}` consumed indentation and put `return` in column 0.
     sep = min(len(m.group(1)) for m in hits)
     prefix = re.compile(r"^([ \t]*)\d+[:|.]?[ \t]{" + str(sep) + "}")
     return "\n".join(prefix.sub(r"\1", ln) if _LINE_NUMBER.match(ln) else ln for ln in lines), True
@@ -166,13 +164,12 @@ def _strip_prompts(text: str) -> tuple[str, bool]:
 
 
 def _mixes_tabs_and_spaces(text: str) -> bool:
-    """Wykrywa mieszanie tabów i spacji we wcięciach różnych linii kodu.
+    """Detect tabs and spaces mixed across indentation of different code lines.
 
-    To nie jest zgadywanie głębokości wcięcia — sprawdzamy jedynie, jakie
-    znaki występują w już istniejącym wcięciu. CPython nie zawsze zgłasza
-    `TabError` dla takiego miksu (np. gdy taby i spacje trafiają do
-    odrębnych, niezagnieżdżonych bloków), więc to jedyny sposób, by
-    złapać ten przypadek przed dalszą konwersją.
+    This does not guess indentation depth — it only checks which characters
+    occur in existing indentation. CPython does not always report `TabError`
+    for such a mix (for example when tabs and spaces appear in separate,
+    unnested blocks), so this is the only way to catch it before conversion.
     """
     has_tab = False
     has_space = False
@@ -187,9 +184,10 @@ def _mixes_tabs_and_spaces(text: str) -> bool:
     return has_tab and has_space
 
 
-# Tokeny, ktorych TRESCI naprawa nie ma prawa ruszac: napisy i tekstowe czesci
-# f-stringow. FSTRING_MIDDLE istnieje od 3.12 — chronimy je, bo `{wyrazenie}`
-# wewnatrz f-stringa to zwykly kod (osobne tokeny) i tam podmiana jest w porzadku.
+# Tokens whose CONTENT repair must not touch: strings and text portions of
+# f-strings. FSTRING_MIDDLE exists since 3.12 — protect it because
+# `{expression}` inside an f-string is ordinary code (separate tokens), where
+# replacement is acceptable.
 _PROTECTED_TOKENS = frozenset(
     {tokenize.STRING}
     | ({tokenize.FSTRING_MIDDLE} if hasattr(tokenize, "FSTRING_MIDDLE") else set())
@@ -197,13 +195,12 @@ _PROTECTED_TOKENS = frozenset(
 
 
 def _protected_spans(text: str) -> list[tuple[int, int]]:
-    """(start, end) offsety znakow nalezacych do literalow napisowych.
+    """(start, end) offsets of characters belonging to string literals.
 
-    tokenizer zatrzymuje sie na PIERWSZYM uszkodzonym ograniczniku, wiec
-    dostajemy literaly stojace PRZED tym miejscem — dokladnie te, ktorych
-    naprawa nie moze dotknac. `label = 'A—B…'` to poprawny STRING; jego myslnik
-    i wielokropek to tresc, nie ogranicznik, wiec globalna podmiana nie ma tu
-    wstepu."""
+    The tokenizer stops at the FIRST broken delimiter, so this yields literals
+    BEFORE that location — exactly those repair must not touch.
+    `label = 'A—B…'` is a valid STRING; its dash and ellipsis are content, not
+    delimiters, so global replacement has no place here."""
     line_starts = [0]
     for i, ch in enumerate(text):
         if ch == "\n":
@@ -217,21 +214,22 @@ def _protected_spans(text: str) -> list[tuple[int, int]]:
                 end = line_starts[tok.end[0] - 1] + tok.end[1]
                 spans.append((start, end))
     except (tokenize.TokenError, SyntaxError, ValueError):
-        # Uszkodzony ogranicznik zatrzymuje tokenizer — zebrane do tej pory
-        # literaly nadal chronimy, reszte zostawiamy naprawie.
+        # A broken delimiter stops the tokenizer — keep protecting the literals
+        # collected so far and leave the rest to repair.
         pass
     return spans
 
 
-# Znaki-OGRANICZNIKI: typograficzne cudzyslowy uzywane zamiast prostych. Reszta
-# `_REPLACEMENTS` (myslniki, wielokropek, twarde spacje) to znaki TRESCI. Podzial
-# ma znaczenie: ogranicznik naprawiamy jako pierwszy, bo dopiero po zamknieciu
-# literalu jego tresc (np. myslnik w srodku) staje sie chroniona.
+# DELIMITER characters: typographic quotes used instead of straight ones. The
+# rest of `_REPLACEMENTS` (dashes, ellipsis, non-breaking spaces) are CONTENT
+# characters. The distinction matters: repair a delimiter first, because only
+# after closing the literal does its content (such as an internal dash) become
+# protected.
 _QUOTE_CHARS = frozenset("„“”«»‘’′")
 _CONTENT_CHARS = frozenset(_REPLACEMENTS) - _QUOTE_CHARS
 
-# Naprawa zbiega monotonicznie (kazdy przebieg usuwa co najmniej jeden psuty
-# znak), wiec to tylko bezpiecznik przed nieoczekiwana petla.
+# Repair converges monotonically (each pass removes at least one bad character),
+# so this is only a guard against an unexpected loop.
 _MAX_REPAIR_PASSES = 10
 
 
@@ -246,7 +244,7 @@ def _compiles(text: str) -> bool:
 def _replace_outside(
     text: str, spans: list[tuple[int, int]], chars: frozenset[str]
 ) -> tuple[str, bool]:
-    """Podmienia znaki z `chars` stojace POZA trescia rozpoznanych literalow."""
+    """Replace characters from `chars` OUTSIDE recognized literal content."""
     out: list[str] = []
     changed = False
     for i, ch in enumerate(text):
@@ -259,14 +257,14 @@ def _replace_outside(
 
 
 def _token_aware_repair(text: str) -> str:
-    """Podmienia znaki, ktore czat lubi psuc, ale WYLACZNIE poza trescia
-    rozpoznanych literalow. Zastepuje wczesniejsza globalna podmiane, ktora
-    zmieniala wartosc poprawnych literalow.
+    """Replace characters commonly damaged by chat, but ONLY outside recognized
+    literal content. This replaces an earlier global substitution that changed
+    the value of valid literals.
 
-    Ograniczniki naprawiamy przed trescia: `msg = ‘ok—now’` najpierw dostaje
-    proste cudzyslowy, a przy kolejnym tokenizowaniu myslnik jest juz w srodku
-    literalu i zostaje nietkniety. Gdy nie da sie juz nic bezpiecznie zmienic,
-    zwracamy stan biezacy — decyzje o bledzie podejmuje wywolujacy."""
+    Repair delimiters before content: `msg = ‘ok—now’` first receives straight
+    quotes, and on the next tokenization the dash is inside a literal and stays
+    untouched. When nothing else can be changed safely, return the current
+    state and let the caller decide whether it is an error."""
     current = text
     for _ in range(_MAX_REPAIR_PASSES):
         if _compiles(current):
@@ -282,11 +280,11 @@ def _token_aware_repair(text: str) -> str:
 
 
 def _expand_indent_tabs(text: str) -> str:
-    """Zamienia taby na spacje WYLACZNIE we wcieciu (tabstop 8), nie w tresci.
+    """Replace tabs with spaces ONLY in indentation (tab stop 8), not content.
 
-    `text.expandtabs()` rozwijalo tez taby WEWNATRZ napisow — literal `'a\\tb'`
-    zmienial znaczenie. Tu ruszamy tylko biale znaki na poczatku linii,
-    czyli rzeczywiste wciecie; reszta linii, lacznie z napisami, zostaje."""
+    `text.expandtabs()` also expanded tabs INSIDE strings, changing the meaning
+    of the literal `'a\\tb'`. Here only leading whitespace — actual indentation
+    — is changed; the rest of each line, including strings, remains intact."""
     out: list[str] = []
     for line in text.split("\n"):
         body = line.lstrip(" \t")
@@ -296,21 +294,21 @@ def _expand_indent_tabs(text: str) -> str:
 
 
 def _check_syntax(text: str) -> None:
-    """Rzuca `SyntaxError`, jesli `text` nie jest poprawnym Pythonem.
+    """Raise `SyntaxError` if `text` is not valid Python.
 
-    `compile(..., "exec")`, a NIE `ast.parse` — i to jest cala rzecz. `ast.parse`
-    uruchamia sam parser (`PyCF_ONLY_AST`) i zatrzymuje sie przed kompilatorem,
-    a czesc regul jezyka jest sprawdzana dopiero tam: `from __future__ import`
-    poza poczatkiem pliku, `return` poza funkcja, `yield`/`await` w zlym
-    miejscu, powtorzony argument. `ast.parse` przepuszcza je wszystkie.
+    Use `compile(..., "exec")`, NOT `ast.parse` — that is the whole point.
+    `ast.parse` runs only the parser (`PyCF_ONLY_AST`) and stops before the
+    compiler, where some language rules are checked: `from __future__ import`
+    away from the file start, `return` outside a function, `yield`/`await` in
+    the wrong place, or a duplicate argument. `ast.parse` accepts all of them.
 
-    Ta luka nie byla kosmetyczna. Wystarczylo, ze czat skopiowal etykiete
-    ogrodzenia bez samych backtickow — zostawala goła linia `python` na
-    gorze, czyli poprawne wyrazenie, ktore spycha `from __future__` z
-    pierwszej linii. Konwersja mowila "ok", PyInstaller kompilowal ten plik
-    dopiero przy skladaniu PYZ, lapal `SyntaxError`, WYRZUCAL modul z paczki
-    i konczyl z kodem 0 — a uzytkownik dostawal EXE, ktore wita go
-    "ImportError: No module named <jego program>".
+    This gap was not cosmetic. If chat copied a fence label without its
+    backticks, a bare `python` line remained at the top: a valid expression
+    that pushed `from __future__` off the first line. Conversion said "ok";
+    PyInstaller compiled the file only while assembling PYZ, caught
+    `SyntaxError`, DROPPED the module from the bundle, and exited with code 0 —
+    leaving the user an EXE that opened with
+    "ImportError: No module named <their program>".
     """
     compile(text, "<exelent>", "exec")
 
@@ -340,24 +338,23 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    # `origins[k]` = numer linii w oryginalnym TXT dla k-tej linii biezacego
-    # tekstu. Niesiony przez kroki, ktore przesuwaja numeracje (ogrodzenia,
-    # etykieta, puste linie na brzegach); pozostale kroki sa 1:1 co do liczby
-    # linii, wiec mapa pozostaje wazna az do konca.
+    # `origins[k]` = line number in the original TXT for line k of the current
+    # text. Carried through steps that shift numbering (fences, label, blank
+    # lines at the edges); the remaining steps preserve line count 1:1, so the
+    # map stays valid to the end.
     origins = list(range(1, text.count("\n") + 2))
 
-    # 1. Zdejmowanie OTOCZKI z okna czatu i numeracji. To zmiany strukturalne —
-    #    dotykaja rzeczy, ktore nie sa kodem — i nie ruszaja tresci programu.
+    # 1. Remove WRAPPERS from chat and line numbering. These structural changes
+    #    touch things that are not code and leave program content intact.
     #
-    #    NAJPIERW sprawdzamy cale wejscie kompilatorem: poprawny program NIE jest
-    #    poddawany zdejmowaniu otoczki (B02). Bez tej bramki fence stojacy
-    #    WEWNATRZ literalu napisowego — samodokumentujacy sie program z blokiem
-    #    ```python w docstringu — bylby wziety za otoczke, wyciety, a prawdziwy
-    #    program zastapiony trescia przykladu (ok=True). Normalizacja wciec i
-    #    finalna walidacja (nizej) obowiazuja dalej: to nie jest zdejmowanie
-    #    otoczki, tylko zachowujaca znaczenie normalizacja. Pusty/bialy wejscie
-    #    kompiluje sie jako pusty modul, wiec wyraznie wymagamy tresci — inaczej
-    #    ta sciezka wyprzedzilaby komunikat NO_CODE ponizej.
+    #    FIRST compile the entire input: a valid program is NOT stripped (B02).
+    #    Without this gate, a fence INSIDE a string literal — a self-documenting
+    #    program with a ```python block in a docstring — would be mistaken for
+    #    a wrapper and extracted, replacing the real program with example
+    #    content (ok=True). Indentation normalization and final validation below
+    #    still apply: they preserve meaning rather than strip wrappers. Empty or
+    #    whitespace-only input compiles as an empty module, so explicitly require
+    #    content or this path would preempt the NO_CODE message below.
     code_blocks: list[CodeBlockSpan] = []
     if not (text.strip() and _compiles(text)):
         text, origins, changed, code_blocks = _strip_fences(text, origins)
@@ -378,25 +375,25 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
     text = text.strip("\n")
     origins = origins[lead : len(origins) - trail] if trail else origins[lead:]
 
-    # 2. Pusto po zdjeciu otoczki to nie program — osobny komunikat od bledu
-    #    skladni ("wklej program", nie "popraw linie X").
+    # 2. Empty after wrapper removal is not a program — use a separate message
+    #    from syntax errors ("paste a program", not "fix line X").
     if not text.strip():
         return ConversionResult(ok=False, encoding=encoding, steps=tuple(steps), error_text=NO_CODE)
 
-    # 3. Normalizacja WCIEC: taby -> spacje tylko we wcieciu, gdy mieszaja sie
-    #    z spacjami. Nie dotyka tabow wewnatrz napisow.
+    # 3. Normalize INDENTATION: tabs -> spaces only in indentation when mixed
+    #    with spaces. Leave tabs inside strings untouched.
     if _mixes_tabs_and_spaces(text):
         text = _expand_indent_tabs(text)
         steps.append("tabs")
 
-    # Granice bloków raportujemy tylko gdy wycieto wiecej niz jeden (B02):
-    # jeden blok to trywialne wycięcie, nie wymaga przeglądu. Puste code_blocks
-    # (brak ogrodzeń) też nie.
+    # Report block bounds only when more than one was extracted (B02): one block
+    # is a trivial extraction that needs no review. Empty code_blocks (no fences)
+    # likewise need none.
     blocks = tuple(code_blocks) if len(code_blocks) > 1 else ()
 
-    # 4. Poprawny Python zostaje BEZ heurystycznych zmian tresci. Literal
-    #    `label = 'A—B…'` przechodzi nietkniety — wczesniej globalna podmiana
-    #    znakow zmieniala jego wartosc.
+    # 4. Valid Python remains WITHOUT heuristic content changes. The literal
+    #    `label = 'A—B…'` passes untouched — global replacement used to change
+    #    its value.
     try:
         _check_syntax(text)
         return ConversionResult(
@@ -408,8 +405,8 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
             code_blocks=blocks,
         )
     except TabError:
-        # CPython nie zawsze zglasza mieszanie tabow jako TabError przy kroku 3;
-        # gdy jednak zglosi, rozwin wciecia i sprobuj jeszcze raz.
+        # CPython does not always report mixed tabs as TabError in step 3; when
+        # it does, expand indentation and try again.
         fixed = _expand_indent_tabs(text)
         try:
             _check_syntax(fixed)
@@ -426,14 +423,14 @@ def convert_text_to_python(raw: bytes) -> ConversionResult:
             code_blocks=blocks,
         )
     except SyntaxError as exc:
-        # `as exc` znika po bloku (Python kasuje cel except), wiec przenosimy
-        # blad do zwyklej zmiennej, zeby uzyc go, gdy naprawa nie pomoze.
+        # `as exc` disappears after the block (Python clears the except target),
+        # so move the error to a regular variable for use if repair fails.
         first_error = exc
 
-    # 5. Kod sie nie kompiluje. TERAZ, jako NAPRAWA, probujemy podmiany znakow,
-    #    ktore czat lubi psuc (cudzyslowy typograficzne uzyte jako ogranicznik
-    #    napisu, twarda spacja, myslniki). Dla juz poprawnego kodu ten krok sie
-    #    nie wykonuje, wiec nie moze zepsuc jego literalow.
+    # 5. The code does not compile. NOW, as a REPAIR, replace characters that
+    #    chat commonly corrupts (typographic quotes used as string delimiters,
+    #    non-breaking spaces, dashes). This step never runs for already-valid
+    #    code, so it cannot damage its literals.
     repaired = _token_aware_repair(text)
     if repaired != text:
         try:

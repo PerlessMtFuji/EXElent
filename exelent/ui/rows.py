@@ -1,10 +1,10 @@
-"""Wiersz faktu: znacznik pewności, zdanie po ludzku, edytor obok.
+"""Fact row: confidence marker, plain-language sentence, and adjacent editor.
 
-Każdy wiersz ma edytor — nie ma faktu, którego użytkownik nie mógłby poprawić.
-Wersja z planu dopuszczała wiersz bez edytora i trzymała na tę okazję osobną
-etykietę z metodą `set_value`; ta etykieta nigdy nie trafiała do układu, gdy
-edytor istniał, więc `set_value` na wierszu z edytorem po cichu nie robiła nic.
-API, które milczy zamiast działać, jest gorsze od jego braku.
+Every row has an editor; users can correct every fact. The planned version
+allowed an editor-free row and kept a separate label with `set_value` for it.
+That label never entered the layout when an editor existed, so `set_value` on
+an editable row silently did nothing. An API that stays silent instead of
+working is worse than no API.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from exelent.i18n import t
 CERTAIN = "✓"
 UNCERTAIN = "?"
 
-# Sygnaly zmiany, ktore moze miec edytor. Kolejnosc ma znaczenie: `QComboBox`
-# ma `currentIndexChanged`, `QLineEdit` ma `textChanged`. Kolej prioretyzuje
-# `currentIndexChanged` bo jest bardziej niezawodny.
+# Change signals an editor may expose. Order matters: `QComboBox`
+# has `currentIndexChanged`, while `QLineEdit` has `textChanged`. The order
+# prioritizes `currentIndexChanged` because it is more reliable.
 _CHANGE_SIGNALS = ("currentIndexChanged", "textChanged")
 
 
@@ -57,31 +57,32 @@ class FactRow(QWidget):
                 break
 
     def retranslate(self, caption: str) -> None:
-        """Przepisuje napisy wiersza po zmianie języka.
+        """Rewrite row text after a language change.
 
-        Link powrotu do rekomendacji też jest tekstem — zostawiony po polsku
-        w angielskim oknie byłby dokładnie tą niespodzianką, którą przełącznik
-        języka ma usuwać.
+        The restore-recommendation link is text too; leaving it in Polish in an
+        English window would be exactly the surprise the language switch is
+        supposed to remove.
         """
         self._caption.setText(caption)
         self._restore.setText(t("review_restore"))
 
     def set_certain(self, certain: bool) -> None:
-        """Znacznik pewności. `?` nie jest ozdobą: analiza, która nie wie,
-        mówi to wprost, a zdanie z tym samym rozpoznaniem stoi w ostrzeżeniach
-        ekranu — użytkownik dostaje sygnał i jego wyjaśnienie.
+        """Confidence marker. `?` is not decoration: uncertain analysis says so
+        explicitly, while a matching sentence appears in screen warnings — the
+        user gets both the signal and its explanation.
 
-        Pewność jest NIEZALEŻNA od rekomendacji: mówi, czy analiza wiedziała,
-        a nie czy użytkownik coś zmienił. Jeden symbol na dwa znaczenia był
-        wariantem odrzuconym w specyfikacji.
+        Confidence is INDEPENDENT of recommendation: it says whether analysis
+        knew, not whether the user changed something. One symbol for two
+        meanings was rejected by the specification.
         """
         self._marker.setText(CERTAIN if certain else UNCERTAIN)
 
     def set_recommended(self, value: str) -> None:
-        """Zapamiętuje, co zaproponowała analiza. Ustalane RAZ, przy wczytaniu.
+        """Remember what analysis proposed. Set ONCE during loading.
 
-        Rekomendacja przeliczana po każdej zmianie użytkownika goniłaby jego
-        wybór i nigdy nie zapaliłaby linku — czyli nie byłaby rekomendacją.
+        A recommendation recalculated after every user change would chase the
+        selection and never reveal the restore link, so it would not be a
+        recommendation.
         """
         if not self._tracks_changes:
             raise TypeError(
@@ -94,8 +95,8 @@ class FactRow(QWidget):
         self._sync_restore()
 
     def _sync_restore(self, *_args) -> None:
-        # `*_args` bo Qt poda numer indeksu albo nowy tekst, zaleznie od tego,
-        # ktory sygnal edytora sie podpial.
+        # `*_args` because Qt passes an index or new text depending on which
+        # editor signal was connected.
         differs = self._recommended is not None and self.value_text() != self._recommended
         self._restore.setVisible(differs)
 
@@ -103,12 +104,12 @@ class FactRow(QWidget):
         return self._recommended
 
     def restore_visible(self) -> bool:
-        """Czy link jest POKAZANY jako element wiersza.
+        """Whether the link is SHOWN as a row element.
 
-        Świadomie nie `isVisible()`: ono mówi o widoczności NA EKRANIE i oddaje
-        False dla wszystkiego, dopóki okno nie zostało pokazane — czyli w
-        każdym teście. Ten sam błąd zjadł już `_toggle_advanced` i `_toggle_log`
-        (patrz ich komentarze).
+        Deliberately not `isVisible()`: that reports ON-SCREEN visibility and
+        returns False for everything until the window is shown, including every
+        test. The same bug already affected `_toggle_advanced` and `_toggle_log`
+        (see their comments).
         """
         return not self._restore.isHidden()
 
@@ -122,8 +123,8 @@ class FactRow(QWidget):
         return self._caption.text()
 
     def value_text(self) -> str:
-        """To, co w tym wierszu widać jako wartość — bez względu na to, czy
-        edytorem jest lista, pole tekstowe czy przycisk."""
+        """The value visible in this row, whether its editor is a combo box,
+        text field, or button."""
         for getter in ("currentText", "text"):
             method = getattr(self._editor, getter, None)
             if callable(method):

@@ -1,11 +1,11 @@
-"""Linie, którymi uv opowiada o swojej pracy → typowane zdarzenia.
+"""Lines emitted by uv about its work → typed events.
 
-To jedyne miejsce w programie, które wie, jak uv mówi. Wszystkie wzorce
-pochodzą ze ZMIERZONEGO wyjścia uv 0.8.17 na potoku (nie na terminalu — na
-potoku uv nie rysuje pasków, tylko drukuje linie zdarzeń).
+The only place in the program that knows how uv talks. All patterns come
+from MEASURED output of uv 0.8.17 on a pipe (not a terminal — on a pipe
+uv does not draw progress bars, it prints event lines).
 
-Parser nigdy nie rzuca. Postęp jest ozdobą; wyjątek stąd zabiłby build,
-którego jedyną winą było nietypowe zdanie w logu.
+The parser never raises. Progress is cosmetic; an exception from here would
+kill a build whose only fault was an unusual line in the log.
 """
 
 from __future__ import annotations
@@ -24,18 +24,18 @@ UNCACHED_PACKAGE = "uncached_package"
 
 _UNITS = {"KiB": 1024, "MiB": 1024**2, "GiB": 1024**3}
 
-# Rozmiar jest w OSTATNIM nawiasie linii, a nie w pierwszym: nazwa
-# interpretera zawiera własny nawias — zmierzone:
+# Size is in the LAST parenthesised group, not the first: the interpreter
+# name contains its own parenthesised group — measured:
 #   "Downloading cpython-3.11.13-windows-x86_64-none (download) (24.3MiB)"
-# Wzorzec zakotwiczony na pierwszym nawiasie brał "(download)" za rozmiar.
+# A pattern anchored to the first parenthesis took "(download)" as the size.
 _START = re.compile(r"^Downloading (?P<name>.+?) \((?P<size>[\d.]+)(?P<unit>KiB|MiB|GiB)\)$")
 _DONE = re.compile(r"^ +Downloading (?P<name>.+?)$")
 _RESOLVED = re.compile(r"^Resolved (?P<count>\d+) packages? in ")
 _WOULD = re.compile(r"^Would download (?P<count>\d+) packages?$")
 _PREPARED = re.compile(r"^Prepared (?P<count>\d+) packages? in ")
 _INSTALLED = re.compile(r"^Installed (?P<count>\d+) packages? in ")
-# Pozycja wyniku to "nazwa==wersja". Instalacja interpretera drukuje w tym
-# samym kształcie "cpython-... (python3.11.exe)", co pakietem nie jest.
+# A result line is "name==version". Interpreter installation prints in the
+# same shape "cpython-... (python3.11.exe)", which is not a package.
 _PACKAGE = re.compile(r"^ \+ (?P<name>[^\s]+==[^\s]+)$")
 _UNCACHED_PACKAGE = re.compile(
     r"^(?:DEBUG|TRACE) Identified uncached distribution: (?P<name>[^\s]+==[^\s]+)$"
@@ -51,7 +51,7 @@ class UvEvent:
 
 
 def parse_line(line: str) -> UvEvent | None:
-    """Jedna linia uv → zdarzenie albo None, gdy jej nie znamy."""
+    """One uv line → event or None if we don't recognise it."""
     stripped = line.rstrip("\r\n")
 
     match = _START.match(stripped)
@@ -67,7 +67,7 @@ def parse_line(line: str) -> UvEvent | None:
     if match:
         return UvEvent(UNCACHED_PACKAGE, name=match["name"])
 
-    # PO `_PACKAGE`, bo obie zaczynają się od spacji i tylko kolejność je dzieli.
+    # AFTER `_PACKAGE`, because both start with a space and only order separates them.
     match = _DONE.match(stripped)
     if match:
         return UvEvent(DOWNLOAD_DONE, name=match["name"])

@@ -1,7 +1,8 @@
-"""Mapa nazwa importu → nazwa paczki na PyPI.
+"""Map of import name → PyPI package name.
 
-Nazwa importu rzadko równa się nazwie paczki, a nietechniczny użytkownik
-nie ma jak tego odgadnąć. Lista pokrywa realny ogon tego, co generuje AI.
+The import name rarely matches the package name, and a non-technical user
+has no way to guess the mapping. This list covers the real long tail of
+what AI-generated code typically uses.
 """
 
 ALIASES: dict[str, str] = {

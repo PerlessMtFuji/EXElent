@@ -11,7 +11,7 @@ def test_tree_is_cached_not_reparsed():
     parsed = ParsedSources(sources)
     t1 = parsed.tree(Path("a.py"))
     t2 = parsed.tree(Path("a.py"))
-    assert t1 is t2  # ten sam obiekt, nie nowe parsowanie
+    assert t1 is t2  # same object rather than another parse
     assert isinstance(t1, ast.Module)
 
 
@@ -19,7 +19,7 @@ def test_syntax_error_gives_none_and_is_cached():
     sources = {Path("bad.py"): "def f(:\n"}
     parsed = ParsedSources(sources)
     assert parsed.tree(Path("bad.py")) is None
-    # drugie wywolanie nie parsuje ponownie
+    # The second call does not parse again.
     assert parsed.tree(Path("bad.py")) is None
 
 

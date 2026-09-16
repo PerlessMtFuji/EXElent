@@ -1,7 +1,7 @@
-"""Motyw. Jedna paleta tokenów, z niej generowany arkusz QSS.
+"""Theme. A single token palette generates the QSS stylesheet.
 
-Kolor akcentu i promienie zaokrągleń zdefiniowane raz, użyte wszędzie — to jest
-różnica między wyglądem przemyślanym a domyślnym Qt.
+Accent color and corner radii are defined once and used everywhere — the
+difference between an intentional appearance and default Qt.
 """
 
 from __future__ import annotations
@@ -39,9 +39,9 @@ QWidget {{
     font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 14px;
 }}
-/* Reguła `QWidget` wyżej daje etykietom NIEPRZEZROCZYSTE tło okna, więc każdy
-   napis na karcie albo w strefie zrzutu wycinał w niej ciemny prostokąt.
-   Widać to wyłącznie w renderingu — arkusz jako napis jest poprawny. */
+/* The `QWidget` rule above gives labels an OPAQUE window background, so every
+   label on a card or drop zone cut out a dark rectangle. This is visible only
+   when rendered; the stylesheet text itself is valid. */
 QLabel {{ background: transparent; }}
 QLabel#Title {{ font-size: 26px; font-weight: 600; }}
 QLabel#Muted {{ color: {text_muted}; }}
@@ -71,11 +71,11 @@ QPushButton#Primary {{
     padding: 12px 28px;
 }}
 QPushButton#Primary:hover {{ background: {accent_hover}; }}
-/* Bez tej reguły `setEnabled(False)` nie zmienia NICZEGO w wyglądzie: arkusz
-   ustawia tło i kolor tekstu wprost, więc Qt nie ma już czego wygasić.
-   Zablokowany „Stwórz EXE" wyglądał dokładnie jak działający — użytkownik
-   klikał w martwy przycisk zamiast przeczytać, co jest nie tak. Reguła dotyczy
-   tylko `#Primary`, bo to jedyny przycisk, który program dziś blokuje. */
+/* Without this rule `setEnabled(False)` changes NOTHING visually: the sheet
+   sets background and text colors directly, leaving Qt nothing to dim. A
+   disabled "Create EXE" looked active, so users clicked a dead button instead
+   of reading the problem. This targets only `#Primary`, currently the only
+   button the application disables. */
 QPushButton#Primary:disabled {{ background: {surface_alt}; color: {text_muted}; }}
 QPushButton#Link {{
     background: transparent;
@@ -114,10 +114,10 @@ def build_stylesheet(dark: bool) -> str:
 
 
 def is_system_dark() -> bool:
-    """Czy Windows jest ustawiony na motyw ciemny.
+    """Whether Windows is configured to use a dark theme.
 
-    Gdy rejestru nie da się przeczytać, wybieramy ciemny: to ustawienie
-    domyślne w nowszych instalacjach, więc pomyłka jest mniej widoczna.
+    If the registry cannot be read, choose dark: it is the default on newer
+    installations, so a wrong guess is less conspicuous.
     """
     try:
         import winreg

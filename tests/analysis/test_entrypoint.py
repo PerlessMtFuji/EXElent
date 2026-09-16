@@ -20,7 +20,7 @@ def test_single_file_wins_without_heuristics(tmp_path):
 
 
 def test_import_graph_root_beats_name(tmp_path):
-    # aaa.py importuje main.py, więc to aaa.py jest korzeniem mimo nazwy
+    # aaa.py imports main.py, so aaa.py is the root despite its name.
     sources = _srcs(
         tmp_path,
         {
@@ -190,7 +190,7 @@ def test_local_module_names_includes_packages(tmp_path):
 
 
 def test_import_roots_detects_src_layout(tmp_path):
-    """src/ bez __init__.py to kontener, nie pakiet — jego dzieci to korzenie."""
+    """src/ without __init__.py is a container, not a package; its children are roots."""
     (tmp_path / "src" / "demo").mkdir(parents=True)
     (tmp_path / "src" / "demo" / "__init__.py").write_text("", encoding="utf-8")
     sources = _srcs(tmp_path, {"src/demo/__init__.py": "", "src/demo/main.py": ""})
@@ -200,7 +200,7 @@ def test_import_roots_detects_src_layout(tmp_path):
 
 
 def test_import_roots_ignores_src_package(tmp_path):
-    """src/ Z __init__.py to normalny pakiet — NIE kontener."""
+    """src/ with __init__.py is a normal package rather than a container."""
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "__init__.py").write_text("", encoding="utf-8")
     sources = _srcs(tmp_path, {"src/__init__.py": "", "src/main.py": ""})
@@ -209,7 +209,7 @@ def test_import_roots_ignores_src_package(tmp_path):
 
 
 def test_local_module_names_src_layout(tmp_path):
-    """W układzie src/ pakiet `demo` musi być w modułach lokalnych."""
+    """In a src layout, the `demo` package must count as a local module."""
     (tmp_path / "src" / "demo").mkdir(parents=True)
     (tmp_path / "src" / "demo" / "__init__.py").write_text("", encoding="utf-8")
     sources = _srcs(
@@ -222,7 +222,7 @@ def test_local_module_names_src_layout(tmp_path):
 
 
 def test_entry_ranking_src_layout_graph(tmp_path):
-    """Graf importów w układzie src/ musi rozpoznawać lokalne pakiety."""
+    """The import graph must recognize local packages in a src layout."""
     (tmp_path / "src" / "demo").mkdir(parents=True)
     (tmp_path / "src" / "demo" / "__init__.py").write_text("", encoding="utf-8")
     sources = _srcs(
@@ -234,5 +234,5 @@ def test_entry_ranking_src_layout_graph(tmp_path):
         },
     )
     result = rank_entry_candidates(tmp_path, sources)
-    # main.py importuje helper — jest korzeniem grafu.
+    # main.py imports helper, so it is the graph root.
     assert result[0].path.name == "main.py"

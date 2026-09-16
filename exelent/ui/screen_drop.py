@@ -1,4 +1,4 @@
-"""Ekran 1 — pole na folder albo pojedynczy plik z kodem."""
+"""Screen 1: drop target for a folder or a single code file."""
 
 from __future__ import annotations
 
@@ -21,16 +21,15 @@ from exelent.ui import recent
 
 
 def _source_from(mime) -> Path | None:
-    """Ścieżka wskazana przez upuszczone dane albo None, gdy to nie ścieżka.
+    """Path represented by dropped data, or None when it is not a path.
 
-    Plik NIE jest zamieniany na katalog nadrzędny. Poprzednia wersja robiła
-    `path.parent` i przez to `test.txt` upuszczony z Pobranych wybierał całe
-    Pobrane — łącznie z kopiowaniem ich do katalogu roboczego.
+    A file is NOT replaced by its parent directory. The previous version used
+    `path.parent`, so dropping `test.txt` from Downloads selected the entire
+    Downloads folder and copied it into the workspace.
 
-    Wszystko, co nie jest ścieżką lokalną (link przeciągnięty z przeglądarki,
-    zaznaczony tekst), nadal odrzucamy jawnie: pusty `toLocalFile()` po
-    `Path(...)` daje katalog bieżący, więc cicha tolerancja kończyłaby się
-    analizą przypadkowego miejsca.
+    Explicitly reject anything that is not a local path (a browser link or
+    selected text). Empty `toLocalFile()` becomes the current directory after
+    `Path(...)`, so silent tolerance would analyze an arbitrary location.
     """
     for url in mime.urls():
         local = url.toLocalFile()
@@ -41,18 +40,17 @@ def _source_from(mime) -> Path | None:
 
 
 class SourceDialog(QFileDialog):
-    """Okno wyboru, ktore przyjmuje ZAROWNO plik, jak i katalog.
+    """Selection dialog accepting BOTH files and directories.
 
-    Qt nie ma takiego trybu. `getExistingDirectory` pozwala kliknac wylacznie
-    katalog, wiec uzytkownik proszony o wskazanie swojego `program.txt`
-    zaznaczal folder, w ktorym ten plik lezy — i EXElent bral caly folder,
-    z Pobranymi wlacznie. `getOpenFileName` ma odwrotna wade: nie da sie nim
-    wskazac projektu zlozonego z wielu plikow.
+    Qt has no such mode. `getExistingDirectory` accepts only a directory, so a
+    user asked to select `program.txt` selected its folder and EXElent took the
+    whole thing, including Downloads. `getOpenFileName` has the opposite flaw:
+    it cannot select a multi-file project.
 
-    Dlatego tryb katalogu (zeby katalog dalo sie zatwierdzic) z widocznymi
-    plikami, plus `accept()` ponizej, ktore przepuszcza plik. Okno musi byc
-    nienatywne: natywne okno Windows realizuje tryb katalogu po swojemu i w
-    ogole nie pokazuje plikow, wiec nie byloby czego klikac.
+    Use directory mode (so a directory can be confirmed) with visible files,
+    plus `accept()` below to admit a file. The dialog must be non-native: the
+    native Windows dialog implements directory mode differently and hides files
+    entirely, leaving nothing to click.
     """
 
     def __init__(self, parent: QWidget | None, caption: str) -> None:
@@ -64,20 +62,20 @@ class SourceDialog(QFileDialog):
     def accept(self) -> None:
         selected = self.selectedFiles()
         if selected and Path(selected[0]).is_file():
-            # QFileDialog.accept() w trybie katalogu odrzuciloby plik (albo
-            # potraktowalo go jak katalog do wejscia). QDialog.accept() konczy
-            # okno z pominieciem tej walidacji, a wybor zostaje w selectedFiles().
+            # QFileDialog.accept() in directory mode would reject the file (or
+            # treat it as a directory to enter). QDialog.accept() closes the
+            # dialog without that validation while preserving selectedFiles().
             QDialog.accept(self)
             return
         super().accept()
 
 
 def choose_source(parent: QWidget | None, caption: str) -> Path | None:
-    """Sciezka z okna wyboru albo None, gdy uzytkownik zrezygnowal.
+    """Path from the selection dialog, or None when the user cancels.
 
-    Osobna funkcja modulu, a nie metoda ekranu: to jedyne miejsce, ktore
-    naprawde otwiera okno, wiec testy ekranu podmieniaja wlasnie ja zamiast
-    uruchamiac modalny dialog.
+    A module function rather than a screen method: this is the only place that
+    actually opens the dialog, so screen tests replace it instead of launching
+    a modal window.
     """
     dialog = SourceDialog(parent, caption)
     if not dialog.exec():
@@ -133,10 +131,10 @@ class DropScreen(QWidget):
         self.refresh_recent()
 
     def retranslate(self) -> None:
-        """Przepisuje napisy po zmianie języka.
+        """Rewrite text after a language change.
 
-        Ekrany biorą teksty z `t()` w konstruktorze, więc bez tej metody
-        przełącznik języka działałby dopiero po restarcie programu.
+        Screens obtain text from `t()` in their constructors, so without this
+        method the language switch would take effect only after a restart.
         """
         self.headline.setText(t("drop_headline"))
         self.browse.setText(t("drop_browse"))
@@ -150,8 +148,8 @@ class DropScreen(QWidget):
                 item.widget().deleteLater()
         entries = recent.load_recent()
         self.recent_label.setVisible(bool(entries))
-        # Etykiety liczone dla CALEJ listy naraz: skrot jest jednoznaczny
-        # tylko w kontekscie pozostalych wpisow (patrz `recent.display_labels`).
+        # Compute labels for the WHOLE list at once: an abbreviation is unique
+        # only in the context of other entries (see `recent.display_labels`).
         for path, label in zip(entries, recent.display_labels(entries), strict=True):
             button = QPushButton(label, objectName="Link")
             button.setToolTip(str(path))
@@ -165,8 +163,8 @@ class DropScreen(QWidget):
             self._choose(chosen)
 
     def set_analyzing(self, analyzing: bool) -> None:
-        """B11: stan ładowania — pętla Qt obsługuje zdarzenia, a użytkownik
-        widzi, że analiza trwa, zamiast zamrożonego okna."""
+        """B11: loading state keeps Qt processing events and shows that analysis
+        is running instead of presenting a frozen window."""
         if analyzing:
             self.headline.setText(t("drop_analyzing"))
             self.browse.setEnabled(False)
@@ -185,8 +183,8 @@ class DropScreen(QWidget):
         self.zone.style().unpolish(self.zone)
         self.zone.style().polish(self.zone)
 
-    # Trzy metody nizej maja nazwy narzucone przez Qt (camelCase) — to
-    # nadpisania `QWidget`, nie nasza konwencja.
+    # Qt dictates the camelCase names of the three methods below; they override
+    # `QWidget` rather than establish a local convention.
     def dragEnterEvent(self, event) -> None:
         if _source_from(event.mimeData()) is None:
             event.ignore()

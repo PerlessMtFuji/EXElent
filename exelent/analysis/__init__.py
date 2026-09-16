@@ -1,4 +1,4 @@
-"""Analiza katalogu użytkownika: skanowanie, wykrywanie punktu wejścia, zależności."""
+"""User directory analysis: scanning, entry point detection, dependencies."""
 
 from exelent.analysis.apptype import collect_hidden_imports, package_submodule_collections
 from exelent.analysis.project import analyze_project

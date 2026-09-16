@@ -1,5 +1,5 @@
-"""Kontrakt backendu budującego. PyInstaller jest pierwszą implementacją;
-interfejs istnieje po to, żeby dołożyć Nuitkę bez ruszania reszty aplikacji."""
+"""Build backend contract. PyInstaller is the first implementation;
+the interface exists so that Nuitka can be added without touching the rest."""
 
 from __future__ import annotations
 

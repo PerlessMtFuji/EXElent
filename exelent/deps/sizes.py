@@ -1,13 +1,13 @@
-"""Ile to zajmie: w EXE i w pobieraniu. To dwie różne liczby.
+"""How much space it takes in the EXE and in downloads: two different numbers.
 
-Rozmiar POBIERANIA bierze się z rozwiązanych wersji, braków cache i z PyPI
-(zadania 16–17). Rozmiar EXE jest szacunkiem z widełkami, bo PyInstaller
-wyrzuca z paczki to, czego kod nie dotyka: ten sam `pandas` waży inaczej w
-skrypcie czytającym jeden CSV, a inaczej w programie używającym połowy API.
+DOWNLOAD size comes from resolved versions, cache misses, and PyPI (tasks
+16–17). EXE size is an interval estimate because PyInstaller discards code
+that is unused: the same `pandas` weighs differently in a script reading one
+CSV and in an application using half its API.
 
-Zgłoszenie 7 mówi dokładnie o tym, że liczby wzięte z sufitu wprowadzają w
-błąd. Dlatego każdy wpis niesie `measured` — datę pomiaru albo słowo
-„tymczasowe". Zadanie 15 zamienia wszystkie „tymczasowe" na daty.
+Issue 7 says precisely that invented numbers mislead. Every entry therefore
+carries `measured`: a measurement date or the word "temporary". Task 15
+replaces every "temporary" marker with a date.
 """
 
 from __future__ import annotations
@@ -30,37 +30,37 @@ from exelent.constants import TARGET_PYTHON
 from exelent.runtime.env import run_uv
 from exelent.runtime.uvlog import PACKAGE, UNCACHED_PACKAGE, WOULD_DOWNLOAD, parse_line
 
-# Znacznik ABI koła, którego naprawdę użyje build: CPython w wersji docelowej,
-# 64-bitowy Windows. Koło dla innej wersji albo innego systemu opisuje plik,
-# którego nigdy nie pobierzemy.
+# ABI tag of the wheel the build will actually use: target CPython on 64-bit
+# Windows. A wheel for another version or system describes a file that will
+# never be downloaded.
 _PLATFORM = "win_amd64"
 _UV_PLATFORM = "x86_64-pc-windows-msvc"
 _PYPI = "https://pypi.org/pypi/{name}/{version}/json"
 _MAX_PARALLEL = 8
 
-# Powyżej tylu megabajtów górnych widełek rozmiar przestaje być informacją,
-# a staje się ostrzeżeniem (razem z uwagą o dłuższym budowaniu).
+# Above this many megabytes at the upper bound, size stops being information
+# and becomes a warning (together with a note about longer build time).
 LARGE_WARNING_MB = 300
 
-# Ile waży EXE z pustego skryptu `print('x')` — sam interpreter, biblioteka
-# standardowa i loader PyInstallera. ZMIERZONE 2026-09-04: 10,5 MB.
-# Wchodzi do szacunku, bo zdanie mówi „gotowy program zajmie", a nie „paczki
-# dołożą": bez tej stałej szacunek zaniżał wynik o stałe 10 MB.
+# Size of an EXE from an empty `print('x')` script: interpreter, standard
+# library, and PyInstaller loader. MEASURED 2026-09-04: 10.5 MB. Included in
+# the estimate because the message says "the finished program will take", not
+# "packages will add"; without it every estimate was 10 MB too low.
 BASE_EXE_MB = 11
 
-# Powyżej tylu megabajtów górnego wkładu paczka jest „ciężka" — to zastępuje
-# dawny płaski `HEAVY_PACKAGES`.
+# A package is "heavy" above this many megabytes of upper-bound contribution;
+# this replaces the old flat `HEAVY_PACKAGES` set.
 HEAVY_THRESHOLD_MB = 15
 
 
 @dataclass(frozen=True)
 class Contribution:
-    """Wkład paczki do gotowego EXE, w megabajtach.
+    """Package contribution to the finished EXE, in megabytes.
 
-    `measured` to data pomiaru w formacie `YYYY-MM-DD` albo słowo
-    „tymczasowe". Test `test_every_entry_declares_where_its_number_came_from`
-    pilnuje, że pole nigdy nie jest puste — liczba bez źródła jest tym,
-    przeciwko czemu ten moduł powstał.
+    `measured` is a measurement date in `YYYY-MM-DD` format or the word
+    "temporary". `test_every_entry_declares_where_its_number_came_from`
+    ensures the field is never empty — source-free numbers are exactly what
+    this module was created to prevent.
     """
 
     low_mb: int
@@ -68,22 +68,22 @@ class Contribution:
     measured: str
 
 
-# Wpisy z datą są ZMIERZONE dwoma prawdziwymi buildami każdy (patrz
+# Dated entries are MEASURED with two real builds each (see
 # `tests/test_exe_contribution_measurement.py`):
-#   - dolny koniec: skrypt, który paczkę tylko importuje i dotyka jednej
-#     rzeczy — PyInstaller wyrzuca wtedy większą część drzewa,
-#   - górny koniec: skrypt, który paczki naprawdę używa, plus 25% zapasu.
-# Zapas nie jest wzięty z sufitu: na jedynym zmierzonym POŁĄCZENIU paczek
-# (matplotlib + pandas + scipy, 172,4 MB) suma samych pomiarów schodziła
-# ~20% poniżej wyniku, bo złożenie wciąga więcej niż każda paczka osobno.
+#   - lower end: a script that merely imports the package and touches one
+#     item — PyInstaller discards most of the tree,
+#   - upper end: a script that actually uses the package, plus 25% headroom.
+# The headroom is measured: for the only measured COMBINATION of packages
+# (matplotlib + pandas + scipy, 172.4 MB), summed individual measurements were
+# about 20% below the result because composition pulls in more than each alone.
 #
-# `tymczasowe` znaczy: NIE ZMIERZONE, liczba orientacyjna. Zostały takie
-# `torch`, `tensorflow` i `transformers` — ich pomiar to kilka gigabajtów
-# pobierania i świadomie go nie wykonano.
+# `temporary` means NOT MEASURED, an approximate number. `torch`, `tensorflow`,
+# and `transformers` remain in this state because measuring them requires
+# several gigabytes of downloads and was deliberately skipped.
 EXE_CONTRIBUTION: dict[str, Contribution] = {
-    "torch": Contribution(300, 900, "tymczasowe"),
-    "tensorflow": Contribution(250, 700, "tymczasowe"),
-    "transformers": Contribution(60, 200, "tymczasowe"),
+    "torch": Contribution(300, 900, "provisional"),
+    "tensorflow": Contribution(250, 700, "provisional"),
+    "transformers": Contribution(60, 200, "provisional"),
     "scipy": Contribution(18, 51, "2026-09-04"),
     "opencv-python": Contribution(53, 67, "2026-09-04"),
     "matplotlib": Contribution(27, 93, "2026-09-04"),
@@ -98,21 +98,21 @@ EXE_CONTRIBUTION: dict[str, Contribution] = {
 
 
 def _canonical(name: str) -> str:
-    """Kanoniczna forma nazwy dystrybucji (PEP 503): małe litery, `-_.` scalone."""
+    """Canonical distribution name (PEP 503): lowercase with `-_.` collapsed."""
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def _base_name(spec: str) -> str:
-    """Sama nazwa paczki z całej specyfikacji.
+    """Extract the package name from a complete specification.
 
-    `pandas==2.2.3` -> `pandas`, `uvicorn[standard]>=0.20` -> `uvicorn`. Bez
-    tego tabela wkładów, kluczowana nazwą, nie rozpoznawała przypiętej wersji
-    i szacunek dla `pandas==2.2.3` wynosił zero."""
+    `pandas==2.2.3` -> `pandas`, `uvicorn[standard]>=0.20` -> `uvicorn`.
+    Without this, the name-keyed contribution table did not recognize pinned
+    versions and estimated `pandas==2.2.3` as zero."""
     return re.split(r"[<>=!~;\[ @]", spec.strip(), maxsplit=1)[0].strip()
 
 
-# Tabela wkładów wg formy kanonicznej, żeby `PySide6>=6.7`, `opencv_python`
-# czy `pandas==2.2.3` trafiały w ten sam wpis co bare `PySide6`/`opencv-python`.
+# Contribution table keyed by canonical name, so `PySide6>=6.7`,
+# `opencv_python`, and `pandas==2.2.3` match bare `PySide6`/`opencv-python`.
 _CONTRIBUTION_BY_CANONICAL: dict[str, Contribution] = {
     _canonical(name): contribution for name, contribution in EXE_CONTRIBUTION.items()
 }
@@ -128,14 +128,14 @@ def is_heavy(package: str) -> bool:
 
 
 def estimate_exe_size(packages: Iterable[str]) -> tuple[int, int, tuple[str, ...]]:
-    """Widełki rozmiaru CAŁEGO EXE i najcięższe paczki, od największej.
+    """Size interval for the WHOLE EXE and heaviest packages, largest first.
 
-    Paczka spoza tabeli nie dokłada NIC — nie zgadujemy jej wkładu. Zgadywanie
-    jest dokładnie tym, co wywołało zgłoszenie 7.
+    A package absent from the table adds NOTHING — do not guess its
+    contribution. Guessing is exactly what caused issue 7.
 
-    Do sumy wkładów dochodzi `BASE_EXE_MB`, bo zdanie na ekranie mówi „gotowy
-    program zajmie", a gotowy program to także interpreter i biblioteka
-    standardowa.
+    Add `BASE_EXE_MB` to the contribution total because the screen says "the
+    finished program will take", and that includes the interpreter and standard
+    library.
     """
     known: list[tuple[str, Contribution]] = []
     for spec in packages:
@@ -152,7 +152,7 @@ def estimate_exe_size(packages: Iterable[str]) -> tuple[int, int, tuple[str, ...
 
 @functools.lru_cache(maxsize=8)
 def _target_tags(python_version: str = TARGET_PYTHON, platform: str = _PLATFORM) -> tuple[Tag, ...]:
-    """Tagi wheel w tej samej kolejności preferencji co docelowy CPython."""
+    """Wheel tags in the same preference order as the target CPython."""
     major, minor = (int(part) for part in python_version.split(".")[:2])
     version = (major, minor)
     exact = tuple(cpython_tags(python_version=version, platforms=[platform]))
@@ -167,12 +167,12 @@ def _target_tags(python_version: str = TARGET_PYTHON, platform: str = _PLATFORM)
 def wheel_size(
     payload: dict, *, python_version: str = TARGET_PYTHON, platform: str = _PLATFORM
 ) -> int:
-    """Rozmiar pliku, który uv naprawdę pobierze dla tej wersji.
+    """Size of the file uv will actually download for this version.
 
-    Kolejność prób: koło dla naszego ABI i systemu → koło uniwersalne
-    (`py3-none-any`) → archiwum źródłowe. Nierozpoznany kształt odpowiedzi
-    daje zero, a nie wyjątek: brak liczby jest do przeżycia, wyjątek w tle
-    ekranu 2 nie.
+    Attempt order: wheel for our ABI and system -> universal wheel
+    (`py3-none-any`) -> source archive. An unrecognized response shape yields
+    zero rather than an exception: a missing number is tolerable, a background
+    exception on screen 2 is not.
     """
     urls = payload.get("urls") or []
     rank = {tag: index for index, tag in enumerate(_target_tags(python_version, platform))}
@@ -203,18 +203,18 @@ def _fetch_release(spec: str, timeout: float) -> dict:
 
 
 def download_size(specs: Sequence[str], timeout: float = 5.0) -> int:
-    """Łączny rozmiar zgodnych archiwów dla przypiętych `nazwa==wersja`.
+    """Total size of compatible archives for pinned `name==version` specs.
 
-    Zapytania idą równolegle, bo osiem kolejnych rundtripów do PyPI zajęłoby
-    tyle, że ekran 2 zdążyłby się znudzić. KAŻDA porażka jest cicha i daje
-    zero — wtedy warstwa wyżej sięga po szacunek z tabeli.
+    Queries run concurrently because eight sequential PyPI round trips would
+    keep screen 2 waiting too long. EVERY failure is quiet and yields zero;
+    the layer above then uses the table estimate.
     """
 
     return sum(distribution_sizes(specs, timeout=timeout).values())
 
 
 def distribution_sizes(specs: Sequence[str], timeout: float = 5.0) -> dict[str, int]:
-    """Rozmiary zgodnych z targetem archiwów, bez gubienia tożsamości paczki."""
+    """Sizes of target-compatible archives without losing package identity."""
 
     def one(spec: str) -> tuple[str, int]:
         try:
@@ -231,36 +231,37 @@ def distribution_sizes(specs: Sequence[str], timeout: float = 5.0) -> dict[str, 
 @dataclass(frozen=True)
 class DownloadPlan:
     specs: tuple[str, ...] = ()
-    # Pełne drzewo `specs` opisuje środowisko; ta lista zawiera wyłącznie
-    # archiwa, których uv nie znalazł w cache i rzeczywiście je pobierze.
+    # The full `specs` tree describes the environment; this list contains only
+    # archives uv did not find in cache and will actually download.
     missing_specs: tuple[str, ...] = ()
     would_download: int = 0
-    # Transfer sieciowy brakujących archiwów. Nazwa zostaje dla zgodności z
-    # istniejącym BuildPlan/progresem, ale nie opisuje rozmiaru EXE.
+    # Network transfer for missing archives. The name remains for compatibility
+    # with existing BuildPlan/progress, but does not describe EXE size.
     total_bytes: int = 0
-    # Dolna granica zajętości pełnego, przechodniego środowiska: suma
-    # skompresowanych archiwów zgodnych wheel. Po rozpakowaniu środowisko może
-    # być większe, dlatego UI nie przedstawia tej wartości jako dokładnej.
+    # Lower bound for the full transitive environment: the sum of compressed,
+    # compatible wheel archives. The unpacked environment may be larger, so the
+    # UI does not present this value as exact.
     environment_min_bytes: int = 0
-    # Składniki spoza paczek projektu. `None` znaczy, że preflight nie mógł
-    # tego sprawdzić; False oznacza realny transfer w fazie budowania.
+    # Components outside project packages. `None` means preflight could not
+    # check; False means an actual transfer during the build phase.
     uv_cached: bool | None = None
     python_cached: bool | None = None
     includes_build_tools: bool = False
-    # Odcisk paczek i targetu, dla których policzono wynik. UI odrzuca wynik
-    # po ręcznej zmianie modułów lub wersji docelowej.
+    # Fingerprint of packages and target used for the result. The UI rejects it
+    # after manual changes to modules or the target version.
     request_key: str = ""
-    # B12: status wyniku — pozwala odróżnić kompletny wynik od offline/błędu.
-    # "complete": policzono, "empty": brak paczek (wciąż OK), "pending": trwa,
-    # "offline": brak uv/sieci, "error": błąd resolvera, "cancelled": przerwano.
+    # B12: result status distinguishes a complete result from offline/error.
+    # "complete": calculated, "empty": no packages (still OK), "pending":
+    # running, "offline": no uv/network, "error": resolver failure,
+    # "cancelled": interrupted.
     status: str = "empty"
 
 
 def _default_run_dry(uv: Path, python: str | Path, packages: Sequence[str], *, cancel=None) -> str:
-    # Pusty target zapobiega uwzględnieniu przypadkowych paczek środowiska,
-    # z którego uruchomiono EXElent. Wersja i platforma są jawne, więc uv
-    # rozwiązuje dokładnie koła dla finalnego Windows/CPython, także gdy sam
-    # EXElent działa na innej wersji Pythona.
+    # An empty target prevents accidental packages from EXElent's own
+    # environment from being included. Version and platform are explicit, so
+    # uv resolves wheels for the final Windows/CPython even when EXElent itself
+    # runs on another Python version.
     with tempfile.TemporaryDirectory(prefix="exelent-preflight-") as empty_target:
         result = run_uv(
             uv,
@@ -295,19 +296,19 @@ def resolve_download_plan(
     measure=None,
     cancel=None,
 ) -> DownloadPlan:
-    """Co naprawdę zostanie pobrane i ile to waży.
+    """What will actually be downloaded and how large it is.
 
-    `--dry-run` daje pełne drzewo z PRZYPIĘTYMI wersjami oraz liczbę paczek,
-    których brakuje w cache. Bez tej drugiej liczby okno pytałoby o zgodę na
-    pobranie stu megabajtów, które już leżą na dysku.
+    `--dry-run` gives the full tree with PINNED versions and the number of
+    packages missing from cache. Without the latter, the window would ask
+    permission to download a hundred megabytes already on disk.
 
-    Rozmiar liczymy tylko wtedy, gdy jest co pobierać. Każda porażka — brak
-    uv, brak sieci, nieznany kształt wyjścia — daje pusty plan, a warstwa
-    wyżej sięga po szacunek z tabeli.
+    Calculate size only when there is something to download. Every failure —
+    missing uv, no network, unknown output shape — yields an empty plan and the
+    layer above falls back to the table estimate.
     """
-    # Token dostaje wyłącznie domyślny runner: wstrzyknięty `run_dry` jest
-    # atrapą albo cudzą funkcją o własnym kształcie, a dokładanie jej
-    # argumentu z zewnątrz zmieniałoby kontrakt punktu wstrzyknięcia.
+    # Only the default runner receives the token: an injected `run_dry` is a
+    # stub or external function with its own shape, and adding an argument from
+    # outside would change the injection-point contract.
     runner = run_dry or functools.partial(_default_run_dry, cancel=cancel)
     measurer = measure or distribution_sizes
     try:
@@ -317,9 +318,9 @@ def resolve_download_plan(
     except ValueError:
         return DownloadPlan(status="error")
 
-    # Po anulowaniu uv wraca z niczym albo z połową odpowiedzi. Liczby dla
-    # użytkownika i tak już nikt nie zobaczy, a każde zapytanie do PyPI
-    # przedłuża życie wątku, na który czeka zamykane okno.
+    # After cancellation uv returns nothing or half a response. Nobody will see
+    # the user-facing numbers anyway, while every PyPI request extends the
+    # lifetime of the thread a closing window is waiting for.
     if cancel is not None and cancel.cancelled:
         return DownloadPlan(status="cancelled")
 
@@ -342,15 +343,15 @@ def resolve_download_plan(
         environment = sum(measured.values())
         transfer = sum(measured.get(spec, 0) for spec in missing) if would else 0
     else:
-        # Zachowanie punktu wstrzyknięcia dla prostych atrap z wcześniejszych
-        # testów. Produkcyjny measurer zwraca mapę i nie wykonuje dwóch rund.
+        # Preserve the injection point for simple stubs from earlier tests. The
+        # production measurer returns a map and does not perform two rounds.
         scalar_measurer = cast(Callable[[Sequence[str]], int], measurer)
         environment = cast(int, measured)
         transfer = scalar_measurer(missing) if would and missing else 0
 
-    # Starsze uv albo zmieniony format logu może podać samą liczbę bez nazw.
-    # Taki wynik jest częściowy: nie przypisujemy wtedy rozmiarów paczek z
-    # cache do transferu i nie pokazujemy fałszywie dokładnej wartości.
+    # Older uv or a changed log format may provide a count without names. Such
+    # a result is partial: do not assign cached package sizes to transfer or
+    # present a falsely precise value.
     missing_sizes_known = not isinstance(measured, Mapping) or all(
         measured.get(spec, 0) > 0 for spec in missing
     )

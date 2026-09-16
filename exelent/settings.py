@@ -1,9 +1,9 @@
-"""Trwałe ustawienia użytkownika. Zwykły JSON, wyłącznie wartości skalarne.
+"""Persistent user settings. Plain JSON, scalar values only.
 
-Każda operacja jest bezpieczna w obie strony: uszkodzony albo niedostępny plik
-oddaje wartości domyślne, a nieudany zapis nie przerywa pracy. Ustawienia są
-wygodą, więc nie mogą być powodem, dla którego program nie rusza — dokładnie
-jak lista ostatnich projektów.
+Every operation is safe in both directions: a corrupt or inaccessible file
+returns defaults, and a failed write does not interrupt work. Settings are
+a convenience, so they must never be the reason the program fails to start —
+just like the recent projects list.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from exelent.runtime.paths import state_dir
 class Settings:
     ask_before_download: bool = True
     language: str | None = None
-    """`None` znaczy „idź za językiem systemu" — zachowuje dotychczasowe
-    zachowanie dla każdego, kto niczego nie wybrał."""
+    """`None` means "follow the system language" — preserves the existing
+    behavior for anyone who has not made a choice."""
 
 
 def _file() -> Path:
@@ -38,8 +38,8 @@ def load_settings() -> Settings:
     default = Settings()
     ask = raw.get("ask_before_download", default.ask_before_download)
     language = raw.get("language", default.language)
-    # Zly TYP jest tak samo mozliwy jak zly plik — recznie edytowany JSON
-    # potrafi miec "tak" tam, gdzie ma byc true.
+    # A wrong TYPE is just as possible as a wrong file — a hand-edited JSON
+    # may have "yes" where true is expected.
     return Settings(
         ask_before_download=ask if isinstance(ask, bool) else default.ask_before_download,
         language=language if isinstance(language, str) or language is None else default.language,

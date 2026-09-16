@@ -1,8 +1,8 @@
-"""Rozmiar EXE to nie rozmiar pobierania.
+"""EXE size and download size are different quantities.
 
-PyInstaller wyrzuca z paczki to, czego kod nie dotyka — i wlasnie dlatego
-skrypt z matplotlib, pandas i scipy dal 26 MB przy ostrzezeniu o "kilkuset
-megabajtach". Widelki mowia prawde, ktorej jedna liczba nie umie powiedziec.
+PyInstaller excludes code that the program never touches. That is why a script
+using matplotlib, pandas, and scipy produced 26 MB despite a warning about
+hundreds of megabytes. A range conveys uncertainty that one number cannot.
 """
 
 import json
@@ -30,16 +30,20 @@ def test_estimate_returns_a_range_not_a_single_number():
 
 
 def test_estimate_ignores_packages_we_have_not_measured():
-    """Paczka spoza tabeli nie ma wkladu ZGADYWANEGO. Zgadywanie jest tym,
-    co wywolalo zgloszenie 7."""
+    """A package outside the table gets no guessed contribution.
+
+    Guessing was the cause of issue 7.
+    """
     low_alone, high_alone, _ = estimate_exe_size(["pandas"])
-    low_with, high_with, _ = estimate_exe_size(["pandas", "jakas-mala-paczka"])
+    low_with, high_with, _ = estimate_exe_size(["pandas", "some-small-package"])
     assert (low_alone, high_alone) == (low_with, high_with)
 
 
 def test_estimate_recognises_a_pinned_version():
-    """A11: `pandas==2.2.3` ma trafic w ten sam wpis co bare `pandas` —
-    klucz z wersja dawal wczesniej szacunek zero."""
+    """A11: `pandas==2.2.3` must match the same entry as bare `pandas`.
+
+    A versioned key previously produced a zero estimate.
+    """
     bare = estimate_exe_size(["pandas"])
     pinned = estimate_exe_size(["pandas==2.2.3"])
     assert pinned == bare
@@ -57,61 +61,63 @@ def test_no_packages_means_no_estimate():
 
 
 def test_heaviest_packages_come_first():
-    """Kolejnosc bierze sie z POMIARU, nie z intuicji: matplotlib pociaga za
-    soba wlasne backendy i wazy ponad trzy razy tyle co pandas (zmierzone
-    2026-09-04: 74,4 MB wobec 20,8 MB)."""
+    """Order packages by measurement rather than intuition.
+
+    Matplotlib includes its backends and weighs over three times as much as
+    pandas (measured 2026-09-04: 74.4 MB versus 20.8 MB).
+    """
     _low, _high, heaviest = estimate_exe_size(["pandas", "matplotlib"])
     assert heaviest == ("matplotlib", "pandas")
 
 
-# Wpisy, ktorych NIE zmierzono. Ich pomiar to kilka gigabajtow pobierania i
-# swiadomie go odlozono. Lista jest JAWNA po to, zeby liczba z sufitu nie
-# mogla wejsc po cichu: nowy wpis bez daty i bez miejsca tutaj wywala test.
-NIEZMIERZONE = frozenset({"torch", "tensorflow", "transformers"})
+# Entries not yet measured. Measuring them downloads several gigabytes and was
+# deliberately deferred. The explicit list prevents unsupported numbers from
+# entering silently: an undated entry absent from this list fails the test.
+UNMEASURED = frozenset({"torch", "tensorflow", "transformers"})
 
 
 def test_every_entry_is_either_measured_or_openly_listed_as_not():
-    """Wpis bez zrodla to liczba wzieta z sufitu — dokladnie to, na co
-    skarzy sie zgloszenie 7."""
+    """An entry without provenance is an unsupported guess, as in issue 7."""
     for package, contribution in EXE_CONTRIBUTION.items():
-        assert contribution.measured, f"{package} nie mowi, skad ma swoje liczby"
-        if package in NIEZMIERZONE:
-            assert contribution.measured == "tymczasowe", (
-                f"{package} ma juz date pomiaru — zdejmij go z NIEZMIERZONE"
+        assert contribution.measured, f"{package} does not identify the source of its numbers"
+        if package in UNMEASURED:
+            assert contribution.measured == "provisional", (
+                f"{package} now has a measurement date; remove it from UNMEASURED"
             )
             continue
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", contribution.measured), (
-            f"{package}: liczba bez daty pomiaru. Zmierz ja albo dopisz do NIEZMIERZONE."
+            f"{package}: value lacks a measurement date; measure it or add it to UNMEASURED."
         )
 
 
 def test_the_estimate_covers_the_whole_exe_not_just_the_packages():
-    """Zdanie na ekranie mowi "gotowy program zajmie", a gotowy program to
-    takze interpreter. ZMIERZONE 2026-09-04: pusty skrypt daje 10,5 MB."""
+    """The finished program includes the interpreter.
+
+    Measured 2026-09-04: an empty script produces 10.5 MB.
+    """
     low, _high, _heaviest = estimate_exe_size(["numpy"])
     assert low > EXE_CONTRIBUTION["numpy"].low_mb
 
 
 def test_the_script_from_the_report_falls_inside_its_own_estimate():
-    """KRYTERIUM SUKCESU specyfikacji: rozmiar gotowego programu ma sie miescic
-    w widelkach pokazanych przed buildem.
+    """Success criterion: the finished program fits the pre-build estimate.
 
-    ZMIERZONE 2026-09-04 na prawdziwym buildzie skryptu ze zgloszenia 7
-    (pandas + scipy.stats + pyplot.savefig): 172,4 MB.
+    Measured 2026-09-04 on a real build of the issue-7 script
+    (pandas + scipy.stats + pyplot.savefig): 172.4 MB.
     """
     low, high, _heaviest = estimate_exe_size(["matplotlib", "pandas", "scipy"])
-    assert low <= 172.4 <= high, f"widelki {low}-{high} MB nie obejmuja zmierzonych 172,4 MB"
+    assert low <= 172.4 <= high, f"range {low}-{high} MB excludes measured 172.4 MB"
 
 
 def test_large_threshold_matches_the_spec():
     assert LARGE_WARNING_MB == 300
 
 
-# --- rozmiar POBIERANIA: dokladny, z PyPI ---
+# --- exact download size from PyPI ---
 
 
 def test_wheel_size_prefers_the_matching_windows_wheel():
-    """Kolo dla innej wersji Pythona albo innego systemu to nie nasze kolo."""
+    """A wheel for another Python version or OS is not our wheel."""
     payload = json.loads((FIXTURES / "pypi_scipy.json").read_text(encoding="utf-8"))
     assert wheel_size(payload) == 36700160
 
@@ -154,18 +160,20 @@ def test_wheel_size_of_empty_payload_is_zero():
 
 
 def test_download_size_degrades_quietly_when_pypi_is_unreachable(monkeypatch):
-    """Rozmiar pobierania jest WYGODA, a nie powodem, dla ktorego build ma
-    nie ruszyc — ta sama zasada, ktora rzadzi `recent.py`."""
+    """Download size is optional information and must not block a build.
+
+    This is the same rule that governs `recent.py`.
+    """
     import exelent.deps.sizes as sizes_module
 
     def boom(spec, timeout):
-        raise OSError("brak sieci")
+        raise OSError("no network")
 
     monkeypatch.setattr(sizes_module, "_fetch_release", boom)
     assert download_size(["scipy==1.18.1", "numpy==2.5.2"]) == 0
 
 
-# --- plan pobierania: co uv naprawde sciagnie, z uwzglednieniem cache ---
+# --- download plan: what uv will actually fetch after accounting for cache ---
 
 
 def test_dry_run_yields_pinned_specs_and_the_missing_count():
@@ -182,7 +190,7 @@ def test_dry_run_yields_pinned_specs_and_the_missing_count():
     assert plan.would_download == 8
     assert "scipy==1.18.1" in plan.specs
     assert len(plan.specs) == 14
-    assert plan.status == "partial", "stary zapis bez nazw cache nie może udawać pełnego"
+    assert plan.status == "partial", "an old transcript without cache names cannot claim completeness"
 
 
 def test_transfer_measures_only_uncached_specs_but_environment_covers_the_tree():
@@ -208,8 +216,10 @@ def test_transfer_measures_only_uncached_specs_but_environment_covers_the_tree()
 
 
 def test_nothing_to_download_when_everything_is_cached():
-    """Pytanie o zgode na pobranie zera megabajtow uczy klikac OK bez
-    czytania — wiec ta liczba musi byc prawdziwa."""
+    """A zero-megabyte consent prompt teaches users to click without reading.
+
+    The zero must therefore be accurate.
+    """
     transcript = "Resolved 3 packages in 12ms\nWould download 0 packages\n + six==1.17.0\n"
     plan = resolve_download_plan(
         uv=Path("uv.exe"),
@@ -224,7 +234,7 @@ def test_nothing_to_download_when_everything_is_cached():
 
 def test_resolution_failure_degrades_to_an_empty_plan():
     def boom(*_args, **_kwargs):
-        raise OSError("uv nie wystartowal")
+        raise OSError("uv did not start")
 
     plan = resolve_download_plan(
         uv=Path("uv.exe"), python=Path("python.exe"), packages=["scipy"], run_dry=boom
@@ -245,8 +255,7 @@ def test_resolver_rejection_is_not_mislabeled_as_offline():
 
 
 def test_dry_run_receives_the_cancel_token(monkeypatch):
-    """Token musi dojsc az do `uv` — inaczej anulowanie preflightu konczy sie
-    na granicy warstwy, a proces uv miele dalej."""
+    """The token must reach `uv` or preflight cancellation stops at the layer boundary."""
     from exelent.build.backend import CancelToken
     from exelent.deps import sizes as sizes_module
 
