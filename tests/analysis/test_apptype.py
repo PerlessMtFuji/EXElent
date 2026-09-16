@@ -46,10 +46,7 @@ def test_plain_script_defaults_to_console():
 
 def test_type_checking_import_does_not_trigger_windowed():
     code = (
-        "from typing import TYPE_CHECKING\n"
-        "if TYPE_CHECKING:\n"
-        "    import tkinter\n"
-        "print('hello')\n"
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import tkinter\nprint('hello')\n"
     )
     kind, _ = detect_app_kind(_s(code))
     assert kind is AppKind.CONSOLE

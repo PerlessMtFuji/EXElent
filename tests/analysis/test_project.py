@@ -94,7 +94,7 @@ def test_utf8_bom_py_file_is_accepted(tmp_path):
     # Plik z BOM (UTF-8-sig) jest legalnym Pythonem — deklaracja kodowania
     # `utf-8-sig` jest poprawna per PEP 263 i CPython akceptuje BOM.
     bom = b"\xef\xbb\xbf"
-    content = bom + "print('ok')\n".encode("utf-8")
+    content = bom + b"print('ok')\n"
     py = tmp_path / "main.py"
     py.write_bytes(content)
     result = analyze_project(tmp_path)

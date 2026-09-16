@@ -340,6 +340,10 @@ CATALOG: dict[str, str] = {
     "review_preview_unavailable": "Nie można już odczytać oryginalnego pliku.",
     "review_recommended_suffix": "(zalecane)",
     "review_restore": "przywróć zalecane",
+    "review_trust_warning": (
+        "Buduj tylko kod i zależności z zaufanego źródła. Budowanie może uruchamiać "
+        "kod podczas instalacji paczek."
+    ),
     "review_build": "Stwórz EXE",
     "review_back": "← Wstecz",
     "kind_windowed": "Program w oknie",

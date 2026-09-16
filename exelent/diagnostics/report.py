@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 from exelent.constants import APP_NAME
 
 # Placeholder until the project is published under its real GitHub org/name.
-REPO_URL = "https://github.com/exelent-app/exelent"
+REPO_URL = "https://github.com/PerlessMtFuji/EXElent"
 
 # Common practical ceiling for URL length across browsers, proxies and
 # GitHub itself (well documented to choke somewhere around 8 KB). Kept with
