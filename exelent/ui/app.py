@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QStackedWidget
 
 from exelent.constants import APP_NAME
@@ -265,11 +266,20 @@ class MainWindow(QMainWindow):
         self.language_changed.emit(lang)
 
 
+def _app_icon() -> QIcon:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    icon_path = base / "assets" / "icon.ico"
+    if icon_path.is_file():
+        return QIcon(str(icon_path))
+    return QIcon()
+
+
 def run_gui(argv: list[str]) -> int:
     register_session()
     clean_stale_sessions()
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
+    app.setWindowIcon(_app_icon())
     window = MainWindow()
     window.show()
     return app.exec()
