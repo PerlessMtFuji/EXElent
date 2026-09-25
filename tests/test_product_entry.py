@@ -30,6 +30,7 @@ def test_product_cli_returns_result_and_preserves_issues(tmp_path, monkeypatch, 
     monkeypatch.setattr(cli, "run_build", build)
     monkeypatch.setattr(cli, "register_session", lambda: None)
     monkeypatch.setattr(cli, "clean_stale_sessions", lambda: None)
+    monkeypatch.setattr(cli, "clean_current_session", lambda **_kw: None)
     report = tmp_path / "report.json"
     if windowed:
         monkeypatch.setattr(sys, "stdout", None)

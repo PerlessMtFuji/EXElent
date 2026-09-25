@@ -20,7 +20,11 @@ from exelent.diagnostics.patterns import sort_issues
 from exelent.models import BuildResult, Issue, IssueError, Severity
 from exelent.planning import make_plan
 from exelent.runtime import Progress, ProgressFn
-from exelent.runtime.paths import clean_stale_sessions, register_session
+from exelent.runtime.paths import (
+    clean_current_session,
+    clean_stale_sessions,
+    register_session,
+)
 
 
 def _print_progress(update: Progress) -> None:
@@ -80,6 +84,16 @@ def _print_issues(issues: Sequence[Issue], stream) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     register_session()
     clean_stale_sessions()
+    try:
+        return _main(argv)
+    finally:
+        # The EXE is already published outside the working directory; the
+        # code copy and venv (often gigabytes) are useless now. Logs stay:
+        # the path was just printed and goes into the JSON report.
+        clean_current_session(keep_logs=True)
+
+
+def _main(argv: Sequence[str] | None) -> int:
     parser = argparse.ArgumentParser(prog="exelent", description="Build an EXE from a code folder")
     parser.add_argument("directory", type=Path, help="folder containing code files")
     parser.add_argument("--name", dest="exe_name", help="output file name")

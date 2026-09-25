@@ -10,6 +10,7 @@ import hashlib
 import itertools
 import os
 import shutil
+import time
 import uuid
 from contextlib import suppress
 from pathlib import Path
@@ -19,6 +20,15 @@ from exelent.constants import APP_NAME
 # Per-process instance identifier. Isolates workspaces and logs between
 # parallel instances of the same project.
 _SESSION_ID = uuid.uuid4().hex[:8]
+
+# A working directory with no session record (legacy name without a session
+# suffix, or a record lost to a crash) belongs to nobody once it is this old.
+# The grace period protects an instance that failed to write its PID file.
+ORPHAN_GRACE_SECONDS = 24 * 3600
+
+# Filesystem timestamp resolution (FAT: 2 s) when comparing a process start
+# time with the moment its PID file was written.
+_CLOCK_SLACK_SECONDS = 2.0
 
 # Build attempt number within this session. Each call to execute_build gets
 # its own number so that retry logs do not overwrite each other.
@@ -118,18 +128,88 @@ def _is_pid_alive(pid: int) -> bool:
     return True
 
 
-def clean_current_session() -> None:
+def _process_start_time(pid: int) -> float | None:
+    """Start time of process ``pid`` as a Unix timestamp; None when unknown."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        filetime_p = ctypes.POINTER(wintypes.FILETIME)
+        kernel.GetProcessTimes.argtypes = (wintypes.HANDLE, *(filetime_p,) * 4)
+        kernel.GetProcessTimes.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel.CloseHandle.restype = wintypes.BOOL
+        # PROCESS_QUERY_LIMITED_INFORMATION: enough for GetProcessTimes.
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return None
+        try:
+            times = [wintypes.FILETIME() for _ in range(4)]
+            if not kernel.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+                return None
+            created = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+            # FILETIME counts 100 ns intervals since 1601-01-01.
+            return (created - 116444736000000000) / 10_000_000
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+        ticks = int(stat.rpartition(")")[2].split()[19])
+        boot = next(
+            int(line.split()[1])
+            for line in Path("/proc/stat").read_text(encoding="ascii").splitlines()
+            if line.startswith("btime ")
+        )
+        return boot + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration):
+        return None
+
+
+def _is_session_alive(pid: int, recorded_at: float) -> bool:
+    """Whether the process that wrote a PID file at ``recorded_at`` still runs.
+
+    A live PID alone is not proof: after a reboot Windows hands the same number
+    to an unrelated process. The owner must have started before it wrote its
+    PID file, so a process that started later is somebody else.
+    """
+    if not _is_pid_alive(pid):
+        return False
+    started = _process_start_time(pid)
+    if started is None:
+        return True  # Unknown start time does not prove the session is gone.
+    return started <= recorded_at + _CLOCK_SLACK_SECONDS
+
+
+def _remove_dirs(directories) -> bool:
+    """Remove directories best-effort; True when none of them remains."""
+    for directory in directories:
+        shutil.rmtree(directory, ignore_errors=True)
+    return not any(directory.exists() for directory in directories)
+
+
+def clean_current_session(*, keep_logs: bool = False) -> None:
     """Remove working directories and logs of THIS session plus its PID file.
+
+    With ``keep_logs`` the logs and the PID file stay: the console has just
+    printed the log path, and the next start removes both once this process
+    is gone. The PID file also stays when a directory could not be removed
+    (e.g. a file locked by a still-running built EXE), so the next start
+    retries instead of orphaning the directory.
 
     Best-effort: cleanup on window close must not cause an error.
     """
     base = state_dir() / "b"
     if not base.exists():
         return
-    for directory in base.glob(f"*-{_SESSION_ID}"):
-        shutil.rmtree(directory, ignore_errors=True)
+    removed = _remove_dirs(list(base.glob(f"*-{_SESSION_ID}")))
+    if keep_logs:
+        return
     _clean_session_logs(_SESSION_ID)
-    _unregister_session()
+    if removed:
+        _unregister_session()
 
 
 def _clean_session_logs(sid: str) -> None:
@@ -147,31 +227,55 @@ def _clean_session_logs(sid: str) -> None:
 
 
 def clean_stale_sessions() -> None:
-    """Clean up working directories and logs of sessions whose process is dead.
+    """Clean up working directories and logs nobody will use again.
 
-    Checks `.pid-*` files in the build directory. If the PID is dead,
-    removes directories, logs and the PID file. Live sessions are untouched.
+    A session whose process is gone (see ``_is_session_alive``) loses its
+    directories, logs and PID file; its PID file stays when a directory
+    resists removal, so a later start retries. Directories with no session
+    record at all are removed once older than ``ORPHAN_GRACE_SECONDS``.
+    Live sessions are untouched.
     """
     base = state_dir() / "b"
     if not base.exists():
         return
+    known: set[str] = {_SESSION_ID}
     for pid_file in base.glob(".pid-*"):
         sid = pid_file.name[len(".pid-") :]
+        known.add(sid)
         if sid == _SESSION_ID:
             continue
         try:
             pid = int(pid_file.read_text(encoding="utf-8").strip())
+            recorded_at = pid_file.stat().st_mtime
         except (OSError, ValueError):
-            pid = -1
-        if _is_pid_alive(pid):
+            continue  # Corrupted record does not prove the session can be removed.
+        if _is_session_alive(pid, recorded_at):
             continue
-        for directory in base.glob(f"*-{sid}"):
-            if directory.name.startswith(".pid-"):
-                continue
-            shutil.rmtree(directory, ignore_errors=True)
+        if not _remove_dirs([d for d in base.glob(f"*-{sid}") if d.is_dir()]):
+            continue
         _clean_session_logs(sid)
         with suppress(OSError):
             pid_file.unlink(missing_ok=True)
+    _clean_orphan_dirs(base, known)
+
+
+def _clean_orphan_dirs(base: Path, known_sessions: set[str]) -> None:
+    """Remove old working directories whose session has no PID file."""
+    cutoff = time.time() - ORPHAN_GRACE_SECONDS
+    for directory in base.iterdir():
+        if directory.name.startswith(".") or not directory.is_dir():
+            continue
+        _, _, sid = directory.name.partition("-")
+        if sid in known_sessions:
+            continue
+        try:
+            if directory.stat().st_mtime > cutoff:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(directory, ignore_errors=True)
+        if sid and not directory.exists():
+            _clean_session_logs(sid)
 
 
 def tools_dir() -> Path:

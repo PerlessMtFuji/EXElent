@@ -27,6 +27,15 @@ from exelent.runtime.bootstrap import UvDownloadError
 from exelent.runtime.env import BuildEnv, BuildEnvError
 
 
+@pytest.fixture(autouse=True)
+def _isolated_state(tmp_path, monkeypatch):
+    """`main()` registers and cleans sessions — never in the real %LOCALAPPDATA%.
+
+    Tests that need a specific location set LOCALAPPDATA again; that wins.
+    """
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "state"))
+
+
 def _project(tmp_path: Path, files: dict[str, str], name: str = "p") -> Path:
     root = tmp_path / name
     root.mkdir(parents=True, exist_ok=True)
@@ -974,3 +983,25 @@ def test_resolved_versions_are_included_in_json_report(tmp_path, monkeypatch, st
     assert code == 0
     data = json.loads(report.read_text(encoding="utf-8"))
     assert data["resolved_versions"] == {"numpy": "1.26.4", "requests": "2.31.0"}
+
+
+def test_main_removes_its_working_directory_but_keeps_the_log(tmp_path, monkeypatch):
+    """CLI sprzata po sobie: kopia kodu i venv (gigabajty) znikaja po wyjsciu,
+    log zostaje, bo jego sciezka trafila na ekran i do raportu."""
+    from exelent.runtime import paths
+
+    work = paths.work_dir_for(tmp_path)
+    log = paths.logs_dir() / f"p-{paths.path_hash(tmp_path)}-{paths.session_id()}.1.log"
+
+    def build(*a, **kw):
+        (work / "venv").mkdir(parents=True)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("x", encoding="utf-8")
+        return BuildResult(ok=False, issues=())
+
+    monkeypatch.setattr(cli, "run_build", build)
+
+    cli.main([str(tmp_path)])
+
+    assert not work.exists()
+    assert log.exists()

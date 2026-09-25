@@ -314,3 +314,135 @@ def test_clean_stale_sessions_removes_dead_session_logs(tmp_path, monkeypatch):
 
     assert not (base / f"abc12345-{dead_sid}").exists()
     assert not list(log_dir.glob(f"*-{dead_sid}.*"))
+
+
+# --- Sprzatanie: ponownie uzyty PID, sierocie katalogi, nieudane usuwanie ---
+
+
+def _stale_base(tmp_path, monkeypatch):
+    from exelent.runtime import paths
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    base = paths.state_dir() / "b"
+    base.mkdir(parents=True)
+    return paths, base
+
+
+def test_reused_pid_does_not_keep_a_dead_session_alive(tmp_path, monkeypatch):
+    """Po restarcie Windows ten sam PID dostaje inny proces.
+
+    Plik PID zapisany PRZED startem obecnego wlasciciela PID nie moze nalezec
+    do tego procesu — sesja jest martwa, choc PID "zyje".
+    """
+    paths, base = _stale_base(tmp_path, monkeypatch)
+    sid = "reused01"
+    work = base / f"abc12345-{sid}"
+    work.mkdir()
+    pid_file = base / f".pid-{sid}"
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    started = paths._process_start_time(os.getpid())
+    assert started is not None
+    os.utime(pid_file, (started - 3600, started - 3600))
+
+    paths.clean_stale_sessions()
+
+    assert not work.exists()
+    assert not pid_file.exists()
+
+
+def test_process_start_time_is_known_for_this_process():
+    import time
+
+    from exelent.runtime import paths
+
+    started = paths._process_start_time(os.getpid())
+    assert started is not None
+    assert started <= time.time()
+
+
+def test_old_orphan_directories_without_a_session_are_removed(tmp_path, monkeypatch):
+    """Katalogi bez pliku PID (stary format bez sufiksu sesji albo sesja,
+    ktorej rekord zniknal) nie naleza do nikogo — po okresie karencji znikaja."""
+    import time
+
+    paths, base = _stale_base(tmp_path, monkeypatch)
+    old = time.time() - paths.ORPHAN_GRACE_SECONDS - 60
+    legacy = base / "130ba923"
+    orphan = base / "64fb0274-52249378"
+    for directory in (legacy, orphan):
+        (directory / "venv").mkdir(parents=True)
+        os.utime(directory, (old, old))
+    log_dir = paths.logs_dir()
+    log_dir.mkdir(parents=True)
+    (log_dir / "prog-64fb0274-52249378.1.log").write_text("x", encoding="utf-8")
+
+    paths.clean_stale_sessions()
+
+    assert not legacy.exists()
+    assert not orphan.exists()
+    assert not list(log_dir.glob("*-52249378.*"))
+
+
+def test_fresh_orphan_directories_are_left_alone(tmp_path, monkeypatch):
+    """Karencja chroni katalog, ktorego wlasciciel nie zdolal zapisac PID."""
+    paths, base = _stale_base(tmp_path, monkeypatch)
+    fresh = base / "abc12345-nopidfil"
+    fresh.mkdir()
+
+    paths.clean_stale_sessions()
+
+    assert fresh.exists()
+
+
+def test_orphan_sweep_never_touches_a_live_session(tmp_path, monkeypatch):
+    import time
+
+    paths, base = _stale_base(tmp_path, monkeypatch)
+    sid = "alive456"
+    work = base / f"abc12345-{sid}"
+    work.mkdir()
+    old = time.time() - paths.ORPHAN_GRACE_SECONDS - 60
+    os.utime(work, (old, old))
+    (base / f".pid-{sid}").write_text(str(os.getpid()), encoding="utf-8")
+
+    paths.clean_stale_sessions()
+
+    assert work.exists()
+
+
+def test_failed_removal_keeps_the_session_record_for_a_retry(tmp_path, monkeypatch):
+    """Zablokowany plik (np. uruchomiony EXE z dist) nie moze osierocic katalogu:
+    rekord sesji zostaje, zeby nastepne uruchomienie sprobowalo ponownie."""
+    import shutil
+
+    paths, base = _stale_base(tmp_path, monkeypatch)
+    monkeypatch.setattr(paths, "_SESSION_ID", "locked01")
+    paths.register_session()
+    work = base / "abc12345-locked01"
+    work.mkdir()
+    monkeypatch.setattr(shutil, "rmtree", lambda *a, **kw: None)
+
+    paths.clean_current_session()
+
+    assert work.exists()
+    assert paths._pid_file().exists()
+
+
+def test_clean_current_session_can_keep_logs_for_the_console(tmp_path, monkeypatch):
+    """CLI wypisuje sciezke logu — log zostaje, a rekord sesji pozwala
+    posprzatac go przy nastepnym uruchomieniu."""
+    paths, base = _stale_base(tmp_path, monkeypatch)
+    monkeypatch.setattr(paths, "_SESSION_ID", "console1")
+    paths.register_session()
+    work = base / "abc12345-console1"
+    (work / "venv").mkdir(parents=True)
+    log_dir = paths.logs_dir()
+    log_dir.mkdir(parents=True)
+    log = log_dir / "prog-abc12345-console1.1.log"
+    log.write_text("x", encoding="utf-8")
+
+    paths.clean_current_session(keep_logs=True)
+
+    assert not work.exists()
+    assert log.exists()
+    assert paths._pid_file().exists()
