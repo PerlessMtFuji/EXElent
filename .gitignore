@@ -12,3 +12,5 @@ __pycache__/
 *.spec
 .pytest_cache/
 *.egg-info/
+# Internal planning notes, kept local only.
+/docs/superpowers/
