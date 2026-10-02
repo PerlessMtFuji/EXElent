@@ -207,7 +207,7 @@ def _arm_launcher(ns, monkeypatch, tmp_path, *, owns_console=True, raises=None) 
     ns["_set_working_directory"] = lambda: None
     ns["_owns_console"] = lambda: owns_console
     ns["runpy"] = _FakeRunpy(raises)
-    ns["_error_path"] = lambda: str(tmp_path / "EXElent-blad.txt")
+    ns["_error_path"] = lambda: str(tmp_path / "EXElent-error.txt")
     monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt))
     return prompts
 

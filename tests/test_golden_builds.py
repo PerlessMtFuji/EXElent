@@ -389,7 +389,7 @@ def test_crashing_windowed_program_leaves_a_report_instead_of_vanishing(tmp_path
     # sierota trzymajaca swoj katalog `_MEI`.
     run_bounded([exe], timeout=20, cwd=exe.parent, allow_timeout=True)
 
-    report = exe.parent / "EXElent-blad.txt"
+    report = exe.parent / "EXElent-error.txt"
     assert report.exists(), "program GUI zniknal bez sladu"
     assert "CELOWY-BLAD-GUI" in report.read_text(encoding="utf-8")
     assert not is_running_name(exe.name), "test zostawil osierocony proces z otwartym oknem"
