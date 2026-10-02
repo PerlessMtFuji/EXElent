@@ -186,4 +186,5 @@ redistribute it, sell it, or publish modified versions.
 The EXE files you build with EXElent from your own code are yours to use,
 share and sell, see the Additional Permission at the top of [LICENSE](LICENSE).
 
-For any other use, including commercial use, contact the author.
+For any other use, including commercial use, contact the author at
+[e.wlodarski@protonmail.com](mailto:e.wlodarski@protonmail.com).
