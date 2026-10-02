@@ -23,6 +23,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --frozen --extra dev
+      # pytest creates only the last component of --basetemp, and build/ is
+      # gitignored, so a fresh checkout does not have it.
+      - run: New-Item -ItemType Directory -Force build | Out-Null
       - run: uv run pytest tests/test_golden_builds.py tests/test_local_resolver.py -v -m slow --basetemp=build/golden --junitxml=build/golden.xml
       - name: Upload diagnostics on failure
         if: failure()
