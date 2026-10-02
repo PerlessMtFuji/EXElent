@@ -62,3 +62,6 @@ jobs:
             Plik nie jest podpisany certyfikatem. Jeśli SmartScreen lub antywirus
             zgłosi ostrzeżenie, sprawdź źródło pliku i treść alertu przed
             uruchomieniem. Samo pakowanie nie potwierdza bezpieczeństwa programu.
+
+            Licencja: PolyForm Strict 1.0.0 (zob. plik LICENSE). Pliki EXE, które
+            zbudujesz z własnego kodu, należą do Ciebie.
