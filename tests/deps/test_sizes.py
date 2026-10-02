@@ -190,7 +190,9 @@ def test_dry_run_yields_pinned_specs_and_the_missing_count():
     assert plan.would_download == 8
     assert "scipy==1.18.1" in plan.specs
     assert len(plan.specs) == 14
-    assert plan.status == "partial", "an old transcript without cache names cannot claim completeness"
+    assert plan.status == "partial", (
+        "an old transcript without cache names cannot claim completeness"
+    )
 
 
 def test_transfer_measures_only_uncached_specs_but_environment_covers_the_tree():

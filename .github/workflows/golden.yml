@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv sync --frozen --dev
+      - run: uv sync --frozen --extra dev
       - run: uv run pytest tests/test_golden_builds.py tests/test_local_resolver.py -v -m slow --basetemp=build/golden --junitxml=build/golden.xml
       - name: Upload diagnostics on failure
         if: failure()

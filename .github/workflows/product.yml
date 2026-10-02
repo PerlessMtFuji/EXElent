@@ -12,7 +12,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv sync --frozen --dev
+      - run: uv sync --frozen --extra dev
       - run: uv pip install pyinstaller==6.16.0
       - name: Build EXElent.exe
         run: uv run python build_exelent.py

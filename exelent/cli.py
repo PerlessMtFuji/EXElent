@@ -147,9 +147,7 @@ def _main(argv: Sequence[str] | None) -> int:
             _print_issues(result.issues, sys.stderr)
         return 0
 
-    headline = (
-        "\nBuild finished without an output file." if result.ok else "\nBuild failed."
-    )
+    headline = "\nBuild finished without an output file." if result.ok else "\nBuild failed."
     print(headline, file=sys.stderr)
     _print_issues(result.issues, sys.stderr)
     if result.log_path:

@@ -351,7 +351,7 @@ class BuildScreen(QWidget):
     # --- akcje ---
 
     def _open_folder(self) -> None:
-        """"Show in folder" should SELECT the EXE, not merely open its directory.
+        """ "Show in folder" should SELECT the EXE, not merely open its directory.
 
         An ONEDIR output can contain hundreds of entries, so merely opening the
         window leaves users searching. `/select` opens Explorer with the EXE

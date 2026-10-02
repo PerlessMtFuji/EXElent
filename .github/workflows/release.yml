@@ -19,7 +19,7 @@ jobs:
       # (PYINSTALLER_SPEC). Wersja pakująca wydanie nie może być inna niż ta,
       # którą program instaluje użytkownikowi — pilnuje tego test w
       # `tests/test_self_build.py`.
-      - run: uv sync --frozen --dev
+      - run: uv sync --frozen --extra dev
       - run: uv pip install pyinstaller==6.16.0
       - run: uv run ruff check .
       - run: uv run ruff format --check .
